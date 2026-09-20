@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>品种详情</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
+  body{background:#131722;color:#d1d4dc;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+  .red{color:#ef5350;} .green{color:#26a69a;} .gold{color:#f0b90b;} .mut{color:#787b86;}
+  header{display:flex;align-items:center;gap:16px;padding:11px 20px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;}
+  header a{color:#f0b90b;text-decoration:none;font-size:14px;}
+  header .nm{font-size:19px;font-weight:800;line-height:1.1;}
+  header .cd{font-size:12px;color:#787b86;}
+  .head-mid{flex:1;display:flex;justify-content:center;gap:18px;font-size:12.5px;color:#f0b90b;}
+  .head-mid b{color:#d1d4dc;font-weight:700;}
+  .price{text-align:right;} .price .p{font-size:24px;font-weight:800;line-height:1;}
+  .btn{border:1px solid #2a2e39;background:#2a2e39;color:#d1d4dc;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;}
+  main{flex:1;display:flex;gap:14px;padding:14px 20px;overflow:hidden;}
+  #chartbox{flex:1;min-width:0;background:#131722;border:1px solid #2a2e39;border-radius:12px;position:relative;}
+  .side{width:300px;flex:none;display:flex;flex-direction:column;gap:12px;min-height:0;}
+  .card{background:#1e222d;border:1px solid #2a2e39;border-radius:12px;padding:14px 16px;}
+  .card .t{font-size:12px;color:#787b86;margin-bottom:8px;}
+  .row{display:flex;justify-content:space-between;font-size:13.5px;padding:5px 0;}
+  .row b{font-weight:700;}
+  .sigs{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;}
+  .sig{border-radius:10px;padding:9px 11px;font-size:12.5px;border-left:3px solid;flex:none;}
+  .sig.buy{background:rgba(239,83,80,.12);border-color:#ef5350;}
+  .sig.sell{background:rgba(38,166,154,.12);border-color:#26a69a;}
+  .chatbox{flex:none;display:flex;gap:7px;}
+  .chatbox input{flex:1;min-width:0;background:#2a2e39;border:1px solid #2a2e39;border-radius:8px;color:#d1d4dc;padding:8px 11px;font-size:13px;outline:none;}
+  .chatbox input:focus{border-color:#f0b90b;}
+  .chatbox button{flex:none;background:#f0b90b;border:none;color:#1a1a1a;font-weight:700;border-radius:8px;padding:8px 13px;cursor:pointer;}
+  ::-webkit-scrollbar{width:7px;} ::-webkit-scrollbar-thumb{background:#2a2e39;border-radius:4px;}
+</style>
+</head>
+<body>
+<header>
+  <a href="/pc">‹ 返回总览</a>
+  <div><div class="nm" id="nm">加载中</div><div class="cd" id="cd"></div></div>
+  <div class="head-mid" id="hmid"></div>
+  <div class="price"><div class="p" id="p">–</div><div id="chg" class="mut"></div></div>
+  <button class="btn" onclick="loadData(true)">⟳ 刷新</button>
+</header>
+<main>
+  <div id="chartbox"></div>
+  <div class="side">
+    <div class="card">
+      <div class="t">本级别(15分)回测统计 · 底买顶平·只做多</div>
+      <div class="row"><span class="mut">交易笔数</span><b id="sTr">–</b></div>
+      <div class="row"><span class="mut">胜率</span><b class="green" id="sWr">–</b></div>
+      <div class="row"><span class="mut">盈亏比</span><b id="sPl">–</b></div>
+      <div class="row"><span class="mut">均盈/均亏(点)</span><b id="sAvg">–</b></div>
+      <div class="row"><span class="mut">累计盈亏(元/手)</span><b class="gold" id="sMoney">–</b></div>
+      <div class="row"><span class="mut">最大回撤(元)</span><b class="red" id="sMdd">–</b></div>
+      <div class="row"><span class="mut">平均回撤(元)</span><b id="sAdd">–</b></div>
+    </div>
+    <div class="card" style="flex:1;min-height:0;display:flex;flex-direction:column;">
+      <div class="t">买卖点历史</div>
+      <div class="sigs" id="sigs"></div>
+      <div class="chatbox" style="margin-top:10px;">
+        <input id="chat" placeholder="给手机端留言…" maxlength="80">
+        <button onclick="sendChat()">发送</button>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const params=new URLSearchParams(location.search);
+const SYM=params.get('sym')||'MA2610';
+let chart,candle,vol,bi;
+let ws;
+const proto=location.protocol==='https:'?'wss':'ws';
+
+function initChart(){
+  const el=$('chartbox');
+  chart=LightweightCharts.createChart(el,{
+    layout:{background:{type:'solid',color:'#131722'},textColor:'#787b86',fontSize:11},
+    grid:{vertLines:{visible:false},horzLines:{color:'rgba(42,46,57,.5)'}},
+    crosshair:{mode:0},
+    rightPriceScale:{borderColor:'rgba(197,203,206,.15)'},
+    timeScale:{borderVisible:false,timeVisible:true,secondsVisible:false}});
+  candle=chart.addCandlestickSeries({upColor:'#ef5350',downColor:'#26a69a',
+    borderUpColor:'#ef5350',borderDownColor:'#26a69a',wickUpColor:'#ef5350',wickDownColor:'#26a69a'});
+  vol=chart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'',
+    lastValueVisible:false,priceLineVisible:false});
+  vol.priceScale().applyOptions({scaleMargins:{top:.82,bottom:0}});
+  bi=chart.addLineSeries({color:'#f0b90b',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
+  new ResizeObserver(()=>chart.applyOptions({width:el.clientWidth,height:el.clientHeight})).observe(el);
+}
+
+function fmt(ts){const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');
+  return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
+
+async function loadData(force){
+  const r=await fetch('/api/detail?sym='+encodeURIComponent(SYM)+(force?'&f=1':''));
+  const s=await r.json();
+  $('nm').textContent=s.name; $('cd').textContent=s.symbol+' · 15分 · '+s.bar_count+'根/'+s.bi_count+'笔';
+  $('p').textContent=s.last_price;
+  const up=s.change>=0;
+  $('chg').innerHTML=`<span class="${up?'red':'green'}">${up?'▲':'▼'} ${Math.abs(s.change)} (${s.change_pct}%)</span>`;
+  candle.setData(s.kline);
+  vol.setData(s.vol||[]);
+  bi.setData(s.bi||[]);
+  candle.setMarkers(s.markers||[]);
+  chart.timeScale().fitContent();
+  const st=s.stats||{};
+  $('sTr').textContent=st.trades??'–';
+  $('sWr').textContent=st.win_rate!=null?st.win_rate+'%':'–';
+  $('sPl').textContent=st.pl_ratio!=null?st.pl_ratio:'–';
+  $('sAvg').textContent=(st.avg_win_pts??0)+' / '+(st.avg_loss_pts??0);
+  $('sMoney').textContent=st.total_money!=null?st.total_money:'–';
+  $('sMdd').textContent=st.max_dd!=null?st.max_dd:'–';
+  $('sAdd').textContent=st.avg_dd!=null?st.avg_dd:'–';
+  const f=s.fee||{};
+  $('hmid').innerHTML=
+    `<span>每手保证金 <b>${s.margin_per_lot??'–'}</b> 元</span>`+
+    `<span>开仓费 <b>${f.open_cost??'–'}</b></span>`+
+    `<span>平仓费 <b>${f.close_cost??'–'}</b> 元/手</span>`+
+    `<span>乘数 <b>${f.multiplier??'–'}</b></span>`;
+  let h='';
+  (s.signals||[]).slice().reverse().slice(0,40).forEach(x=>{
+    h+=`<div class="sig ${x.side}">${x.side==='buy'?'▲ 买':'▼ 平'} @ <b>${x.price}</b>
+         <span class="mut" style="float:right">${fmt(x.time)}</span>
+         <div class="mut" style="margin-top:3px;font-size:11px">${x.reason||''}</div></div>`;
+  });
+  $('sigs').innerHTML=h||'<span class="mut">暂无</span>';
+}
+function sendChat(){
+  const v=$('chat').value.trim(); if(!v)return;
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'chat',text:v}));
+  $('chat').value='';
+}
+$('chat')&&$('chat').addEventListener('keydown',e=>{if(e.key==='Enter')sendChat();});
+
+function connect(){
+  ws=new WebSocket(`${proto}://${location.host}/ws?role=pc`);
+  ws.onclose=()=>setTimeout(connect,1500);
+}
+initChart();loadData();connect();
+</script>
+</body>
+</html>

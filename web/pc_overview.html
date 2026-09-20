@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>缠论多品种预警 · 总览</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://unpkg.com/qrcodejs@1.0.0/qrcode.min.js"></script>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
+  body{background:#131722;color:#d1d4dc;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+  .red{color:#ef5350;} .green{color:#26a69a;} .gold{color:#f0b90b;} .mut{color:#787b86;}
+  header{display:flex;align-items:center;gap:14px;padding:12px 22px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;flex-wrap:wrap;}
+  header h1{font-size:18px;font-weight:800;letter-spacing:1px;}
+  header h1 span{color:#f0b90b;}
+  .conn{display:flex;align-items:center;gap:7px;font-size:13px;color:#787b86;}
+  .dot{width:9px;height:9px;border-radius:50%;background:#ef5350;}
+  .dot.on{background:#26a69a;box-shadow:0 0 8px #26a69a;}
+  .sp{flex:1;}
+  .btn{border:1px solid #2a2e39;background:#2a2e39;color:#d1d4dc;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;}
+  .btn:hover{filter:brightness(1.2);}
+  .btn.buy{background:#ef5350;border-color:#ef5350;color:#fff;font-weight:700;}
+  .btn.sell{background:#26a69a;border-color:#26a69a;color:#fff;font-weight:700;}
+  select{background:#2a2e39;color:#d1d4dc;border:1px solid #2a2e39;border-radius:8px;padding:8px 10px;font-size:13px;outline:none;}
+  #qrcode{width:84px;height:84px;background:#fff;padding:5px;border-radius:8px;}
+  main{flex:1;display:flex;gap:16px;padding:14px 22px;overflow:hidden;}
+  .left{flex:1.7;display:flex;flex-direction:column;min-width:0;}
+  .right{flex:1;display:flex;flex-direction:column;min-width:330px;max-width:430px;}
+  .cards{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:12px;flex:none;}
+  .card{background:#1e222d;border:1px solid #2a2e39;border-radius:11px;padding:11px 13px;}
+  .card .k{font-size:11.5px;color:#787b86;}
+  .card .v{font-size:21px;font-weight:800;margin-top:3px;}
+  .panel{background:#1e222d;border:1px solid #2a2e39;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;flex:1;}
+  .panel .ph{padding:10px 16px;border-bottom:1px solid #2a2e39;font-size:13.5px;font-weight:700;flex:none;display:flex;justify-content:space-between;align-items:center;}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;}
+  thead th{color:#787b86;font-weight:600;text-align:right;padding:8px 12px;border-bottom:1px solid #2a2e39;font-size:12px;position:sticky;top:0;background:#1e222d;}
+  thead th:first-child,tbody td:first-child{text-align:left;}
+  tbody td{padding:8px 12px;text-align:right;border-bottom:1px solid rgba(42,46,57,.5);white-space:nowrap;}
+  tbody tr{cursor:pointer;transition:background .15s;}
+  tbody tr:hover{background:#2a2e39;}
+  tbody tr.flash{animation:fl 1.2s ease 2;}
+  @keyframes fl{0%,100%{background:#1e222d;}50%{background:rgba(240,185,11,.28);}}
+  .nm{font-weight:700;} .cd{font-size:11px;color:#787b86;}
+  .tag{font-size:11px;padding:2px 9px;border-radius:10px;}
+  .tag.buy{background:rgba(239,83,80,.18);color:#ef5350;}
+  .tag.sell{background:rgba(38,166,154,.18);color:#26a69a;}
+  .tag.none{background:#2a2e39;color:#787b86;}
+  .feed{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:9px;}
+  .sig{border-radius:11px;padding:11px 13px;border-left:4px solid;animation:fl 1.2s ease 2;}
+  .sig.buy{background:linear-gradient(90deg,rgba(239,83,80,.18),rgba(239,83,80,.04));border-color:#ef5350;}
+  .sig.sell{background:linear-gradient(90deg,rgba(38,166,154,.18),rgba(38,166,154,.04));border-color:#26a69a;}
+  .sig .row{display:flex;justify-content:space-between;align-items:center;}
+  .sig .nm2{font-size:15px;font-weight:800;}
+  .sig .px{font-size:18px;font-weight:800;}
+  .sig .meta{font-size:11px;color:#787b86;margin-top:5px;}
+  .sig .risk{font-size:11.5px;margin-top:5px;color:#f0b90b;}
+  .sys{align-self:center;font-size:11px;color:#787b86;background:rgba(255,255,255,.05);padding:4px 12px;border-radius:10px;}
+  .bar{padding:10px 12px;border-top:1px solid #2a2e39;display:flex;gap:8px;flex:none;}
+  .bar input{flex:1;background:#2a2e39;border:1px solid #2a2e39;border-radius:8px;color:#d1d4dc;padding:9px 12px;font-size:13px;outline:none;}
+  .bar input:focus{border-color:#f0b90b;}
+  .bar button{flex:none;background:#f0b90b;border:none;color:#1a1a1a;font-weight:700;border-radius:8px;padding:9px 16px;cursor:pointer;}
+  ::-webkit-scrollbar{width:7px;height:7px;} ::-webkit-scrollbar-thumb{background:#2a2e39;border-radius:4px;}
+</style>
+</head>
+<body>
+<header>
+  <h1>缠论<span>多品种预警</span> · 总览</h1>
+  <div class="conn"><span class="dot" id="dot"></span><span id="connTxt">连接中…</span></div>
+  <div class="conn" id="devs"></div>
+  <div class="sp"></div>
+  <div class="conn mut">上次刷新 <span id="upd" class="gold">–</span></div>
+  <select id="simSym"></select>
+  <button class="btn buy" onclick="simulate('buy')">模拟买入</button>
+  <button class="btn sell" onclick="simulate('sell')">模拟卖出</button>
+  <button class="btn" onclick="refresh()">⟳ 刷新</button>
+  <div id="qr"></div>
+</header>
+<main>
+  <div class="left">
+    <div class="cards">
+      <div class="card"><div class="k">监听品种</div><div class="v" id="cWatch">–</div></div>
+      <div class="card"><div class="k">总交易笔数</div><div class="v" id="cTrades">–</div></div>
+      <div class="card"><div class="k">总盈亏(元)</div><div class="v gold" id="cMoney">–</div></div>
+      <div class="card"><div class="k">平均胜率</div><div class="v green" id="cWin">–</div></div>
+      <div class="card"><div class="k">平均盈亏比</div><div class="v" id="cPl">–</div></div>
+      <div class="card"><div class="k">最大回撤(元)</div><div class="v red" id="cMdd">–</div></div>
+    </div>
+    <div class="panel">
+      <div class="ph"><span>品种状态（点击行查看详情）</span><span class="mut" id="cntInfo"></span></div>
+      <div style="flex:1;overflow:auto;">
+        <table>
+          <thead><tr><th>品种</th><th>最新价</th><th>涨跌</th><th>最新信号</th><th>笔数</th><th>交易/胜率</th><th>每手保证金</th><th></th></tr></thead>
+          <tbody id="tb"><tr><td colspan="8" class="mut" style="text-align:center;padding:30px;">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="right">
+    <div class="panel">
+      <div class="ph">实时信号流</div>
+      <div class="feed" id="feed"><div class="sys">等待信号…</div></div>
+      <div class="bar">
+        <input id="msg" placeholder="给手机端留言…" maxlength="120">
+        <button onclick="sendMsg()">发送</button>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let ws;
+const proto=location.protocol==='https:'?'wss':'ws';
+function fmtTime(ts){const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');
+  return p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());}
+function fmtYuan(v){return v==null?'–':Number(v).toLocaleString('zh',{maximumFractionDigits:0})+' 元';}
+
+function renderOverview(ov){
+  const g=ov.global||{};
+  $('cWatch').textContent=g.watch;
+  $('cTrades').textContent=g.total_trades;
+  $('cMoney').textContent=fmtYuan(g.total_money);
+  $('cWin').textContent=g.avg_win_rate!=null?g.avg_win_rate+'%':'–';
+  $('cPl').textContent=g.avg_pl_ratio!=null?g.avg_pl_ratio:'–';
+  $('cMdd').textContent=fmtYuan(g.max_dd);
+  $('upd').textContent=ov.updated_at||'–';
+  $('cntInfo').textContent='共 '+(ov.items||[]).length+' 个';
+  let opts='';
+  (ov.items||[]).forEach(it=>{opts+=`<option value="${it.symbol}">${it.name} ${it.symbol}</option>`;});
+  $('simSym').innerHTML=opts;
+  let html='';
+  (ov.items||[]).forEach(it=>{
+    const up=it.change>=0, col=up?'red':'green';
+    const ls=it.last_signal;
+    const sigTag=ls?`<span class="tag ${ls.side}">${ls.side==='buy'?'买':'卖'} ${ls.price}</span>`
+                   :`<span class="tag none">无</span>`;
+    const st=it.stats||{};
+    const wr=st.win_rate!=null?`<span class="mut">${st.trades}笔</span> <b class="green">${st.win_rate}%</b>`:'<span class="mut">–</span>';
+    const mg=it.margin_per_lot!=null?`<span class="mut">${it.margin_per_lot}</span>`:'<span class="mut">–</span>';
+    html+=`<tr data-sym="${it.symbol}" id="row-${it.symbol}">
+      <td><div class="nm">${it.name}</div><div class="cd">${it.symbol}</div></td>
+      <td><b>${it.last_price??'–'}</b></td>
+      <td class="${col}">${up?'▲':'▼'} ${Math.abs(it.change||0)}</td>
+      <td>${sigTag}</td>
+      <td class="mut">${it.bi_count??'–'}</td>
+      <td>${wr}</td>
+      <td>${mg}</td>
+      <td class="gold">›</td></tr>`;
+  });
+  $('tb').innerHTML=html;
+  document.querySelectorAll('#tb tr[data-sym]').forEach(tr=>{
+    tr.onclick=()=>location.href='/pc/detail?sym='+tr.dataset.sym;
+  });
+}
+
+function riskLine(r){
+  if(!r)return '';
+  return `<div class="risk">止损 <b>${r.stop_loss}</b>（${r.stop_pts}点） · 建议 <b>${r.lots}手</b> · 区间 ${r.entry_low}~${r.entry_high} · 保证金 ${r.margin_per_lot}元/手</div>`;
+}
+function addSignal(s){
+  if(!s.symbol)return;
+  clearFirst();
+  const buy=s.side==='buy';
+  const div=document.createElement('div');
+  div.className='sig '+(buy?'buy':'sell');
+  div.innerHTML=`<div class="row"><span class="nm2">${s.name} <span class="mut" style="font-size:11px">${s.symbol}</span></span>
+    <span class="px">${s.price}</span></div>
+    ${riskLine(s.risk)}
+    <div class="meta">${buy?'▲ 买入':'▼ 卖出'} · ${s.reason||''} · ${fmtTime(s.time||s.ts)}</div>`;
+  $('feed').prepend(div);
+  const row=$('row-'+s.symbol); if(row){row.classList.remove('flash');void row.offsetWidth;row.classList.add('flash');}
+}
+function addChat(m){clearFirst();
+  const d=document.createElement('div');d.className='sys';
+  d.textContent=(m.from==='m'?'手机端':'电脑端')+'：'+(m.text||'');$('feed').prepend(d);}
+function clearFirst(){const e=$('feed .sys');if(e&&e.textContent==='等待信号…')e.remove();}
+function sys(t){const d=document.createElement('div');d.className='sys';d.textContent=t;$('feed').prepend(d);}
+
+async function refresh(){
+  sys('正在刷新…');
+  try{const r=await fetch('/api/overview');renderOverview(await r.json());}catch(e){}
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'refresh_request'}));
+}
+async function simulate(side){
+  const sym=$('simSym').value;
+  const r=await fetch('/api/simulate?sym='+encodeURIComponent(sym)+'&side='+side);
+  const d=await r.json();
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify(Object.assign({type:'signal'},d)));
+}
+function sendMsg(){const v=$('msg').value.trim();if(!v)return;
+  ws.send(JSON.stringify({type:'chat',text:v}));$('msg').value='';}
+
+function connect(){
+  ws=new WebSocket(`${proto}://${location.host}/ws?role=pc`);
+  ws.onopen=()=>{$('dot').classList.add('on');$('connTxt').textContent='已连接';};
+  ws.onclose=()=>{$('dot').classList.remove('on');$('connTxt').textContent='重连中…';setTimeout(connect,1500);};
+  ws.onmessage=e=>{
+    const m=JSON.parse(e.data);
+    if(m.type==='init'){renderDevices(m.devices);(m.history||[]).forEach(x=>{if(x.type==='signal')addSignal(x);else if(x.type==='chat')addChat(x);});}
+    else if(m.type==='devices'){renderDevices(m.devices);}
+    else if(m.type==='overview'){renderOverview(m.overview);}
+    else if(m.type==='signal'){addSignal(m);}
+    else if(m.type==='chat'||m.type==='ack'){addChat(m);}
+    else if(m.type==='status'){sys(m.text);}
+  };
+}
+function renderDevices(d){
+  const pc=(d||[]).filter(x=>x.role==='pc').length, m=(d||[]).filter(x=>x.role==='m').length;
+  $('devs').innerHTML=`<span class="mut">电脑 ${pc} · 手机 ${m}</span>`;
+}
+$('msg').addEventListener('keydown',e=>{if(e.key==='Enter')sendMsg();});
+(async function init(){
+  try{const ov=await (await fetch('/api/overview')).json();renderOverview(ov);}catch(e){}
+  connect();
+  try{new QRCode($('qr'),{text:location.origin.replace(location.hostname,'192.168.1.5')+'/m',width:74,height:74});}catch(e){}
+})();
+</script>
+</body>
+</html>

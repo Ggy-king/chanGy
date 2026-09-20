@@ -1,0 +1,32 @@
+# ===== Python 编译缓存 =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ===== 本地便携依赖（83MB 第三方库，切勿入库）=====
+# 本仓库自带的 pylibs/ 是为了不污染本机 Anaconda 环境而拷入的第三方库，
+# 新机器/他人克隆后不要保留本目录，直接按 requirements.txt 用 pip 安装即可。
+pylibs/
+
+# ===== 运行时生成的缓存/日志 =====
+fees_cache.json
+*.log
+
+# ===== 调试与临时产物（每次改图/截图自检时生成的临时文件）=====
+_*.py
+_*.html
+_*.png
+_*.jpg
+_edge_*/
+shot_*.png
+dbg_*.py
+
+# ===== IDE / 编辑器 =====
+.vscode/
+.idea/
+*.swp
+
+# ===== 操作系统 =====
+.DS_Store
+Thumbs.db
+Desktop.ini

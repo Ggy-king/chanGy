@@ -1,0 +1,11 @@
+# 缠论期货预警系统 · Python 依赖
+# 本机另有一份便携依赖在 pylibs/（已 gitignore，不随仓库走）；
+# 在干净环境（Python 3.12+）上请用：pip install -r requirements.txt
+akshare==1.18.96
+fastapi==0.141.1
+uvicorn==0.53.0
+websockets==17.1
+pydantic==2.13.5
+requests==2.34.2
+pandas==2.2.2
+numpy

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#131722">
+<title>缠论预警 · 手机</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  :root{--bg:#131722;--panel:#1e222d;--line:#2a2e39;--txt:#d1d4dc;--mut:#787b86;
+        --red:#ef5350;--green:#26a69a;--gold:#f0b90b;}
+  html,body{height:100%;overflow:hidden;}
+  body{background:var(--bg);color:var(--txt);font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;display:block;}
+  #app{margin:0 auto;width:100%;max-width:480px;min-width:0;height:100vh;height:100dvh;
+       display:flex;flex-direction:column;background:var(--bg);position:relative;overflow:hidden;}
+  .status{flex:none;padding:11px 14px;background:var(--panel);border-bottom:1px solid var(--line);
+          display:flex;align-items:center;gap:9px;white-space:nowrap;}
+  .conn{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--mut);flex:none;}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--red);}
+  .dot.on{background:var(--green);box-shadow:0 0 8px var(--green);}
+  .title{font-size:15px;font-weight:800;flex:none;}
+  .dev{font-size:11px;color:var(--mut);margin-left:auto;flex:none;}
+  #feed{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;}
+  .sig{border-radius:12px;padding:13px;border-left:5px solid;animation:fl 1.1s ease 2;cursor:pointer;}
+  .sig.buy{background:linear-gradient(90deg,rgba(239,83,80,.18),rgba(239,83,80,.05));border-color:var(--red);}
+  .sig.sell{background:linear-gradient(90deg,rgba(38,166,154,.18),rgba(38,166,154,.05));border-color:var(--green);}
+  .sig .row{display:flex;justify-content:space-between;align-items:center;}
+  .sig .nm{font-size:16px;font-weight:800;}
+  .sig .cd{font-size:11px;color:var(--mut);margin-left:6px;}
+  .sig .px{font-size:21px;font-weight:800;}
+  .sig .meta{font-size:11.5px;color:var(--mut);margin-top:6px;display:flex;justify-content:space-between;}
+  .tag{font-size:10px;padding:2px 8px;border-radius:10px;background:#2a2e39;color:var(--mut);}
+  .tag.real{background:rgba(240,185,11,.2);color:var(--gold);}
+  .sys{align-self:center;font-size:11px;color:var(--mut);background:rgba(255,255,255,.05);padding:4px 12px;border-radius:11px;}
+  .empty{color:var(--mut);font-size:13px;text-align:center;margin-top:48px;line-height:1.9;}
+  .bar{flex:none;display:flex;gap:7px;padding:9px 10px calc(9px + env(safe-area-inset-bottom));
+       background:var(--panel);border-top:1px solid var(--line);align-items:center;}
+  .qbtn{flex:none;border:1px solid var(--line);background:#2a2e39;color:var(--txt);border-radius:9px;
+        padding:10px 12px;font-size:13px;cursor:pointer;white-space:nowrap;}
+  .qbtn:active{filter:brightness(1.3);}
+  .bar input{flex:1;min-width:0;background:#2a2e39;border:1px solid var(--line);border-radius:9px;
+       color:var(--txt);padding:10px 12px;font-size:14px;outline:none;}
+  .bar button{flex:none;background:var(--gold);border:none;color:#1a1a1a;font-weight:700;border-radius:9px;
+        padding:10px 14px;font-size:14px;cursor:pointer;}
+  @keyframes fl{0%,100%{filter:brightness(1);}50%{filter:brightness(1.7);}}
+  ::-webkit-scrollbar{width:0;}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="status">
+    <div class="conn"><span class="dot" id="dot"></span><span id="connTxt">连接中…</span></div>
+    <div class="title">缠论预警中心</div>
+    <div class="dev" id="devs"></div>
+  </div>
+  <div id="feed"><div class="empty">暂无预警<br>某品种出现买卖点会在这里弹出<br>点卡片可看该品种K线详情</div></div>
+  <div class="bar">
+    <button class="qbtn" onclick="refresh()">⟳ 刷新</button>
+    <input id="msg" placeholder="给电脑留言…" maxlength="80">
+    <button onclick="sendMsg()">发送</button>
+  </div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+let ws;
+const proto=location.protocol==='https:'?'wss':'ws';
+
+function beep(up){
+  try{navigator.vibrate&&navigator.vibrate([40,30,40]);}catch(e){}
+  try{
+    const ac=beep.ctx||(beep.ctx=new (window.AudioContext||window.webkitAudioContext)());
+    if(ac.state==='suspended')ac.resume();
+    [0,0.14].forEach((dt,i)=>{
+      const o=ac.createOscillator(),g=ac.createGain();o.connect(g);g.connect(ac.destination);
+      o.frequency.value=up?(560+i*140):(560-i*120);o.type='sine';
+      const t0=ac.currentTime+dt;g.gain.setValueAtTime(.0001,t0);
+      g.gain.exponentialRampToValueAtTime(.2,t0+.02);g.gain.exponentialRampToValueAtTime(.0001,t0+.32);
+      o.start(t0);o.stop(t0+.33);
+    });
+  }catch(e){}
+}
+function fmt(ts){const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');
+  return p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());}
+function clearFirst(){const e=$('feed .empty');if(e)e.remove();}
+function sys(t){clearFirst();const d=document.createElement('div');d.className='sys';d.textContent=t;$('feed').prepend(d);}
+
+function riskLine(r){
+  if(!r)return '';
+  return `<div class="meta" style="color:#f0b90b;"><span>止损 ${r.stop_loss}（${r.stop_pts}点）· 建议 <b>${r.lots}手</b></span></div>
+    <div class="meta" style="color:#f0b90b;"><span>区间 ${r.entry_low}~${r.entry_high} · 保证金 ${r.margin_per_lot}元/手</span></div>`;
+}
+function addSignal(s){
+  if(!s.symbol)return;
+  clearFirst();beep(s.side==='buy');
+  const buy=s.side==='buy';
+  const tag=s.simulated?'<span class="tag">模拟</span>':'<span class="tag real">实时</span>';
+  const d=document.createElement('div');
+  d.className='sig '+(buy?'buy':'sell');
+  const action=buy?'▲ 买入':'▼ 平仓';
+  d.innerHTML=`<div class="row"><span class="nm">${action}<span class="cd">${s.name} ${s.symbol}</span></span>
+      <span class="px">${s.price}</span></div>
+    ${riskLine(s.risk)}
+    <div class="meta"><span>${s.reason||''}</span>${tag}</div>
+    <div class="meta"><span>${s.from==='server'?'服务器':(s.from==='pc'?'电脑端':'本设备')}</span><span>${fmt(s.time||s.ts)}</span></div>`;
+  const q='?sym='+encodeURIComponent(s.symbol)+'&side='+encodeURIComponent(s.side)+
+          '&price='+encodeURIComponent(s.price)+'&time='+encodeURIComponent(s.time||s.ts)+
+          '&reason='+encodeURIComponent(s.reason||'');
+  d.onclick=()=>location.href='/m/detail'+q;
+  $('feed').prepend(d);
+}
+function addChat(m){clearFirst();const d=document.createElement('div');d.className='sys';
+  d.textContent=(m.from==='m'?'我（手机）':'电脑端')+'：'+(m.text||'');$('feed').prepend(d);}
+
+function refresh(){sys('正在刷新…');if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'refresh_request'}));}
+function sendMsg(){const v=$('msg').value.trim();if(!v)return;
+  ws.send(JSON.stringify({type:'chat',text:v}));addChat({text:v,from:'m',ts:Date.now()/1000});$('msg').value='';}
+
+function renderDevices(d){
+  const pc=(d||[]).filter(x=>x.role==='pc').length;
+  $('devs').textContent=pc?('电脑在线'):'电脑离线';
+}
+function connect(){
+  ws=new WebSocket(`${proto}://${location.host}/ws?role=m`);
+  ws.onopen=()=>{$('dot').classList.add('on');$('connTxt').textContent='已连接';};
+  ws.onclose=()=>{$('dot').classList.remove('on');$('connTxt').textContent='重连中…';setTimeout(connect,1500);};
+  ws.onmessage=e=>{
+    const m=JSON.parse(e.data);
+    if(m.type==='init'){renderDevices(m.devices);(m.history||[]).forEach(x=>{
+        if(x.type==='signal')addSignal(x);else if(x.type==='chat')addChat(x);});}
+    else if(m.type==='devices'){renderDevices(m.devices);}
+    else if(m.type==='signal'){addSignal(m);}
+    else if(m.type==='chat'||m.type==='ack'){addChat(m);}
+    else if(m.type==='status'){sys(m.text);}
+  };
+}
+$('msg').addEventListener('keydown',e=>{if(e.key==='Enter')sendMsg();});
+document.addEventListener('touchstart',()=>{if(beep.ctx&&beep.ctx.state==='suspended')beep.ctx.resume();},{once:false});
+connect();
+</script>
+</body>
+</html>
