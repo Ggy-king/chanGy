@@ -13,7 +13,7 @@
 启动预警服务.bat
 
 :: 方式二：命令行（注意本机一律用 py，不是 python）
-cd /d E:\agent\chan
+cd /d E:\agent\chanGy
 py server.py
 ```
 
@@ -30,7 +30,7 @@ py server.py
 ## 二、目录结构（每个文件/文件夹干嘛）
 
 ```
-E:\agent\chan\
+E:\agent\chanGy\
 ├─ server.py              ★服务入口：FastAPI 路由 + WebSocket + 每15分钟定时刷新
 ├─ engine.py             ★行情引擎：拉数据→缠论结构→买卖点→回测统计→风控手数
 ├─ config.py             ★全局配置：合约清单、级别、账户/风控参数（最常改的文件）

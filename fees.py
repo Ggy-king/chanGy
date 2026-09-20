@@ -5,7 +5,7 @@
 """
 import os, sys, json, time, datetime as dt, re
 
-sys.path.insert(0, r'E:\agent\chan\pylibs')
+sys.path.insert(0, r'E:\agent\chanGy\pylibs')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
