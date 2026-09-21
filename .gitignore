@@ -8,18 +8,24 @@ __pycache__/
 # 新机器/他人克隆后不要保留本目录，直接按 requirements.txt 用 pip 安装即可。
 pylibs/
 
+# ===== 虚拟环境 =====
+.venv/
+venv/
+env/
+
 # ===== 运行时生成的缓存/日志 =====
 fees_cache.json
 *.log
 
 # ===== 调试与临时产物（每次改图/截图自检时生成的临时文件）=====
-_*.py
-_*.html
-_*.png
-_*.jpg
-_edge_*/
-shot_*.png
-dbg_*.py
+# 注意：加 / 前缀锚定到项目根目录，避免误伤子目录的 __init__.py 等正常文件
+/_*.py
+/_*.html
+/_*.png
+/_*.jpg
+/_edge_*/
+/shot_*.png
+/dbg_*.py
 
 # ===== IDE / 编辑器 =====
 .vscode/
