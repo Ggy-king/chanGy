@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>回测 · 缠论预警</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  :root{--bg:#131722;--panel:#1e222d;--line:#2a2e39;--txt:#d1d4dc;--mut:#787b86;
+        --red:#ef5350;--green:#26a69a;--gold:#f0b90b;}
+  body{background:var(--bg);color:var(--txt);
+       font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
+  .top{display:flex;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--line);
+       position:sticky;top:0;background:var(--bg);z-index:10;}
+  .top h1{font-size:16px;white-space:nowrap;}
+  .back{color:var(--mut);text-decoration:none;font-size:13px;}
+  .back:hover{color:var(--txt);}
+  select{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:6px;
+         padding:7px 10px;font-size:13px;}
+  .seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;}
+  .seg button{background:var(--panel);color:var(--mut);border:none;padding:7px 12px;font-size:13px;cursor:pointer;}
+  .seg button.on{background:#2c3140;color:var(--gold);}
+  .go{background:var(--gold);color:#131722;border:none;border-radius:6px;padding:8px 18px;
+      font-size:13px;font-weight:700;cursor:pointer;}
+  .go:disabled{opacity:.5;cursor:default;}
+  .meta{color:var(--mut);font-size:12px;margin-left:auto;}
+  .wrap{padding:16px 18px;}
+  .cards{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px;min-width:110px;}
+  .card .k{color:var(--mut);font-size:11px;margin-bottom:4px;}
+  .card .v{font-size:20px;font-weight:700;}
+  .pos{color:var(--red);} .neg{color:var(--green);} .neu{color:var(--gold);}
+  .chartbox{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:16px;}
+  #chart{width:100%;height:460px;}
+  #eq{width:100%;height:160px;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th,td{padding:7px 8px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap;}
+  th{color:var(--mut);font-weight:600;}
+  td.l,th.l{text-align:left;}
+  .tblwrap{max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:8px;}
+  .tblwrap table{margin:0;}
+  .loading{color:var(--mut);font-size:14px;padding:40px;text-align:center;}
+  .err{color:var(--red);padding:20px;}
+  h2{font-size:14px;margin:6px 0 10px;color:var(--txt);}
+</style>
+</head>
+<body>
+<div class="top">
+  <a class="back" href="/pc">← 返回总览</a>
+  <h1>回测</h1>
+  <select id="sym">
+    <option value="ALL">全部品种</option>
+  </select>
+  <div class="seg" id="seg">
+    <button data-m="1">近1月</button>
+    <button data-m="2">近2月</button>
+    <button data-m="3">近3月</button>
+    <button data-m="0">全部</button>
+  </div>
+  <button class="go" id="go">开始回测</button>
+  <span class="meta" id="meta"></span>
+</div>
+
+<div class="wrap">
+  <div id="result"><div class="loading">选择品种和时间区间，点"开始回测"。</div></div>
+</div>
+
+<script>
+const SYMS = [
+  ["jd2611","鸡蛋"],["UR2701","尿素"],["MA2610","甲醇"],["jm2701","焦煤"],
+  ["CF2701","棉花"],["SA2701","纯碱"],["SR2701","白糖"],["v2701","PVC"],
+  ["CJ2701","红枣"],["SP2611","纸浆"],["RU2701","橡胶"],["lh2611","生猪"],
+  ["AP2701","苹果"],["pg2611","液化气"],["RB2701","螺纹钢"],["NI2610","沪镍"],["PK2611","花生"]
+];
+const sel = document.getElementById('sym');
+SYMS.forEach(([s,n])=>{ const o=document.createElement('option'); o.value=s; o.textContent=n+' '+s; sel.appendChild(o); });
+
+const q = new URLSearchParams(location.search);
+let months = parseInt(q.get('months')||'1',10);
+if(![0,1,2,3].includes(months)) months=1;
+if(q.get('sym')) sel.value = q.get('sym'); else sel.value='ALL';
+
+const seg = document.getElementById('seg');
+function markSeg(){ seg.querySelectorAll('button').forEach(b=> b.classList.toggle('on', +b.dataset.m===months)); }
+markSeg();
+seg.querySelectorAll('button').forEach(b=> b.onclick=()=>{ months=+b.dataset.m; markSeg(); });
+
+let chart=null, eqChart=null;
+function fmtT(ts){ const d=new Date(ts*1000); return d.toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+function cls(v){ return v>0?'pos':(v<0?'neg':'neu'); }
+function num(v,f){ if(v===null||v===undefined) return '—'; return f?f(v):v; }
+
+document.getElementById('go').onclick = run;
+function run(){
+  const go=document.getElementById('go'); go.disabled=true;
+  document.getElementById('result').innerHTML='<div class="loading">正在回测（全部品种需拉17个数据，稍候十几秒）…</div>';
+  document.getElementById('meta').textContent='';
+  fetch('/api/backtest?sym='+encodeURIComponent(sel.value)+'&months='+months)
+    .then(r=>r.json()).then(r=>{ go.disabled=false; render(r); })
+    .catch(e=>{ go.disabled=false; document.getElementById('result').innerHTML='<div class="err">请求失败：'+e+'</div>'; });
+}
+
+function render(r){
+  const box=document.getElementById('result');
+  if(r.mode==='all'){ renderAll(r,box); } else { renderOne(r,box); }
+}
+
+function card(k,v,c){ return '<div class="card"><div class="k">'+k+'</div><div class="v '+ (c||'') +'">'+v+'</div></div>'; }
+
+function renderOne(r,box){
+  const s=r.stats;
+  document.getElementById('meta').textContent = r.name+' '+r.symbol+' · 15分钟 · '+r.start.slice(0,16)+' ~ '+r.end.slice(0,16)+' · '+r.bar_count+'根K线 · '+r.bi_count+'笔';
+  let h='<div class="cards">'
+    + card('笔数', r.bi_count, 'neu')
+    + card('交易笔数', s.trades, 'neu')
+    + card('胜率', num(s.win_rate,null)+(s.win_rate!==null?'%':''), cls(s.win_rate-50))
+    + card('盈亏比', num(s.pl_ratio), 'neu')
+    + card('净盈亏(元)', s.total_money, cls(s.total_money))
+    + card('最大回撤(元)', s.max_dd, 'neg')
+    + '</div>';
+  h+='<div class="chartbox"><div id="chart"></div></div>';
+  h+='<div class="chartbox"><h2>资金曲线（元/手）</h2><div id="eq"></div></div>';
+  h+='<h2>交易明细</h2><div class="tblwrap"><table><thead><tr>'
+    +'<th class="l">#</th><th class="l">买时间</th><th>买价</th><th class="l">卖时间</th><th>卖价</th><th>盈亏(点)</th><th>盈亏(元)</th></tr></thead><tbody>';
+  r.trades.forEach((t,i)=>{
+    h+='<tr><td class="l">'+(i+1)+'</td><td class="l">'+fmtT(t.buy_time)+'</td><td>'+t.buy_price
+      +'</td><td class="l">'+fmtT(t.sell_time)+'</td><td>'+t.sell_price
+      +'</td><td class="'+cls(t.pts)+'">'+(t.pts>0?'+':'')+t.pts
+      +'</td><td class="'+cls(t.money)+'">'+(t.money>0?'+':'')+t.money+'</td></tr>';
+  });
+  h+='</tbody></table></div>';
+  box.innerHTML=h;
+
+  if(chart){ chart.remove(); chart=null; }
+  if(eqChart){ eqChart.remove(); eqChart=null; }
+  chart = LightweightCharts.createChart(document.getElementById('chart'),{
+    layout:{background:{color:'#131722'},textColor:'#d1d4dc'},
+    grid:{vertLines:{color:'#1e222d'},horzLines:{color:'#1e222d'}},
+    rightPriceScale:{borderColor:'#2a2e39'},
+    timeScale:{borderColor:'#2a2e39',timeVisible:true,secondsVisible:false}});
+  const kc=chart.addCandlestickSeries({upColor:'#ef5350',downColor:'#26a69a',wickUpColor:'#ef5350',wickDownColor:'#26a69a',borderVisible:false});
+  kc.setData(r.kline); kc.setMarkers(r.markers||[]);
+  const bl=chart.addLineSeries({color:'#f0b90b',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
+  bl.setData(r.bi_line||[]);
+  chart.timeScale().fitContent();
+
+  eqChart = LightweightCharts.createChart(document.getElementById('eq'),{
+    layout:{background:{color:'#131722'},textColor:'#9ca3af',fontSize:10},
+    grid:{vertLines:{color:'#1e222d'},horzLines:{color:'#1e222d'}},
+    rightPriceScale:{borderColor:'#2a2e39'},timeScale:{timeVisible:true,borderVisible:false}});
+  const es=eqChart.addAreaSeries({lineColor:'#f0b90b',topColor:'rgba(240,185,11,.3)',bottomColor:'rgba(240,185,11,.02)'});
+  es.setData(r.equity||[]); eqChart.timeScale().fitContent();
+}
+
+function renderAll(r,box){
+  const g=r.global;
+  document.getElementById('meta').textContent='全部品种 · 15分钟 · 共'+g.watch+'个品种'+(g.failed?'（失败'+g.failed+'）':'');
+  let h='<div class="cards">'
+    + card('品种数', g.watch, 'neu')
+    + card('总交易笔数', g.total_trades, 'neu')
+    + card('总净盈亏(元)', g.total_money, cls(g.total_money))
+    + card('平均胜率', (g.avg_win_rate!=null?g.avg_win_rate+'%':'—'), 'neu')
+    + '</div>';
+  h+='<h2>各品种明细</h2><div class="tblwrap"><table><thead><tr>'
+    +'<th class="l">品种</th><th>K线</th><th>笔</th><th>交易</th><th>胜率</th><th>盈亏比</th><th>净盈亏(元)</th><th>最大回撤(元)</th></tr></thead><tbody>';
+  r.rows.forEach(x=>{
+    if(x.error){ h+='<tr><td class="l">'+x.name+' '+x.symbol+'</td><td colspan="6" class="err">'+x.error+'</td></tr>'; return; }
+    h+='<tr style="cursor:pointer" onclick="openOne(\''+x.symbol+'\')"><td class="l">'+x.name+' '+x.symbol+'</td><td>'+x.bars
+      +'</td><td>'+x.bi+'</td><td>'+x.trades
+      +'</td><td>'+(x.win_rate!=null?x.win_rate+'%':'—')
+      +'</td><td>'+(x.pl_ratio!=null?x.pl_ratio:'—')
+      +'</td><td class="'+cls(x.total_money)+'">'+(x.total_money>0?'+':'')+x.total_money
+      +'</td><td class="neg">'+x.max_dd+'</td></tr>';
+  });
+  h+='</tbody></table></div>';
+  box.innerHTML=h;
+}
+function openOne(s){ location.href='/pc/backtest?sym='+s+'&months='+months; }
+
+// 默认加载
+if(sel.value==='ALL' && !q.get('sym')){ run(); } else { run(); }
+</script>
+</body>
+</html>

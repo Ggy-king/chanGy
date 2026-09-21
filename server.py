@@ -21,7 +21,7 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 
-import engine, fees
+import engine, fees, backtest
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
 PORT = 8000
@@ -159,6 +159,11 @@ async def page_m_detail():
     return FileResponse(os.path.join(WEB_DIR, 'm_detail.html'))
 
 
+@app.get('/pc/backtest')
+async def page_backtest():
+    return FileResponse(os.path.join(WEB_DIR, 'pc_backtest.html'))
+
+
 @app.get('/api/overview')
 async def api_overview():
     return JSONResponse(engine.get_overview())
@@ -179,6 +184,11 @@ async def api_simulate(sym: str, side: str = 'buy'):
     if side not in ('buy', 'sell'):
         side = 'buy'
     return JSONResponse(engine.simulate(sym, side))
+
+
+@app.get('/api/backtest')
+async def api_backtest(sym: str = 'ALL', months: int = 1):
+    return JSONResponse(backtest.run_backtest(sym, months))
 
 
 @app.websocket('/ws')
