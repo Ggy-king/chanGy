@@ -8,6 +8,8 @@
 
 ## 一、怎么启动
 
+### Windows（老方式，不变）
+
 ```bat
 :: 方式一：双击
 启动预警服务.bat
@@ -16,6 +18,27 @@
 cd /d E:\agent\chanGy
 py server.py
 ```
+
+### macOS（首次使用：装一次环境，以后不用再装）
+
+```bash
+cd ~/Desktop/chanGy                            # 进入项目目录
+brew install python@3.12                       # 没有 3.12 时才需要（pandas 2.2.2 要求 ≤3.12）
+/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv .venv   # 创建虚拟环境
+.venv/bin/pip install -r requirements.txt      # 安装依赖
+```
+
+### macOS（日常启动：就三行，忘了照抄）
+
+```bash
+cd ~/Desktop/chanGy
+source .venv/bin/activate    # 进入虚拟环境（不激活直接 python server.py 会报 No module named 'akshare'）
+python server.py
+```
+
+> - 懒得激活的等价写法：`.venv/bin/python server.py`，效果完全一样
+> - 退出虚拟环境：`deactivate`（其实不退出直接关终端也行，下次重开终端要重新 source）
+> - `.venv/` 已加入 .gitignore，不会传上 GitHub
 
 启动后控制台会打印：
 - 电脑总览：http://localhost:8000/pc
@@ -121,9 +144,10 @@ MARGIN_RATE     = 0.10      # 保证金率估算
 
 ## 五、依赖与环境
 
-- Python 3.12，本机用 `py` 启动。
-- `pylibs/` 是当时为了不污染 Anaconda 环境拷进来的第三方库（akshare / fastapi / uvicorn / websockets / pydantic …），**已 gitignore，不要传 GitHub**。
-- 全新机器：`pip install -r requirements.txt`，并把代码里 `sys.path.insert(...'pylibs')` 那行删掉（或留着也不影响，只要本机有 pylibs）。
+- Windows：Python 3.12，本机用 `py` 启动，第三方库走 `pylibs/` 便携目录。
+- macOS：Python 3.12（`brew install python@3.12`），依赖装在项目根的 `.venv/` 虚拟环境里，启动前先 `source .venv/bin/activate`。
+- `pylibs/` 是当时为了不污染 Anaconda 环境拷进来的第三方库（akshare / fastapi / uvicorn / websockets / pydantic …），**已 gitignore，不要传 GitHub**；Mac 上不需要它。
+- 全新机器：`pip install -r requirements.txt`（Mac 上是 `.venv/bin/pip install -r requirements.txt`）。
 - 前端图表用 CDN 的 lightweight-charts 4.1.3，首次打开需联网。
 
 ---
