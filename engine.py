@@ -7,6 +7,8 @@
 - 带锁缓存；新信号按品种独立去重；手续费来自 fees.py
 """
 import sys, os, threading, time, datetime as dt
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, 'pylibs'))
@@ -20,6 +22,10 @@ _lock = threading.Lock()
 _cache_overview = None
 _cache_detail = {}     # symbol -> 单品种完整快照
 _pushed = {}          # symbol -> (side, time) 已推送基线
+
+# 并发抓取线程池（akshare 对新浪接口有频率限制，6 并发安全且最快）
+_FETCH_WORKERS = 6
+_pool = ThreadPoolExecutor(max_workers=_FETCH_WORKERS, thread_name_prefix='cl-fetcher')
 
 
 def _dd_stats(curve):
@@ -179,8 +185,20 @@ def _stats(signals, mult, open_cost, close_cost):
     }, trades
 
 
-def _fetch_one(symbol):
-    return ak.futures_zh_minute_sina(symbol=symbol, period=config.PERIOD_MAIN)
+def _fetch_one(symbol, retries=3):
+    """拉取单品种分钟 K 线，带指数退避重试。新浪接口偶发 429/超时常见。"""
+    last = None
+    for i in range(retries):
+        try:
+            df = ak.futures_zh_minute_sina(symbol=symbol, period=config.PERIOD_MAIN)
+            if df is None or len(df) == 0:
+                raise RuntimeError('empty data')
+            return df
+        except Exception as e:
+            last = e
+            if i < retries - 1:
+                time.sleep(0.8 * (2 ** i))
+    raise RuntimeError(f'fetch {symbol} failed after {retries} retries: {last}')
 
 
 def build_symbol(symbol):
@@ -312,6 +330,80 @@ def simulate(symbol, side):
 def refresh_and_detect_all():
     """刷新全部品种；返回 (总览, 新信号列表)。新信号才推。"""
     ov = get_overview(force=True)
+    new_sigs = []
+    for c in config.CONTRACTS:
+        sym = c['symbol']
+        snap = _cache_detail.get(sym)
+        if not snap:
+            continue
+        sig = snap.get('last_signal')
+        key = (sig['side'], sig['time']) if sig else None
+        old = _pushed.get(sym)
+        if key and key != old:
+            _pushed[sym] = key
+            r = {'symbol': sym, 'name': snap['name'], 'side': sig['side'],
+                 'price': sig['price'], 'time': sig['time'],
+                 'reason': sig.get('reason') or sig.get('label', '')}
+            if sig['side'] == 'buy':
+                r['risk'] = snap.get('risk')
+            new_sigs.append(r)
+        elif key:
+            _pushed[sym] = key
+    return ov, new_sigs
+
+
+async def refresh_and_detect_all_async():
+    """并行刷新全部品种（线程池+信号量限并发）；返回 (总览, 新信号列表)。"""
+    loop = asyncio.get_event_loop()
+    sem = asyncio.Semaphore(_FETCH_WORKERS)
+
+    async def one(sym):
+        async with sem:
+            return await loop.run_in_executor(_pool, build_symbol, sym)
+
+    snaps = await asyncio.gather(
+        *[one(c['symbol']) for c in config.CONTRACTS],
+        return_exceptions=True,
+    )
+    items, all_trades = [], []
+    for c, snap in zip(config.CONTRACTS, snaps):
+        sym = c['symbol']
+        if isinstance(snap, Exception):
+            items.append({'symbol': sym, 'name': c['name'], 'error': str(snap)[:80]})
+            continue
+        with _lock:
+            _cache_detail[sym] = snap
+        items.append(_overview_item(snap))
+        all_trades.extend(snap.get('trade_list', []))
+    ok = [x for x in items if not x.get('error')]
+    total_sig = sum((x['stats'] or {}).get('trades', 0) for x in ok)
+    total_money = round(sum((x['stats'] or {}).get('total_money', 0) for x in ok), 1)
+    win_rs = [x['stats']['win_rate'] for x in ok if x.get('stats') and x['stats'].get('win_rate') is not None]
+    pl_rs = [x['stats']['pl_ratio'] for x in ok if x.get('stats') and x['stats'].get('pl_ratio') is not None]
+    dd_list = [x['stats']['max_dd'] for x in ok if x.get('stats') and x['stats'].get('max_dd')]
+    all_trades.sort(key=lambda t: t['time'])
+    curve, cum = [], 0.0
+    for t in all_trades:
+        cum += t['money']
+        curve.append(cum)
+    mdd, add = _dd_stats(curve)
+    global_stats = {
+        'watch': len(ok), 'failed': len(items) - len(ok),
+        'total_trades': total_sig,
+        'total_money': total_money,
+        'avg_win_rate': round(sum(win_rs) / len(win_rs), 1) if win_rs else None,
+        'avg_pl_ratio': round(sum(pl_rs) / len(pl_rs), 2) if pl_rs else None,
+        'max_dd': mdd,
+        'avg_dd': add,
+        'today_signals': len([x for x in ok if x.get('last_signal')]),
+    }
+    ov = {'updated_at': dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+          'account_capital': config.ACCOUNT_CAPITAL,
+          'risk_pct': config.RISK_PER_TRADE,
+          'items': items, 'global': global_stats}
+    with _lock:
+        _cache_overview = ov
+    # 检测新信号（与 sync 版同口径）
     new_sigs = []
     for c in config.CONTRACTS:
         sym = c['symbol']

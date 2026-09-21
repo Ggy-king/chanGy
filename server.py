@@ -88,10 +88,9 @@ manager = Manager()
 
 async def do_refresh(broadcast=True):
     """刷新全部品种；有新信号则广播。"""
-    loop = asyncio.get_event_loop()
     if broadcast:
         await manager.broadcast({'type': 'status', 'text': '正在刷新全部品种行情…', 'ts': time.time()})
-    ov, new_sigs = await loop.run_in_executor(None, engine.refresh_and_detect_all)
+    ov, new_sigs = await engine.refresh_and_detect_all_async()
     if broadcast:
         await manager.broadcast({'type': 'overview', 'overview': ov, 'ts': time.time()})
         for s in new_sigs:
@@ -109,9 +108,11 @@ async def do_refresh(broadcast=True):
 
 
 async def periodic():
-    loop = asyncio.get_event_loop()
     # 启动先拉一次并记录各品种信号基线（不把历史信号当新预警）
-    await loop.run_in_executor(None, engine.refresh_and_detect_all)
+    try:
+        await engine.refresh_and_detect_all_async()
+    except Exception as e:
+        print('initial refresh error:', e)
     while True:
         now = dt.datetime.now()
         nxt = now.replace(minute=(now.minute // 15) * 15, second=20, microsecond=0)
