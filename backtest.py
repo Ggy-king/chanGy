@@ -17,6 +17,7 @@ import pandas as pd
 import akshare as ak
 from chanlun import merge_klines, find_fenxing, build_bi
 import config, fees
+import engine   # 仅用 update_frozen_stats：回测结果覆盖列表页统计
 
 PERIODS = [0, 1, 2, 3]   # 0=全部
 
@@ -138,6 +139,10 @@ def _one(symbol, months):
     fee = fees.get(symbol)
     st, trades, curve = _stats(signals, fee.get('multiplier', 10),
                                fee.get('open_cost', 0), fee.get('close_cost', 0))
+    try:
+        engine.update_frozen_stats(symbol, st)   # 回测结果覆盖列表页统计并冻结
+    except Exception:
+        pass
     return {
         'symbol': symbol, 'name': name,
         'period': config.PERIOD_MAIN,

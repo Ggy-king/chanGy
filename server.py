@@ -108,9 +108,10 @@ async def do_refresh(broadcast=True):
 
 
 async def periodic():
-    # 启动先拉一次并记录各品种信号基线（不把历史信号当新预警）
+    # 启动先拉一次并记录各品种信号基线（不把历史信号当新预警），完成后广播总览
     try:
-        await engine.refresh_and_detect_all_async()
+        ov, _ = await engine.refresh_and_detect_all_async()
+        await manager.broadcast({'type': 'overview', 'overview': ov, 'ts': time.time()})
     except Exception as e:
         print('initial refresh error:', e)
     while True:
@@ -168,6 +169,13 @@ async def page_backtest():
 @app.get('/api/overview')
 async def api_overview():
     return JSONResponse(engine.get_overview())
+
+
+@app.get('/api/quotes')
+async def api_quotes():
+    """轻量行情：一次请求拉全部品种最新价/涨跌/保证金，不触碰K线与统计。"""
+    loop = asyncio.get_event_loop()
+    return JSONResponse(await loop.run_in_executor(None, engine.get_quotes))
 
 
 @app.get('/api/detail')

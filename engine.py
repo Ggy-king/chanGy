@@ -6,8 +6,9 @@
 - 风控：模拟账户 10 万，单笔最大风险 1%，按止损距离反推手数，给出开仓区间/保证金
 - 带锁缓存；新信号按品种独立去重；手续费来自 fees.py
 """
-import sys, os, threading, time, datetime as dt
+import sys, os, re, json, threading, time, datetime as dt
 import asyncio
+import requests
 from concurrent.futures import ThreadPoolExecutor
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +29,32 @@ _pushed = {}          # symbol -> (side, time) 已推送基线
 # 仅内存存储，服务重启自动清空
 _live3_cache = {}
 _LIVE3_CACHE_MAX = 3000  # 每品种缓存上限（≈3~4周的3分钟K线，内存可忽略）
+
+# 回测统计冻结：显式回测结果落盘，启动时加载；
+# 15分钟常规刷新不再重算，由 update_frozen_stats（回测按钮触发）覆盖
+_DIR = os.path.dirname(os.path.abspath(__file__))
+_STATS_CACHE_FILE = os.path.join(_DIR, '.stats_cache.json')
+
+
+def _load_stats_cache():
+    try:
+        if os.path.exists(_STATS_CACHE_FILE):
+            with open(_STATS_CACHE_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        print('load stats cache error:', e)
+    return {}
+
+
+def _save_stats_cache():
+    try:
+        with open(_STATS_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(_stats_frozen, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print('save stats cache error:', e)
+
+
+_stats_frozen = _load_stats_cache()
 
 # 并发抓取线程池（akshare 对新浪接口有频率限制，6 并发安全且最快）
 _FETCH_WORKERS = 6
@@ -151,46 +178,6 @@ def _build(df, symbol, name):
     }
 
 
-def _stats(signals, mult, open_cost, close_cost):
-    """只做多：底分型买 -> 顶分型卖 配对。胜率/盈亏比/回撤/总盈亏。返回 dict + trade_list。"""
-    trades = []
-    buy = None
-    for s in signals:
-        if s['side'] == 'buy' and buy is None:
-            buy = s
-        elif s['side'] == 'sell' and buy is not None:
-            pnl_pts = s['price'] - buy['price']
-            pnl_money = pnl_pts * mult - (open_cost or 0) - (close_cost or 0)
-            trades.append({'time': buy['time'], 'pts': pnl_pts, 'money': pnl_money})
-            buy = None
-    n = len(trades)
-    if n == 0:
-        return {'trades': 0, 'win_rate': None, 'pl_ratio': None,
-                'avg_win_pts': 0, 'avg_loss_pts': 0, 'total_money': 0,
-                'max_dd': 0, 'avg_dd': 0}, []
-    pts = [t['pts'] for t in trades]
-    wins = [p for p in pts if p > 0]
-    losses = [p for p in pts if p <= 0]
-    avg_win = sum(wins) / len(wins) if wins else 0.0
-    avg_loss = sum(losses) / len(losses) if losses else 0.0
-    total_money = round(sum(t['money'] for t in trades), 1)
-    curve, cum = [], 0.0
-    for t in trades:
-        cum += t['money']
-        curve.append(cum)
-    max_dd, avg_dd = _dd_stats(curve)
-    return {
-        'trades': n,
-        'win_rate': round(len(wins) / n * 100, 1),
-        'pl_ratio': round(avg_win / abs(avg_loss), 2) if avg_loss != 0 else None,
-        'avg_win_pts': round(avg_win, 1),
-        'avg_loss_pts': round(avg_loss, 1),
-        'total_money': total_money,
-        'max_dd': max_dd,
-        'avg_dd': avg_dd,
-    }, trades
-
-
 def _fetch_one(symbol, retries=3, period=None):
     """拉取单品种分钟 K 线，带指数退避重试。新浪接口偶发 429/超时常见。"""
     period = period or config.PERIOD_MAIN
@@ -214,11 +201,11 @@ def build_symbol(symbol):
     snap = _build(df, symbol, name)
     fee = fees.get(symbol)
     snap['fee'] = fee
-    stats, trades = _stats(snap['signals'],
-                           fee.get('multiplier', 10), fee.get('open_cost', 0),
-                           fee.get('close_cost', 0))
-    snap['stats'] = stats
-    snap['trade_list'] = trades
+    # 不自动跑回测统计：只有用户显式点“回测”后，结果才会写进 _stats_frozen 并落盘。
+    # 启动/15分钟常规刷新只关心 K 线、分型、笔、最新信号；没有回测统计的品种 stats 为空。
+    with _lock:
+        snap['stats'] = _stats_frozen.get(symbol)
+    snap['trade_list'] = []
     # 给最近一个买入信号挂上风控建议（只做多，平仓信号不影响买入建议）
     last_buy = None
     for x in reversed(snap.get('signals', [])):
@@ -254,11 +241,61 @@ def _overview_item(snap):
     }
 
 
+def _build_overview_from_config_and_stats():
+    """启动时无缓存，用 config.CONTRACTS + 持久化回测统计拼一个可展示的总览骨架。
+
+    - 品种名、回测统计（胜率/回撤/交易笔数等）立即显示
+    - 价格、涨跌、信号、笔数先空，由 /api/quotes 和 15 分钟后台刷新逐步填充
+    - 不拉取任何 K 线，不阻塞列表页
+    """
+    items = []
+    for c in config.CONTRACTS:
+        sym = c['symbol']
+        st = _stats_frozen.get(sym)
+        items.append({
+            'symbol': sym, 'name': c['name'],
+            'last_price': None, 'change': None, 'change_pct': None,
+            'bi_count': None, 'bar_count': None,
+            'updated_at': None, 'margin_per_lot': None,
+            'last_signal': None, 'stats': st, 'error': None,
+        })
+    ok = [x for x in items if not x.get('error')]
+    total_sig = sum((x['stats'] or {}).get('trades', 0) for x in ok)
+    total_money = round(sum((x['stats'] or {}).get('total_money', 0) for x in ok), 1)
+    win_rs = [x['stats']['win_rate'] for x in ok
+              if x.get('stats') and x['stats'].get('win_rate') is not None]
+    pl_rs = [x['stats']['pl_ratio'] for x in ok
+             if x.get('stats') and x['stats'].get('pl_ratio') is not None]
+    dd_list = [x['stats']['max_dd'] for x in ok
+               if x.get('stats') and x['stats'].get('max_dd')]
+    global_stats = {
+        'watch': len(ok), 'failed': 0,
+        'total_trades': total_sig,
+        'total_money': total_money,
+        'avg_win_rate': round(sum(win_rs) / len(win_rs), 1) if win_rs else None,
+        'avg_pl_ratio': round(sum(pl_rs) / len(pl_rs), 2) if pl_rs else None,
+        'max_dd': max(dd_list) if dd_list else 0,
+        'avg_dd': 0,
+        'today_signals': 0,
+    }
+    return {'updated_at': dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'account_capital': config.ACCOUNT_CAPITAL,
+            'risk_pct': config.RISK_PER_TRADE,
+            'items': items, 'global': global_stats}
+
+
 def get_overview(force=False):
     global _cache_overview
     with _lock:
         if _cache_overview and not force:
             return _cache_overview
+    if not force:
+        # 无缓存（刚启动，后台并行首拉进行中）：用配置+持久化回测统计立即拼一个总览骨架。
+        # 价格/信号先空，页面秒开、行可点；等 /api/quotes 和 15分钟刷新逐步填上新鲜数据。
+        ov = _build_overview_from_config_and_stats()
+        with _lock:
+            _cache_overview = ov
+        return ov
     items = []
     all_trades = []
     for c in config.CONTRACTS:
@@ -431,6 +468,78 @@ async def refresh_and_detect_all_async():
         elif key:
             _pushed[sym] = key
     return ov, new_sigs
+
+
+def update_frozen_stats(symbol, stats):
+    """显式回测完成后，用回测结果覆盖列表页该品种的统计（并冻结）。
+    常规刷新不再改统计，直到下一次显式回测。"""
+    if not stats:
+        return
+    with _lock:
+        _stats_frozen[symbol] = dict(stats)
+        _save_stats_cache()   # 显式回测结果立即落盘，重启后仍可见
+        snap = _cache_detail.get(symbol)
+        if snap is not None:
+            snap['stats'] = dict(stats)
+        if _cache_overview:
+            for it in _cache_overview.get('items', []):
+                if it.get('symbol') == symbol and not it.get('error'):
+                    it['stats'] = dict(stats)
+            _recompute_overview_global(_cache_overview)
+
+
+def _recompute_overview_global(ov):
+    """按 items 里各品种的 stats 重算顶部汇总卡片。"""
+    if not ov or not ov.get('items'):
+        return
+    ok = [x for x in ov['items'] if not x.get('error')]
+    win_rs = [x['stats']['win_rate'] for x in ok
+              if x.get('stats') and x['stats'].get('win_rate') is not None]
+    pl_rs = [x['stats']['pl_ratio'] for x in ok
+             if x.get('stats') and x['stats'].get('pl_ratio') is not None]
+    dd_list = [x['stats']['max_dd'] for x in ok
+               if x.get('stats') and x['stats'].get('max_dd')]
+    g = ov.setdefault('global', {})
+    g['watch'] = len(ok)
+    g['failed'] = len(ov['items']) - len(ok)
+    g['total_trades'] = sum((x['stats'] or {}).get('trades', 0) for x in ok)
+    g['total_money'] = round(sum((x['stats'] or {}).get('total_money', 0) for x in ok), 1)
+    g['avg_win_rate'] = round(sum(win_rs) / len(win_rs), 1) if win_rs else None
+    g['avg_pl_ratio'] = round(sum(pl_rs) / len(pl_rs), 2) if pl_rs else None
+    g['max_dd'] = max(dd_list) if dd_list else 0
+
+
+def get_quotes():
+    """轻量实时行情：一次请求拉全部品种最新价（新浪hq接口）。
+    只更新 最新价/涨跌/保证金，不重拉K线、不重算笔和统计。"""
+    syms = [c['symbol'] for c in config.CONTRACTS]
+    url = 'https://hq.sinajs.cn/list=' + ','.join('nf_' + s for s in syms)
+    r = requests.get(url, headers={'Referer': 'https://finance.sina.com.cn'}, timeout=6)
+    r.encoding = 'gbk'
+    out = {}
+    for line in r.text.splitlines():
+        m = re.match(r'var hq_str_nf_(\w+)="(.*)"', line.strip())
+        if not m:
+            continue
+        sym, f = m.group(1), m.group(2).split(',')
+        if len(f) < 11 or not f[8]:
+            continue  # 非交易时段个别品种可能返回空
+        try:
+            price, prev_settle = float(f[8]), float(f[10])
+        except ValueError:
+            continue
+        if price <= 0 or prev_settle <= 0:
+            continue
+        fee = fees.get(sym)
+        mult = fee.get('multiplier', 10) or 10
+        change = round(price - prev_settle, 1)
+        out[sym] = {
+            'price': round(price, 1),
+            'change': change,
+            'change_pct': round(change / prev_settle * 100, 2),
+            'margin_per_lot': round(price * mult * config.MARGIN_RATE, 0),
+        }
+    return {'updated_at': dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'quotes': out}
 
 
 # ==================== 看盘模式（多周期，独立于15分钟预警） ====================
