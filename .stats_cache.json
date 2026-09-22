@@ -1,0 +1,138 @@
+{
+  "jd2611": {
+    "trades": 23,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 19330.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "UR2701": {
+    "trades": 18,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 9280.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "MA2610": {
+    "trades": 20,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 26420.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "jm2701": {
+    "trades": 22,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 66330.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "CF2701": {
+    "trades": 20,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 17203.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "SA2701": {
+    "trades": 18,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 8900.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "SR2701": {
+    "trades": 23,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 10228.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "v2701": {
+    "trades": 22,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 10221.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "CJ2701": {
+    "trades": 14,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 9716.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "SP2611": {
+    "trades": 21,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 14240.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "RU2701": {
+    "trades": 28,
+    "win_rate": 96.4,
+    "pl_ratio": 2.01,
+    "total_money": 68932.0,
+    "max_dd": 1306.0,
+    "avg_dd": 1306.0
+  },
+  "lh2611": {
+    "trades": 24,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 64960.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "AP2701": {
+    "trades": 24,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 18650.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "pg2611": {
+    "trades": 25,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 100180.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "RB2701": {
+    "trades": 20,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 5850.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "NI2610": {
+    "trades": 21,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 30164.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "PK2611": {
+    "trades": 19,
+    "win_rate": 94.7,
+    "pl_ratio": null,
+    "total_money": 6564.0,
+    "max_dd": 4.0,
+    "avg_dd": 4.0
+  }
+}

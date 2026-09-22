@@ -124,23 +124,31 @@ function renderOverview(ov){
   $('cPl').textContent=g.avg_pl_ratio!=null?g.avg_pl_ratio:'–';
   $('cMdd').textContent=fmtYuan(g.max_dd);
   $('upd').textContent=ov.updated_at||'–';
+  if(!ov.items||!ov.items.length){
+    $('tb').innerHTML='<tr><td colspan="8" class="mut" style="text-align:center;padding:30px;">正在拉取 17 个品种行情（首次约 1 分钟），价格将先于统计出来…</td></tr>';
+    $('cntInfo').textContent='';
+    return;
+  }
   $('cntInfo').textContent='共 '+(ov.items||[]).length+' 个';
   let opts='';
   (ov.items||[]).forEach(it=>{opts+=`<option value="${it.symbol}">${it.name} ${it.symbol}</option>`;});
   $('simSym').innerHTML=opts;
   let html='';
   (ov.items||[]).forEach(it=>{
-    const up=it.change>=0, col=up?'red':'green';
+    const hasChg=it.change!=null;
+    const up=hasChg&&it.change>=0;
+    const col=up?'red':'green';
     const ls=it.last_signal;
     const sigTag=ls?`<span class="tag ${ls.side}">${ls.side==='buy'?'买':'卖'} ${ls.price}</span>`
                    :`<span class="tag none">无</span>`;
     const st=it.stats||{};
     const wr=st.win_rate!=null?`<span class="mut">${st.trades}笔</span> <b class="green">${st.win_rate}%</b>`:'<span class="mut">–</span>';
     const mg=it.margin_per_lot!=null?`<span class="mut">${it.margin_per_lot}</span>`:'<span class="mut">–</span>';
+    const chg=hasChg?(up?'▲':'▼')+' '+Math.abs(it.change):'–';
     html+=`<tr data-sym="${it.symbol}" id="row-${it.symbol}">
       <td><div class="nm">${it.name}</div><div class="cd">${it.symbol}</div></td>
       <td><b>${it.last_price??'–'}</b></td>
-      <td class="${col}">${up?'▲':'▼'} ${Math.abs(it.change||0)}</td>
+      <td class="${hasChg?col:'mut'}">${chg}</td>
       <td>${sigTag}</td>
       <td class="mut">${it.bi_count??'–'}</td>
       <td>${wr}</td>
@@ -210,10 +218,41 @@ function renderDevices(d){
 }
 $('msg').addEventListener('keydown',e=>{if(e.key==='Enter')sendMsg();});
 (async function init(){
-  try{const ov=await (await fetch('/api/overview')).json();renderOverview(ov);}catch(e){}
+  try{
+    const ov=await (await fetch('/api/overview')).json();
+    renderOverview(ov);
+    if(!ov.items||!ov.items.length) pollOverview();
+  }catch(e){ pollOverview(); }
   connect();
+  refreshQuotes(); setInterval(refreshQuotes,20000);   // 轻量行情：只刷最新价/涨跌/保证金
   try{new QRCode($('qr'),{text:location.origin.replace(location.hostname,'192.168.1.5')+'/m',width:74,height:74});}catch(e){}
 })();
+
+async function pollOverview(){
+  // 启动首拉期间每3秒轻询一次，拿到数据即止（不触发后端重拉）
+  try{
+    const ov=await (await fetch('/api/overview')).json();
+    if(ov.items&&ov.items.length){renderOverview(ov);return;}
+  }catch(e){}
+  setTimeout(pollOverview,3000);
+}
+
+async function refreshQuotes(){
+  // 只更新表格里的 最新价/涨跌/保证金 三个格子，不动K线、统计和信号
+  try{
+    const q=await (await fetch('/api/quotes')).json();
+    const qs=q.quotes||{};
+    Object.keys(qs).forEach(sym=>{
+      const row=document.querySelector('#tb tr[data-sym="'+sym+'"]');
+      if(!row)return;
+      const it=qs[sym], tds=row.children;
+      const up=(it.change||0)>=0;
+      if(tds[1]) tds[1].innerHTML='<b>'+it.price+'</b>';
+      if(tds[2]){ tds[2].className=up?'red':'green'; tds[2].textContent=(up?'▲ ':'▼ ')+Math.abs(it.change||0); }
+      if(tds[6]) tds[6].innerHTML='<span class="mut">'+it.margin_per_lot+'</span>';
+    });
+  }catch(e){}
+}
 </script>
 </body>
 </html>
