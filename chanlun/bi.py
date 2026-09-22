@@ -1,102 +1,151 @@
 # -*- coding: utf-8 -*-
 """
-缠论 笔（bi）构建 —— 回归缠论原版（老笔口径）
-规则：
-1. 顶分型、底分型必须严格交替；连续出现同性质分型时，顶取更高、底取更低，前面的作废。
-2. 相邻顶底分型，经过 K 线包含处理后，分型中间K线的 idx 差 >= MIN_BI_GAP（老笔：中间至少
-   留出独立K线，含端点 >= 5 根合并K线），间隔不够则该反向分型作废、原端点保留。
-3. 向上笔终点(顶)必须高于起点(底)，向下笔终点(底)必须低于起点(顶)。
-4. 一个端点在被反向分型确认成笔前，若出现同性质更极端分型，则端点上移/下移，并同步回改
-   上一笔的终点，保证折线端点首尾相接、不断点、不出现连续同向笔。
-5. 成笔还要有真实推动：起点到终点的合并K线逐次创新高(向上)/新低(向下)至少 MIN_BREAKS 次，
-   否则只是横盘浅回调、不成笔（间隔够但推动不够的假笔在此被滤掉）。
-注意：已成交替笔的历史端点不回退（后视视角，回测只画已确认的正确笔）。
+缠论 笔（bi）构建 —— 严格移植 chan.py（Vespa314/chan.py）的 CBiList 算法
+
+配置与 chan.py 的 CChanConfig 默认值完全一致（经 CChan 正常调用时的实际配置）：
+- is_strict=True      严格笔：相邻顶底分型的【合并K线 idx 差】>= 4
+- bi_fx_check="strict" 分型有效性 STRICT 检查（两个分型各自3根K线的区域必须分离）
+- gap_as_kl=False     span 直接用合并K线 idx 差，不把跳空缺口折算成K线
+- bi_end_is_peak=True 端点必须是区间极值（两分型之间不能有K线越过端点）
+- bi_allow_sub_peak=True  允许次高点成笔（此时 update_peak 回退不启用）
+
+增量逻辑（批处理等价实现）：
+1. 同性质分型（连续两个顶/两个底）：新分型更极端则更新最后一笔的终点（笔延伸）。
+2. 异性质分型：满足 can_make_bi（span + fx_valid + end_is_peak）则成新笔，否则忽略。
+3. 第一笔成立前用 free_lst 缓存分型。
+
+所有判断均基于 K 线包含合并完成后的合并 K 线。
 """
 
-# 老笔：两分型中间K线 idx 差 >= 4（含端点共 >=5 根合并K线）；新笔可放宽到 3
-MIN_BI_GAP = 4
-# 成笔的推进台阶：从起点分型中间K线到终点分型中间K线，合并K线逐次创新高(up)/新低(down)
-# 至少 3 次。用于滤掉"间隔够但只横盘浅回调、没有真实推动"的假笔（如顶后仅2个台阶的小回撤）。
-MIN_BREAKS = 3
+# 严格笔：两分型中间K线 idx 差 >= 4（chan.py satisfy_bi_span，is_strict=True）
+MIN_BI_SPAN = 4
 
 
-def _breaks_count(merged, a, b, direction):
-    """从分型中间K线 a 到分型中间K线 b，合并K线逐次创新高/新低的台阶数（含 b）。"""
-    cnt = 0
-    if direction == 'down':
-        ref = float(merged['low'].iloc[a])
-        for k in range(a + 1, b + 1):
-            v = float(merged['low'].iloc[k])
-            if v < ref:
-                cnt += 1
-                ref = v
+def _fx_valid_strict(merged, a, b):
+    """
+    对应 chan.py KLine.check_fx_valid（FX_CHECK_METHOD.STRICT，非虚笔）。
+    a = 已确认端点分型(last_end)，b = 当前异性质分型。
+    分型 dict 含 t('top'/'bottom')、idx、high、low。
+    与 HALF 的区别：各取分型【三根】合并K线（含 pre/next）的极值做比较，更严格。
+    """
+    n = len(merged)
+
+    def hi(i):
+        return float(merged['high'].iloc[i]) if 0 <= i < n else float('inf')
+
+    def lo(i):
+        return float(merged['low'].iloc[i]) if 0 <= i < n else float('-inf')
+
+    # 当前分型 b 的 next（idx+1）在 b 确认时尚未走完（是当时最后一根合并K线），
+    # 必须用它"创建瞬间"的 init 高低点，与 chan.py 增量时序一致。
+    def bnext_hi(i):
+        return float(merged['init_high'].iloc[i]) if 0 <= i < n else float('inf')
+
+    def bnext_lo(i):
+        return float(merged['init_low'].iloc[i]) if 0 <= i < n else float('-inf')
+
+    if a['t'] == 'top':  # 顶 → 底
+        # item2_high = max(b.pre.high, b.high, b.next.high)，b.next 用创建瞬间值
+        item2_high = max(hi(b['idx'] - 1), float(b['high']), bnext_hi(b['idx'] + 1))
+        # self_low = min(a.pre.low, a.low, a.next.low)（a 早已定型，用合并值）
+        self_low = min(lo(a['idx'] - 1), float(a['low']), lo(a['idx'] + 1))
+        return float(a['high']) > item2_high and float(b['low']) < self_low
+    else:  # 底 → 顶
+        # item2_low = min(b.pre.low, b.low, b.next.low)，b.next 用创建瞬间值
+        item2_low = min(lo(b['idx'] - 1), float(b['low']), bnext_lo(b['idx'] + 1))
+        # cur_high = max(a.pre.high, a.high, a.next.high)（a 早已定型，用合并值）
+        cur_high = max(hi(a['idx'] - 1), float(a['high']), hi(a['idx'] + 1))
+        return float(a['low']) < item2_low and float(b['high']) > cur_high
+
+
+def _end_is_peak(merged, last_end, cur_end):
+    """
+    对应 chan.py BiList.end_is_peak。
+    底→顶：last_end 之后到 cur_end 之间，不能有任何合并K线 high 超过 cur_end.high；
+    顶→底：不能有任何合并K线 low 跌破 cur_end.low。
+    """
+    if last_end['t'] == 'bottom':
+        cmp_thred = float(cur_end['high'])
+        for k in range(last_end['idx'] + 1, cur_end['idx']):
+            if float(merged['high'].iloc[k]) > cmp_thred:
+                return False
     else:
-        ref = float(merged['high'].iloc[a])
-        for k in range(a + 1, b + 1):
-            v = float(merged['high'].iloc[k])
-            if v > ref:
-                cnt += 1
-                ref = v
-    return cnt
+        cmp_thred = float(cur_end['low'])
+        for k in range(last_end['idx'] + 1, cur_end['idx']):
+            if float(merged['low'].iloc[k]) < cmp_thred:
+                return False
+    return True
+
+
+def _can_make_bi(merged, last_end, cur):
+    """对应 chan.py CBiList.can_make_bi（bi_algo='normal'）。"""
+    # 1) span 检查（严格笔）
+    if cur['idx'] - last_end['idx'] < MIN_BI_SPAN:
+        return False
+    # 2) 分型有效性 STRICT 检查
+    if not _fx_valid_strict(merged, last_end, cur):
+        return False
+    # 3) 端点极值检查
+    if not _end_is_peak(merged, last_end, cur):
+        return False
+    return True
 
 
 def build_bi(top_fx, bottom_fx, merged):
+    # 合并所有分型，按 idx 排序（不预先做交替压缩，同性质分型交给状态机做端点延伸）
     allfx = [dict(f, t='top') for f in top_fx] + \
             [dict(f, t='bottom') for f in bottom_fx]
     allfx.sort(key=lambda x: x['idx'])
 
-    # 第一步：严格顶底交替，连续同性质分型取最极端
-    seq = []
-    for fx in allfx:
-        if seq and seq[-1]['t'] == fx['t']:
-            if fx['t'] == 'top' and fx['high'] > seq[-1]['high']:
-                seq[-1] = fx
-            elif fx['t'] == 'bottom' and fx['low'] < seq[-1]['low']:
-                seq[-1] = fx
-        else:
-            seq.append(fx)
+    bi_list = []    # 每笔 {'start': fx, 'end': fx}
+    last_end = None  # 最后一笔的终点分型
+    free_lst = []    # 第一笔成立前的缓存分型
 
-    if len(seq) < 2:
-        return []
-
-    # 第二步：状态机成笔
-    segs = []          # [{'start': fx, 'end': fx}, ...]
-    anchor = seq[0]    # 当前待定端点（上一笔终点 / 下一笔起点候选）
-    for j in range(1, len(seq)):
-        fx = seq[j]
-        if fx['t'] == anchor['t']:
-            # 同性质分型：更极端则移动端点，并回改上一笔终点
-            more_extreme = (fx['t'] == 'top' and fx['high'] > anchor['high']) or \
-                           (fx['t'] == 'bottom' and fx['low'] < anchor['low'])
-            if more_extreme:
-                anchor = fx
-                if segs:
-                    segs[-1]['end'] = fx
+    for klc in allfx:
+        if len(bi_list) == 0:
+            # —— 第一笔之前（对应 try_create_first_bi）——
+            made = False
+            for exist in free_lst:
+                if exist['t'] == klc['t']:
+                    continue
+                if _can_make_bi(merged, exist, klc):
+                    bi_list.append({'start': exist, 'end': klc})
+                    last_end = klc
+                    made = True
+                    break
+            if not made:
+                free_lst.append(klc)
+                last_end = klc
             continue
 
-        # 反性质分型：检查间隔、价格方向、推进台阶
-        gap = fx['idx'] - anchor['idx']
-        direction = 'up' if anchor['t'] == 'bottom' else 'down'
-        if direction == 'up':
-            valid = fx['high'] > anchor['low']
+        if klc['t'] == last_end['t']:
+            # —— 同性质分型：更极端则更新最后一笔终点（对应 try_update_end）——
+            last_bi = bi_list[-1]
+            if last_bi['start']['t'] == 'bottom':   # 向上笔，终点应为顶
+                if float(klc['high']) >= float(last_bi['end']['high']):
+                    last_bi['end'] = klc
+                    last_end = klc
+            else:                                    # 向下笔，终点应为底
+                if float(klc['low']) <= float(last_bi['end']['low']):
+                    last_bi['end'] = klc
+                    last_end = klc
         else:
-            valid = fx['low'] < anchor['high']
-        breaks = _breaks_count(merged, anchor['idx'], fx['idx'], direction)
-        if gap >= MIN_BI_GAP and valid and breaks >= MIN_BREAKS:
-            segs.append({'start': anchor, 'end': fx})
-            anchor = fx
-        # 间隔/方向/推进不够：该分型作废，anchor 保持，继续等待
+            # —— 异性质分型：能成笔则新增，否则忽略（allow_sub_peak=True，不做 update_peak）——
+            if _can_make_bi(merged, last_end, klc):
+                bi_list.append({'start': last_end, 'end': klc})
+                last_end = klc
 
+    # 转换为输出格式
     rows = []
-    for s in segs:
+    for s in bi_list:
         a, b = s['start'], s['end']
-        direction = 'up' if a['t'] == 'bottom' else 'down'
+        d = 'up' if a['t'] == 'bottom' else 'down'
         start_price = a['low'] if a['t'] == 'bottom' else a['high']
         end_price = b['high'] if b['t'] == 'top' else b['low']
         rows.append({
             'start_idx': int(a['idx']),
             'end_idx': int(b['idx']),
-            'direction': direction,
+            'direction': d,
             'start_price': round(float(start_price), 2),
             'end_price': round(float(end_price), 2),
             'start_datetime': a['datetime'],

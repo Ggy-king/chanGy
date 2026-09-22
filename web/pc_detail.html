@@ -13,10 +13,13 @@
   header a{color:#f0b90b;text-decoration:none;font-size:14px;}
   header .nm{font-size:19px;font-weight:800;line-height:1.1;}
   header .cd{font-size:12px;color:#787b86;}
-  .head-mid{flex:1;display:flex;justify-content:center;gap:18px;font-size:12.5px;color:#f0b90b;}
+  .head-mid{flex:1;display:flex;justify-content:center;gap:18px;font-size:12.5px;color:#f0b90b;margin-left: -40px;}
   .head-mid b{color:#d1d4dc;font-weight:700;}
   .price{text-align:right;} .price .p{font-size:24px;font-weight:800;line-height:1;}
   .btn{border:1px solid #2a2e39;background:#2a2e39;color:#d1d4dc;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;}
+  .seg{display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;margin-left: 40px;}
+  .seg button{background:#1e222d;color:#787b86;border:none;padding:7px 11px;font-size:12.5px;cursor:pointer;}
+  .seg button.on{background:#2c3140;color:#f0b90b;font-weight:700;}
   main{flex:1;display:flex;gap:14px;padding:14px 20px;overflow:hidden;}
   #chartbox{flex:1;min-width:0;background:#131722;border:1px solid #2a2e39;border-radius:12px;position:relative;}
   .side{width:300px;flex:none;display:flex;flex-direction:column;gap:12px;min-height:0;}
@@ -39,9 +42,16 @@
 <header>
   <a href="/pc">‹ 返回总览</a>
   <div><div class="nm" id="nm">加载中</div><div class="cd" id="cd"></div></div>
+  <div class="seg" id="periodSeg">
+    <button data-p="1">1分</button>
+    <button data-p="3">3分</button>
+    <button data-p="15" class="on">15分</button>
+    <button data-p="60">60分</button>
+    <button data-p="daily">日线</button>
+  </div>
   <div class="head-mid" id="hmid"></div>
   <div class="price"><div class="p" id="p">–</div><div id="chg" class="mut"></div></div>
-  <button class="btn" onclick="loadData(true)">⟳ 刷新</button>
+  <button class="btn" onclick="loadPeriod(currentPeriod)">⟳ 刷新</button>
 </header>
 <main>
   <div id="chartbox"></div>
@@ -71,6 +81,7 @@ const $=id=>document.getElementById(id);
 const params=new URLSearchParams(location.search);
 const SYM=params.get('sym')||'MA2610';
 let chart,candle,vol,bi;
+let currentPeriod='15', refreshTimer=null;
 let ws;
 const proto=location.protocol==='https:'?'wss':'ws';
 
@@ -128,6 +139,39 @@ async function loadData(force){
   });
   $('sigs').innerHTML=h||'<span class="mut">暂无</span>';
 }
+
+const PERIOD_LABEL={'1':'1分','3':'3分','15':'15分','60':'60分','daily':'日线'};
+
+function switchPeriod(p){
+  if(!PERIOD_LABEL[p]) return;
+  currentPeriod=p;
+  document.querySelectorAll('#periodSeg button').forEach(b=> b.classList.toggle('on', b.dataset.p===p));
+  if(refreshTimer){clearInterval(refreshTimer);}
+  loadPeriod(p);
+  refreshTimer=setInterval(()=>loadPeriod(currentPeriod), 60000);
+}
+
+async function loadPeriod(period){
+  try{
+    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period);
+    const s=await r.json();
+    if(s.error){ $('cd').textContent=SYM+' · 出错: '+s.error; return; }
+    const label=PERIOD_LABEL[period]||period;
+    const ts=new Date().toTimeString().slice(0,8);
+    $('nm').textContent=s.name;
+    $('cd').textContent=s.symbol+' · '+label+' · '+s.bar_count+'根/'+s.bi_count+'笔 · 更新 '+ts;
+    $('p').textContent=s.last_price;
+    const up=s.change>=0;
+    $('chg').innerHTML=`<span class="${up?'red':'green'}">${up?'▲':'▼'} ${Math.abs(s.change)} (${s.change_pct}%)</span>`;
+    candle.setData(s.kline);
+    vol.setData(s.vol||[]);
+    bi.setData(s.bi||[]);
+    candle.setMarkers(s.markers||[]);
+  }catch(e){
+    // 轮询出错不崩溃，等下一轮
+  }
+}
+
 function sendChat(){
   const v=$('chat').value.trim(); if(!v)return;
   if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'chat',text:v}));
@@ -140,6 +184,11 @@ function connect(){
   ws.onclose=()=>setTimeout(connect,1500);
 }
 initChart();loadData();connect();
+refreshTimer=setInterval(()=>loadPeriod(currentPeriod), 60000);
+document.querySelectorAll('#periodSeg button').forEach(b=> b.onclick=()=>switchPeriod(b.dataset.p));
+if(params.get('period') && PERIOD_LABEL[params.get('period')] && params.get('period')!=='15'){
+  setTimeout(()=>switchPeriod(params.get('period')), 800);
+}
 </script>
 </body>
 </html>

@@ -424,3 +424,51 @@ async def refresh_and_detect_all_async():
         elif key:
             _pushed[sym] = key
     return ov, new_sigs
+
+
+# ==================== 看盘模式（多周期，独立于15分钟预警） ====================
+
+def _merge_to_period(df1m, n):
+    """把1分钟K线合成 n 分钟K线（n=3 等非原生周期）。"""
+    import pandas as pd
+    df = df1m.reset_index(drop=True).copy()
+    df['datetime'] = pd.to_datetime(df['datetime'])
+    df['_grp'] = df.index // n
+    agg = df.groupby('_grp').agg({
+        'datetime': 'first', 'open': 'first', 'high': 'max',
+        'low': 'min', 'close': 'last', 'volume': 'sum',
+    }).reset_index(drop=True)
+    return agg
+
+
+def get_live(symbol, period='15'):
+    """看盘模式：拉指定周期K线，算合并/分型/笔，返回精简快照。
+    period: '1','3','15','60','daily'。3分钟由1分钟合成，日线用日线接口。
+    完全独立，不写入 _cache_detail，不影响15分钟预警与回测。"""
+    name = config.CONTRACT_MAP[symbol]['name']
+    if period == 'daily':
+        df = ak.futures_zh_daily_sina(symbol=symbol)
+        if df is not None and 'date' in df.columns:
+            df = df.rename(columns={'date': 'datetime'})
+    elif period == '3':
+        df1m = ak.futures_zh_minute_sina(symbol=symbol, period='1')
+        df = _merge_to_period(df1m, 3)
+    else:
+        df = ak.futures_zh_minute_sina(symbol=symbol, period=period)
+    if df is None or len(df) == 0:
+        raise RuntimeError(f'empty {period} data')
+    snap = _build(df, symbol, name)
+    snap['period'] = period
+    label = period + ('分' if period != 'daily' else '线')
+    for s in snap.get('signals', []):
+        s['reason'] = s.get('reason', '').replace('15分', label)
+        s['label'] = s.get('label', '').replace('15分', label)
+    return {
+        'symbol': snap['symbol'], 'name': snap['name'], 'period': period,
+        'updated_at': snap['updated_at'],
+        'bar_count': snap['bar_count'], 'bi_count': snap['bi_count'],
+        'last_price': snap['last_price'],
+        'change': snap['change'], 'change_pct': snap['change_pct'],
+        'kline': snap['kline'], 'vol': snap.get('vol', []),
+        'bi': snap['bi'], 'markers': snap['markers'],
+    }

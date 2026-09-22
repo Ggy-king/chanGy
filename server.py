@@ -192,6 +192,17 @@ async def api_backtest(sym: str = 'ALL', months: int = 1):
     return JSONResponse(backtest.run_backtest(sym, months))
 
 
+@app.get('/api/live')
+async def api_live(sym: str, period: str = '15'):
+    """看盘模式：指定周期K线+笔（1/3/15/60/daily），独立于15分钟预警缓存。"""
+    if period not in ('1', '3', '15', '60', 'daily'):
+        period = '15'
+    try:
+        return JSONResponse(engine.get_live(sym, period))
+    except Exception as e:
+        return JSONResponse({'symbol': sym, 'error': str(e)[:120]}, status_code=200)
+
+
 @app.websocket('/ws')
 async def ws_endpoint(ws: WebSocket):
     role = ws.query_params.get('role', 'pc')
