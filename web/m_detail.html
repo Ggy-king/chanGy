@@ -61,6 +61,32 @@ var U_REASON=params.get('reason')||'';
 var N=160;
 var chart,candle,bi;
 
+// ===== 图表视图状态持久化：只记住"缩放力度"（页面容纳多少根K线），
+// 位置永远锚定右侧最新K线——返回列表再进、换品种、刷新都一致 =====
+var VIEW_KEY='cl_chart_view';
+var _saveT=null;
+function saveView(){
+  try{
+    var bs=chart.timeScale().options().barSpacing;
+    if(isFinite(bs)&&bs>0) localStorage.setItem(VIEW_KEY,JSON.stringify({barSpacing:bs}));
+  }catch(e){}
+}
+function saveViewSoon(){ if(_saveT)return; _saveT=setTimeout(function(){_saveT=null;saveView();},300); }
+function applyView(){
+  var raw=null; try{raw=localStorage.getItem(VIEW_KEY);}catch(e){}
+  if(raw){
+    try{
+      var r=JSON.parse(raw);
+      if(r&&isFinite(r.barSpacing)&&r.barSpacing>0){
+        chart.timeScale().applyOptions({barSpacing:r.barSpacing,rightOffset:3});
+        chart.timeScale().scrollToRealTime();
+        return;
+      }
+    }catch(e){}
+  }
+  chart.timeScale().fitContent();
+}
+
 function chartW(){
   var el=$('chart');
   return Math.min(el.clientWidth||window.innerWidth,window.innerWidth);
@@ -80,7 +106,9 @@ function buildChart(k,markers,biArr){
   candle.setData(k);
   bi.setData(biArr);
   candle.setMarkers(markers);
-  chart.timeScale().fitContent();
+  applyView();
+  // 用户每次缩放/平移都保存视图状态
+  chart.timeScale().subscribeVisibleLogicalRangeChange(saveViewSoon);
 }
 
 function buyAdviceHtml(price, reason, r){

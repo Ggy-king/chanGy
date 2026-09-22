@@ -85,6 +85,33 @@ let currentPeriod='15', refreshTimer=null;
 let ws;
 const proto=location.protocol==='https:'?'wss':'ws';
 
+// ===== 图表视图状态持久化：只记住"缩放力度"（页面容纳多少根K线），
+// 位置永远锚定右侧最新K线——返回列表再进、换品种、切级别、刷新都一致 =====
+const VIEW_KEY='cl_chart_view';
+let _saveT=null;
+function saveView(){
+  try{
+    const bs=chart.timeScale().options().barSpacing;
+    if(isFinite(bs)&&bs>0) localStorage.setItem(VIEW_KEY,JSON.stringify({barSpacing:bs}));
+  }catch(e){}
+}
+function saveViewSoon(){ if(_saveT)return; _saveT=setTimeout(()=>{_saveT=null;saveView();},300); }
+function applyView(){
+  let raw=null; try{raw=localStorage.getItem(VIEW_KEY);}catch(e){}
+  if(raw){
+    try{
+      const r=JSON.parse(raw);
+      if(r&&isFinite(r.barSpacing)&&r.barSpacing>0){
+        // 恢复同样的缩放力度，然后滚到最右侧（最新K线在右边）
+        chart.timeScale().applyOptions({barSpacing:r.barSpacing,rightOffset:3});
+        chart.timeScale().scrollToRealTime();
+        return;
+      }
+    }catch(e){}
+  }
+  chart.timeScale().fitContent();
+}
+
 function initChart(){
   const el=$('chartbox');
   chart=LightweightCharts.createChart(el,{
@@ -100,6 +127,8 @@ function initChart(){
   vol.priceScale().applyOptions({scaleMargins:{top:.82,bottom:0}});
   bi=chart.addLineSeries({color:'#f0b90b',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
   new ResizeObserver(()=>chart.applyOptions({width:el.clientWidth,height:el.clientHeight})).observe(el);
+  // 用户每次缩放/平移都保存视图状态
+  chart.timeScale().subscribeVisibleLogicalRangeChange(saveViewSoon);
 }
 
 function fmt(ts){const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');
@@ -116,7 +145,7 @@ async function loadData(force){
   vol.setData(s.vol||[]);
   bi.setData(s.bi||[]);
   candle.setMarkers(s.markers||[]);
-  chart.timeScale().fitContent();
+  applyView();
   const st=s.stats||{};
   $('sTr').textContent=st.trades??'–';
   $('sWr').textContent=st.win_rate!=null?st.win_rate+'%':'–';
@@ -145,6 +174,7 @@ const PERIOD_LABEL={'1':'1分','3':'3分','15':'15分','60':'60分','daily':'日
 function switchPeriod(p){
   if(!PERIOD_LABEL[p]) return;
   currentPeriod=p;
+  try{localStorage.setItem('cl_chart_period',p);}catch(e){}   // 记住上次使用的级别
   document.querySelectorAll('#periodSeg button').forEach(b=> b.classList.toggle('on', b.dataset.p===p));
   if(refreshTimer){clearInterval(refreshTimer);}
   loadPeriod(p);
@@ -188,6 +218,10 @@ refreshTimer=setInterval(()=>loadPeriod(currentPeriod), 60000);
 document.querySelectorAll('#periodSeg button').forEach(b=> b.onclick=()=>switchPeriod(b.dataset.p));
 if(params.get('period') && PERIOD_LABEL[params.get('period')] && params.get('period')!=='15'){
   setTimeout(()=>switchPeriod(params.get('period')), 800);
+}else{
+  // 没有URL参数时，恢复上次使用的级别
+  let sp=null; try{sp=localStorage.getItem('cl_chart_period');}catch(e){}
+  if(sp&&PERIOD_LABEL[sp]&&sp!=='15') setTimeout(()=>switchPeriod(sp), 800);
 }
 </script>
 </body>
