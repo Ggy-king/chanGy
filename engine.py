@@ -23,6 +23,12 @@ _cache_overview = None
 _cache_detail = {}     # symbol -> 单品种完整快照
 _pushed = {}          # symbol -> (side, time) 已推送基线
 
+# 看盘模式3分钟K线缓存：symbol -> {时间字符串: K线dict}
+# 已完成的K线不可变，缓存让可回看的历史超过新浪1分钟接口的窗口（越看越多）；
+# 仅内存存储，服务重启自动清空
+_live3_cache = {}
+_LIVE3_CACHE_MAX = 3000  # 每品种缓存上限（≈3~4周的3分钟K线，内存可忽略）
+
 # 并发抓取线程池（akshare 对新浪接口有频率限制，6 并发安全且最快）
 _FETCH_WORKERS = 6
 _pool = ThreadPoolExecutor(max_workers=_FETCH_WORKERS, thread_name_prefix='cl-fetcher')
@@ -185,12 +191,13 @@ def _stats(signals, mult, open_cost, close_cost):
     }, trades
 
 
-def _fetch_one(symbol, retries=3):
+def _fetch_one(symbol, retries=3, period=None):
     """拉取单品种分钟 K 线，带指数退避重试。新浪接口偶发 429/超时常见。"""
+    period = period or config.PERIOD_MAIN
     last = None
     for i in range(retries):
         try:
-            df = ak.futures_zh_minute_sina(symbol=symbol, period=config.PERIOD_MAIN)
+            df = ak.futures_zh_minute_sina(symbol=symbol, period=period)
             if df is None or len(df) == 0:
                 raise RuntimeError('empty data')
             return df
@@ -368,7 +375,7 @@ async def refresh_and_detect_all_async():
     items, all_trades = [], []
     for c, snap in zip(config.CONTRACTS, snaps):
         sym = c['symbol']
-        if isinstance(snap, Exception):
+        if isinstance(snap, BaseException):
             items.append({'symbol': sym, 'name': c['name'], 'error': str(snap)[:80]})
             continue
         with _lock:
@@ -429,16 +436,50 @@ async def refresh_and_detect_all_async():
 # ==================== 看盘模式（多周期，独立于15分钟预警） ====================
 
 def _merge_to_period(df1m, n):
-    """把1分钟K线合成 n 分钟K线（n=3 等非原生周期）。"""
+    """把1分钟K线合成 n 分钟K线（n=3 等非原生周期）。
+
+    按真实时间对齐（修复"按位置分组导致历史K线每分钟重排"的bug）：
+    - 新浪1分钟K线按"结束时刻"打标（09:01 这根代表 09:00-09:01），
+      故按 ceil(n分钟) 分组：09:01/09:02/09:03 合成标签 09:03 的一根；
+    - 各交易时段起止都是 n 的整数倍（09:00/11:30/13:30/15:00/21:00/23:00…），
+      对齐后天然不会把休息时段两侧的K线缝进同一根；
+    - 开头不完整的一组（数据窗口起点落在某个 n 分钟中间，缺前面的1分钟K线）丢弃；
+    - 分组只取决于钟表时间，与拉取窗口的起点无关，历史K线不再每分钟重排。
+    """
     import pandas as pd
     df = df1m.reset_index(drop=True).copy()
     df['datetime'] = pd.to_datetime(df['datetime'])
-    df['_grp'] = df.index // n
+    df['_grp'] = df['datetime'].dt.ceil(f'{n}min')
     agg = df.groupby('_grp').agg({
-        'datetime': 'first', 'open': 'first', 'high': 'max',
-        'low': 'min', 'close': 'last', 'volume': 'sum',
-    }).reset_index(drop=True)
-    return agg
+        'open': 'first', 'high': 'max', 'low': 'min',
+        'close': 'last', 'volume': 'sum', 'datetime': 'count',
+    }).rename(columns={'datetime': '_cnt'})
+    agg['datetime'] = agg.index  # 标签取桶的结束时刻（与新浪原生15分钟口径一致）
+    agg = agg.reset_index(drop=True)
+    # 丢弃开头不完整的一组；末尾正在形成的一根保留（本就应实时变化）
+    if len(agg) > 1 and int(agg['_cnt'].iloc[0]) < n:
+        agg = agg.iloc[1:]
+    return agg.drop(columns=['_cnt']).reset_index(drop=True)
+
+
+def _merge_and_cache_3m(symbol, df1m):
+    """合成3分钟K线并与内存缓存合并后返回完整序列。
+
+    对齐修复后已完成的K线是 immutable 的（同一历史时段的合成结果永远一致），
+    所以合并规则很简单：按时间戳键覆盖；缓存里超出1分钟接口窗口的旧K线一直保留，
+    看盘越久可回看的3分钟历史越长。仅内存存储，服务重启自动清空。"""
+    import pandas as pd
+    df_new = _merge_to_period(df1m, 3)
+    with _lock:
+        cache = _live3_cache.setdefault(symbol, {})
+        for r in df_new.itertuples():
+            bar = {'datetime': r.datetime, 'open': float(r.open), 'high': float(r.high),
+                   'low': float(r.low), 'close': float(r.close), 'volume': float(r.volume)}
+            cache[str(r.datetime)] = bar
+        if len(cache) > _LIVE3_CACHE_MAX:  # 超上限裁掉最旧的
+            for k in sorted(cache.keys())[:len(cache) - _LIVE3_CACHE_MAX]:
+                del cache[k]
+        return pd.DataFrame([cache[k] for k in sorted(cache.keys())])
 
 
 def get_live(symbol, period='15'):
@@ -451,8 +492,8 @@ def get_live(symbol, period='15'):
         if df is not None and 'date' in df.columns:
             df = df.rename(columns={'date': 'datetime'})
     elif period == '3':
-        df1m = ak.futures_zh_minute_sina(symbol=symbol, period='1')
-        df = _merge_to_period(df1m, 3)
+        df1m = _fetch_one(symbol, period='1')
+        df = _merge_and_cache_3m(symbol, df1m)
     else:
         df = ak.futures_zh_minute_sina(symbol=symbol, period=period)
     if df is None or len(df) == 0:
