@@ -9,17 +9,20 @@
   *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
   body{background:#131722;color:#d1d4dc;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
   .red{color:#ef5350;} .green{color:#26a69a;} .gold{color:#f0b90b;} .mut{color:#787b86;}
-  header{display:flex;align-items:center;gap:16px;padding:11px 20px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;}
-  header a{color:#f0b90b;text-decoration:none;font-size:14px;}
+  header{display:flex;align-items:center;gap:14px;padding:11px 20px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;}
+  header a{color:#f0b90b;text-decoration:none;font-size:14px;flex:none;width:88px;}
   header .nm{font-size:19px;font-weight:800;line-height:1.1;}
-  header .cd{font-size:12px;color:#787b86;}
-  .head-mid{flex:1;display:flex;justify-content:center;gap:18px;font-size:12.5px;color:#f0b90b;margin-left: -40px;}
+  header .cd{font-size:12px;color:#787b86;margin-top:2px;}
+  .head-mid{flex:1;min-width:280px;display:flex;justify-content:center;gap:18px;font-size:12.5px;color:#f0b90b;}
   .head-mid b{color:#d1d4dc;font-weight:700;}
-  .price{text-align:right;} .price .p{font-size:24px;font-weight:800;line-height:1;}
-  .btn{border:1px solid #2a2e39;background:#2a2e39;color:#d1d4dc;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;}
-  .seg{display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;margin-left: 40px;}
+  .price{flex:none;width:115px;text-align:right;} .price .p{font-size:24px;font-weight:800;line-height:1;}
+  .btn{border:1px solid #2a2e39;background:#2a2e39;color:#d1d4dc;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;flex:none;}
+  .btn:hover{filter:brightness(1.2);}
+  .seg{display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;}
   .seg button{background:#1e222d;color:#787b86;border:none;padding:7px 11px;font-size:12.5px;cursor:pointer;}
   .seg button.on{background:#2c3140;color:#f0b90b;font-weight:700;}
+  .navbtns{display:flex;gap:5px;}
+  .navbtns button{padding:5px 10px;font-size:14px;}
   main{flex:1;display:flex;gap:14px;padding:14px 20px;overflow:hidden;}
   #chartbox{flex:1;min-width:0;background:#131722;border:1px solid #2a2e39;border-radius:12px;position:relative;}
   .side{width:300px;flex:none;display:flex;flex-direction:column;gap:12px;min-height:0;}
@@ -41,16 +44,26 @@
 <body>
 <header>
   <a href="/pc">‹ 返回总览</a>
-  <div><div class="nm" id="nm">加载中</div><div class="cd" id="cd"></div></div>
-  <div class="seg" id="periodSeg">
-    <button data-p="1">1分</button>
-    <button data-p="3">3分</button>
-    <button data-p="15" class="on">15分</button>
-    <button data-p="60">60分</button>
-    <button data-p="daily">日线</button>
+  <div style="flex:none;width:130px;">
+    <div class="nm" id="nm">加载中</div>
+    <div class="cd" id="cd"></div>
+  </div>
+  <div style="flex:none;display:flex;align-items:center;gap:8px;">
+    <div class="seg" id="periodSeg">
+      <button data-p="1">1分</button>
+      <button data-p="3">3分</button>
+      <button data-p="15">15分</button>
+      <button data-p="60">60分</button>
+      <button data-p="daily">日线</button>
+    </div>
+    <div class="navbtns">
+      <button class="btn" onclick="prevContract()" title="上一个合约">↑</button>
+      <button class="btn" onclick="nextContract()" title="下一个合约">↓</button>
+    </div>
   </div>
   <div class="head-mid" id="hmid"></div>
   <div class="price"><div class="p" id="p">–</div><div id="chg" class="mut"></div></div>
+  <span id="tradeStatus" class="mut" style="flex:none;width:175px;font-size:12px;white-space:nowrap;"></span>
   <button class="btn" onclick="loadPeriod(currentPeriod)">⟳ 刷新</button>
 </header>
 <main>
@@ -80,13 +93,67 @@
 const $=id=>document.getElementById(id);
 const params=new URLSearchParams(location.search);
 const SYM=params.get('sym')||'MA2610';
+const PERIOD_LABEL={'1':'1分','3':'3分','15':'15分','60':'60分','daily':'日线'};
+// 级别优先级：URL参数 > localStorage上次使用 > 默认15分（页面加载时就确定，避免先15分再跳的闪烁）
+let _savedPeriod=null; try{_savedPeriod=localStorage.getItem('cl_chart_period');}catch(e){}
+let currentPeriod=params.get('period')||_savedPeriod||'15';
+if(!PERIOD_LABEL[currentPeriod]) currentPeriod='15';
+
 let chart,candle,vol,bi;
-let currentPeriod='15', refreshTimer=null;
+let refreshTimer=null;
 let ws;
 const proto=location.protocol==='https:'?'wss':'ws';
 
-// ===== 图表视图状态持久化：只记住"缩放力度"（页面容纳多少根K线），
-// 位置永远锚定右侧最新K线——返回列表再进、换品种、切级别、刷新都一致 =====
+// ===== 交易时段控制：节假日/周末/非交易时段不自动刷新，首次进入仍拉数据 =====
+const TRADE_SESSIONS=[[8,55,11,35],[13,25,15,5],[20,55,23,59],[0,0,2,35]];
+let _tradingDay=null;
+function inTradingSession(){
+  const n=new Date(); const m=n.getHours()*60+n.getMinutes();
+  return TRADE_SESSIONS.some(([sh,sm,eh,em])=> m>=sh*60+sm && m<=eh*60+em);
+}
+async function checkTradingStatus(){
+  try{
+    const r=await fetch('/api/trading_status');
+    const s=await r.json();
+    _tradingDay=s.trading_day;
+    const el=$('tradeStatus');
+    if(el){
+      if(s.trading){ el.textContent='● 交易中'; el.style.color='#26a69a'; }
+      else{ el.textContent='○ '+s.reason; el.style.color='#787b86'; }
+    }
+  }catch(e){ _tradingDay=true; }
+}
+function canAutoRefresh(){
+  if(_tradingDay===null){
+    try{
+      const c=JSON.parse(sessionStorage.getItem('cl_trading_day')||'null');
+      if(c&&c.date===new Date().toDateString()) _tradingDay=c.val;
+    }catch(e){}
+  }
+  if(_tradingDay===false) return false;
+  return inTradingSession();
+}
+
+// ===== 合约上下切换 =====
+let contractList=[], contractIdx=-1;
+async function loadContracts(){
+  try{
+    const r=await fetch('/api/contracts');
+    const s=await r.json();
+    contractList=s.contracts||[];
+    contractIdx=contractList.findIndex(c=>c.symbol===SYM);
+  }catch(e){}
+}
+function gotoContract(idx){
+  if(!contractList.length) return;
+  const i=((idx%contractList.length)+contractList.length)%contractList.length;
+  const c=contractList[i];
+  location.href='/pc/detail?sym='+encodeURIComponent(c.symbol)+'&period='+currentPeriod;
+}
+function prevContract(){ gotoContract(contractIdx-1); }
+function nextContract(){ gotoContract(contractIdx+1); }
+
+// ===== 图表视图状态持久化 =====
 const VIEW_KEY='cl_chart_view';
 let _saveT=null;
 function saveView(){
@@ -102,7 +169,6 @@ function applyView(){
     try{
       const r=JSON.parse(raw);
       if(r&&isFinite(r.barSpacing)&&r.barSpacing>0){
-        // 恢复同样的缩放力度，然后滚到最右侧（最新K线在右边）
         chart.timeScale().applyOptions({barSpacing:r.barSpacing,rightOffset:3});
         chart.timeScale().scrollToRealTime();
         return;
@@ -127,58 +193,47 @@ function initChart(){
   vol.priceScale().applyOptions({scaleMargins:{top:.82,bottom:0}});
   bi=chart.addLineSeries({color:'#f0b90b',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
   new ResizeObserver(()=>chart.applyOptions({width:el.clientWidth,height:el.clientHeight})).observe(el);
-  // 用户每次缩放/平移都保存视图状态
   chart.timeScale().subscribeVisibleLogicalRangeChange(saveViewSoon);
 }
 
 function fmt(ts){const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');
   return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
 
-async function loadData(force){
-  const r=await fetch('/api/detail?sym='+encodeURIComponent(SYM)+(force?'&f=1':''));
-  const s=await r.json();
-  $('nm').textContent=s.name; $('cd').textContent=s.symbol+' · 15分 · '+s.bar_count+'根/'+s.bi_count+'笔';
-  $('p').textContent=s.last_price;
-  const up=s.change>=0;
-  $('chg').innerHTML=`<span class="${up?'red':'green'}">${up?'▲':'▼'} ${Math.abs(s.change)} (${s.change_pct}%)</span>`;
-  candle.setData(s.kline);
-  vol.setData(s.vol||[]);
-  bi.setData(s.bi||[]);
-  candle.setMarkers(s.markers||[]);
-  applyView();
-  const st=s.stats||{};
-  $('sTr').textContent=st.trades??'–';
-  $('sWr').textContent=st.win_rate!=null?st.win_rate+'%':'–';
-  $('sPl').textContent=st.pl_ratio!=null?st.pl_ratio:'–';
-  $('sAvg').textContent=(st.avg_win_pts??0)+' / '+(st.avg_loss_pts??0);
-  $('sMoney').textContent=st.total_money!=null?st.total_money:'–';
-  $('sMdd').textContent=st.max_dd!=null?st.max_dd:'–';
-  $('sAdd').textContent=st.avg_dd!=null?st.avg_dd:'–';
-  const f=s.fee||{};
-  $('hmid').innerHTML=
-    `<span>每手保证金 <b>${s.margin_per_lot??'–'}</b> 元</span>`+
-    `<span>开仓费 <b>${f.open_cost??'–'}</b></span>`+
-    `<span>平仓费 <b>${f.close_cost??'–'}</b> 元/手</span>`+
-    `<span>乘数 <b>${f.multiplier??'–'}</b></span>`;
-  let h='';
-  (s.signals||[]).slice().reverse().slice(0,40).forEach(x=>{
-    h+=`<div class="sig ${x.side}">${x.side==='buy'?'▲ 买':'▼ 平'} @ <b>${x.price}</b>
-         <span class="mut" style="float:right">${fmt(x.time)}</span>
-         <div class="mut" style="margin-top:3px;font-size:11px">${x.reason||''}</div></div>`;
-  });
-  $('sigs').innerHTML=h||'<span class="mut">暂无</span>';
+// 只拉统计/手续费/信号历史（15分回测数据，与K线周期无关），不碰K线图
+async function loadStats(){
+  try{
+    const r=await fetch('/api/detail?sym='+encodeURIComponent(SYM));
+    const s=await r.json();
+    const st=s.stats||{};
+    $('sTr').textContent=st.trades??'–';
+    $('sWr').textContent=st.win_rate!=null?st.win_rate+'%':'–';
+    $('sPl').textContent=st.pl_ratio!=null?st.pl_ratio:'–';
+    $('sAvg').textContent=(st.avg_win_pts??0)+' / '+(st.avg_loss_pts??0);
+    $('sMoney').textContent=st.total_money!=null?st.total_money:'–';
+    $('sMdd').textContent=st.max_dd!=null?st.max_dd:'–';
+    $('sAdd').textContent=st.avg_dd!=null?st.avg_dd:'–';
+    const f=s.fee||{};
+    $('hmid').innerHTML=
+      `<span>每手保证金 <b>${s.margin_per_lot??'–'}</b> 元</span>`+
+      `<span>开仓费 <b>${f.open_cost??'–'}</b></span>`+
+      `<span>平仓费 <b>${f.close_cost??'–'}</b> 元/手</span>`+
+      `<span>乘数 <b>${f.multiplier??'–'}</b></span>`;
+    let h='';
+    (s.signals||[]).slice().reverse().slice(0,40).forEach(x=>{
+      h+=`<div class="sig ${x.side}">${x.side==='buy'?'▲ 买':'▼ 平'} @ <b>${x.price}</b>
+           <span class="mut" style="float:right">${fmt(x.time)}</span>
+           <div class="mut" style="margin-top:3px;font-size:11px">${x.reason||''}</div></div>`;
+    });
+    $('sigs').innerHTML=h||'<span class="mut">暂无</span>';
+  }catch(e){}
 }
-
-const PERIOD_LABEL={'1':'1分','3':'3分','15':'15分','60':'60分','daily':'日线'};
 
 function switchPeriod(p){
   if(!PERIOD_LABEL[p]) return;
   currentPeriod=p;
-  try{localStorage.setItem('cl_chart_period',p);}catch(e){}   // 记住上次使用的级别
+  try{localStorage.setItem('cl_chart_period',p);}catch(e){}
   document.querySelectorAll('#periodSeg button').forEach(b=> b.classList.toggle('on', b.dataset.p===p));
-  if(refreshTimer){clearInterval(refreshTimer);}
   loadPeriod(p);
-  refreshTimer=setInterval(()=>loadPeriod(currentPeriod), 60000);
 }
 
 async function loadPeriod(period){
@@ -197,9 +252,8 @@ async function loadPeriod(period){
     vol.setData(s.vol||[]);
     bi.setData(s.bi||[]);
     candle.setMarkers(s.markers||[]);
-  }catch(e){
-    // 轮询出错不崩溃，等下一轮
-  }
+    applyView();
+  }catch(e){}
 }
 
 function sendChat(){
@@ -213,16 +267,19 @@ function connect(){
   ws=new WebSocket(`${proto}://${location.host}/ws?role=pc`);
   ws.onclose=()=>setTimeout(connect,1500);
 }
-initChart();loadData();connect();
-refreshTimer=setInterval(()=>loadPeriod(currentPeriod), 60000);
-document.querySelectorAll('#periodSeg button').forEach(b=> b.onclick=()=>switchPeriod(b.dataset.p));
-if(params.get('period') && PERIOD_LABEL[params.get('period')] && params.get('period')!=='15'){
-  setTimeout(()=>switchPeriod(params.get('period')), 800);
-}else{
-  // 没有URL参数时，恢复上次使用的级别
-  let sp=null; try{sp=localStorage.getItem('cl_chart_period');}catch(e){}
-  if(sp&&PERIOD_LABEL[sp]&&sp!=='15') setTimeout(()=>switchPeriod(sp), 800);
-}
+
+// 初始化：级别已在顶部确定，直接拉当前级别K线，不再先15分再跳
+initChart();
+loadStats();
+loadPeriod(currentPeriod);
+connect();
+checkTradingStatus();
+loadContracts();
+document.querySelectorAll('#periodSeg button').forEach(b=>{
+  b.classList.toggle('on', b.dataset.p===currentPeriod);
+  b.onclick=()=>switchPeriod(b.dataset.p);
+});
+refreshTimer=setInterval(()=>{ if(canAutoRefresh()) loadPeriod(currentPeriod); }, 60000);
 </script>
 </body>
 </html>
