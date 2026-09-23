@@ -21,7 +21,7 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 
-import engine, fees, backtest
+import engine, fees, backtest, trading_time, config
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
 PORT = 8000
@@ -121,7 +121,11 @@ async def periodic():
             nxt += dt.timedelta(minutes=15)
         await asyncio.sleep(max(5, (nxt - now).total_seconds()))
         try:
-            await do_refresh(broadcast=True)
+            if trading_time.is_trading_time():
+                await do_refresh(broadcast=True)
+            else:
+                st = trading_time.trading_status()
+                print(f'[periodic] {dt.datetime.now().strftime("%H:%M")} {st["reason"]}，跳过15分刷新')
         except Exception as e:
             print('periodic error:', e)
 
@@ -209,6 +213,18 @@ async def api_live(sym: str, period: str = '15'):
         return JSONResponse(engine.get_live(sym, period))
     except Exception as e:
         return JSONResponse({'symbol': sym, 'error': str(e)[:120]}, status_code=200)
+
+
+@app.get('/api/trading_status')
+async def api_trading_status():
+    """当前交易时段状态，供前端决定是否自动刷新。"""
+    return JSONResponse(trading_time.trading_status())
+
+
+@app.get('/api/contracts')
+async def api_contracts():
+    """盯盘合约清单（按 config.py 顺序），供详情页上下切换合约。"""
+    return JSONResponse({'contracts': [{'symbol': c['symbol'], 'name': c['name']} for c in config.CONTRACTS]})
 
 
 @app.websocket('/ws')
