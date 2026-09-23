@@ -171,12 +171,15 @@ def run_backtest(symbol, months):
             except Exception as e:
                 rows.append({'symbol': c['symbol'], 'name': c['name'], 'error': str(e)[:60]})
         ok = [x for x in rows if 'error' not in x]
+        pl_vals = [x['pl_ratio'] for x in ok if x['pl_ratio'] is not None]
         g = {
             'watch': len(ok), 'failed': len(rows) - len(ok),
             'total_trades': sum(x['trades'] for x in ok),
             'total_money': round(sum(x['total_money'] for x in ok), 1),
             'avg_win_rate': round(sum(x['win_rate'] for x in ok if x['win_rate'] is not None)
                                   / max(1, len([x for x in ok if x['win_rate'] is not None])), 1) or None,
+            'avg_pl_ratio': round(sum(pl_vals) / max(1, len(pl_vals)), 2) if pl_vals else None,
+            'total_max_dd': max((x['max_dd'] for x in ok if x['max_dd'] is not None), default=None),
         }
         return {'mode': 'all', 'months': months, 'rows': rows, 'global': g}
     else:

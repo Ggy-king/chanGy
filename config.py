@@ -40,7 +40,7 @@ FEES_CACHE_FILE = "fees_cache.json"
 FEES_REFRESH_DAYS = 30
 
 # ===== 风控（模拟账户）=====
-ACCOUNT_CAPITAL = 100000   # 模拟账户初始资金（元）
+ACCOUNT_CAPITAL = 1000000   # 模拟账户初始资金（元）
 RISK_PER_TRADE = 0.01      # 单笔最大风险占账户比例：1%（职业标准，2% 为红线，可调）
 ENTRY_RANGE_TICKS = 2      # 建议开仓区间上下各 N 个最小跳动
 MARGIN_RATE = 0.10         # 保证金率估算（每手保证金≈最新价×乘数×此值，商品期货普遍8%-15%）

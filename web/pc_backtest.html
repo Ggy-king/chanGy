@@ -115,8 +115,10 @@ function renderOne(r,box){
     + card('交易笔数', s.trades, 'neu')
     + card('胜率', num(s.win_rate,null)+(s.win_rate!==null?'%':''), cls(s.win_rate-50))
     + card('盈亏比', num(s.pl_ratio), 'neu')
+    + card('均盈/均亏(点)', (s.avg_win_pts??0)+'/'+(s.avg_loss_pts??0), 'neu')
     + card('净盈亏(元)', s.total_money, cls(s.total_money))
     + card('最大回撤(元)', s.max_dd, 'neg')
+    + card('平均回撤(元)', s.avg_dd, 'neg')
     + '</div>';
   h+='<div class="chartbox"><div id="chart"></div></div>';
   h+='<div class="chartbox"><h2>资金曲线（元/手）</h2><div id="eq"></div></div>';
@@ -160,6 +162,8 @@ function renderAll(r,box){
     + card('总交易笔数', g.total_trades, 'neu')
     + card('总净盈亏(元)', g.total_money, cls(g.total_money))
     + card('平均胜率', (g.avg_win_rate!=null?g.avg_win_rate+'%':'—'), 'neu')
+    + card('平均盈亏比', (g.avg_pl_ratio!=null?g.avg_pl_ratio:'—'), 'neu')
+    + card('总最大回撤(元)', (g.total_max_dd!=null?g.total_max_dd:'—'), 'neg')
     + '</div>';
   h+='<h2>各品种明细</h2><div class="tblwrap"><table><thead><tr>'
     +'<th class="l">品种</th><th>K线</th><th>笔</th><th>交易</th><th>胜率</th><th>盈亏比</th><th>净盈亏(元)</th><th>最大回撤(元)</th></tr></thead><tbody>';

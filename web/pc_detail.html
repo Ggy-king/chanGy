@@ -25,9 +25,10 @@
   .navbtns button{padding:5px 10px;font-size:14px;}
   main{flex:1;display:flex;gap:14px;padding:14px 20px;overflow:hidden;}
   #chartbox{flex:1;min-width:0;background:#131722;border:1px solid #2a2e39;border-radius:12px;position:relative;}
+  #chartbox.measuring{cursor:crosshair;}
   .side{width:300px;flex:none;display:flex;flex-direction:column;gap:12px;min-height:0;}
   .card{background:#1e222d;border:1px solid #2a2e39;border-radius:12px;padding:14px 16px;}
-  .card .t{font-size:12px;color:#787b86;margin-bottom:8px;}
+  .card .t{font-size:12px;color:#787b86;margin-bottom:10px;}
   .row{display:flex;justify-content:space-between;font-size:13.5px;padding:5px 0;}
   .row b{font-weight:700;}
   .sigs{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;}
@@ -38,6 +39,19 @@
   .chatbox input{flex:1;min-width:0;background:#2a2e39;border:1px solid #2a2e39;border-radius:8px;color:#d1d4dc;padding:8px 11px;font-size:13px;outline:none;}
   .chatbox input:focus{border-color:#f0b90b;}
   .chatbox button{flex:none;background:#f0b90b;border:none;color:#1a1a1a;font-weight:700;border-radius:8px;padding:8px 13px;cursor:pointer;}
+  /* 止损计算器 */
+  .calc-field{display:flex;align-items:center;gap:8px;margin-bottom:9px;}
+  .calc-field label{width:52px;font-size:12px;color:#787b86;flex:none;}
+  .calc-field input[type=number]{flex:1;min-width:0;background:#131722;border:1px solid #2a2e39;border-radius:6px;color:#d1d4dc;padding:6px 9px;font-size:13px;outline:none;width:100%;}
+  .calc-field input[type=number]:focus{border-color:#f0b90b;}
+  .calc-field .unit{font-size:12px;color:#787b86;flex:none;width:20px;}
+  .calc-field .seg{flex:1;}
+  .calc-field .seg button{padding:6px 4px;font-size:11.5px;flex:1;}
+  #calcBtn{width:100%;margin:4px 0 10px;padding:9px;font-weight:700;}
+  #calcBtn.active{background:#ef5350;border-color:#ef5350;color:#fff;}
+  .calc-result{border-top:1px solid #2a2e39;padding-top:8px;}
+  .calc-result .row{padding:4px 0;font-size:13px;}
+  .calc-hint{font-size:11px;color:#5a5d6a;margin-top:6px;line-height:1.5;}
   ::-webkit-scrollbar{width:7px;} ::-webkit-scrollbar-thumb{background:#2a2e39;border-radius:4px;}
 </style>
 </head>
@@ -69,16 +83,42 @@
 <main>
   <div id="chartbox"></div>
   <div class="side">
+    <!-- 止损计算器 -->
     <div class="card">
-      <div class="t">本级别(15分)回测统计 · 底买顶平·只做多</div>
-      <div class="row"><span class="mut">交易笔数</span><b id="sTr">–</b></div>
-      <div class="row"><span class="mut">胜率</span><b class="green" id="sWr">–</b></div>
-      <div class="row"><span class="mut">盈亏比</span><b id="sPl">–</b></div>
-      <div class="row"><span class="mut">均盈/均亏(点)</span><b id="sAvg">–</b></div>
-      <div class="row"><span class="mut">累计盈亏(元/手)</span><b class="gold" id="sMoney">–</b></div>
-      <div class="row"><span class="mut">最大回撤(元)</span><b class="red" id="sMdd">–</b></div>
-      <div class="row"><span class="mut">平均回撤(元)</span><b id="sAdd">–</b></div>
+      <div class="t">止损计算器 · 拖拽测量</div>
+      <div class="calc-field">
+        <label>总资金</label>
+        <input id="calcCapital" type="number" value="1000000" min="0">
+        <span class="unit">元</span>
+      </div>
+      <div class="calc-field">
+        <label>止损比</label>
+        <div class="seg" id="riskSeg">
+          <button data-p="0.01">1%</button>
+          <button data-p="0.015">1.5%</button>
+          <button data-p="0.02" class="on">2%</button>
+          <button data-p="0.03">3%</button>
+          <button data-p="0.05">5%</button>
+        </div>
+      </div>
+      <div class="calc-field">
+        <label>固定手数</label>
+        <input id="calcLots" type="number" placeholder="留空自动" min="0" step="1">
+        <span class="unit">手</span>
+      </div>
+      <button class="btn" id="calcBtn" onclick="toggleMeasure()">📐 开始测量</button>
+      <div class="calc-result" id="calcResult" style="display:none;">
+        <div class="row"><span class="mut">入场价</span><b id="crEntry">–</b></div>
+        <div class="row"><span class="mut">止损价</span><b id="crStop">–</b></div>
+        <div class="row"><span class="mut">点数</span><b id="crPts">–</b></div>
+        <div class="row"><span class="mut">每点价值</span><b id="crTick">–</b></div>
+        <div class="row"><span class="mut">建议手数</span><b class="gold" id="crLots">–</b></div>
+        <div class="row"><span class="mut">止损金额</span><b id="crMoney">–</b></div>
+        <div class="row"><span class="mut">占总资金</span><b id="crPct">–</b></div>
+      </div>
+      <div class="calc-hint">在K线图上按住鼠标拖动测量止损区间；再点一下图上空白处清除；手数留空则按止损比例自动倒推。</div>
     </div>
+    <!-- 买卖点历史 -->
     <div class="card" style="flex:1;min-height:0;display:flex;flex-direction:column;">
       <div class="t">买卖点历史</div>
       <div class="sigs" id="sigs"></div>
@@ -94,7 +134,6 @@ const $=id=>document.getElementById(id);
 const params=new URLSearchParams(location.search);
 const SYM=params.get('sym')||'MA2610';
 const PERIOD_LABEL={'1':'1分','3':'3分','15':'15分','60':'60分','daily':'日线'};
-// 级别优先级：URL参数 > localStorage上次使用 > 默认15分（页面加载时就确定，避免先15分再跳的闪烁）
 let _savedPeriod=null; try{_savedPeriod=localStorage.getItem('cl_chart_period');}catch(e){}
 let currentPeriod=params.get('period')||_savedPeriod||'15';
 if(!PERIOD_LABEL[currentPeriod]) currentPeriod='15';
@@ -104,7 +143,7 @@ let refreshTimer=null;
 let ws;
 const proto=location.protocol==='https:'?'wss':'ws';
 
-// ===== 交易时段控制：节假日/周末/非交易时段不自动刷新，首次进入仍拉数据 =====
+// ===== 交易时段控制 =====
 const TRADE_SESSIONS=[[8,55,11,35],[13,25,15,5],[20,55,23,59],[0,0,2,35]];
 let _tradingDay=null;
 function inTradingSession(){
@@ -199,25 +238,20 @@ function initChart(){
 function fmt(ts){const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');
   return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
 
-// 只拉统计/手续费/信号历史（15分回测数据，与K线周期无关），不碰K线图
+// 只拉统计/手续费/信号历史，不碰K线图
 async function loadStats(){
   try{
     const r=await fetch('/api/detail?sym='+encodeURIComponent(SYM));
     const s=await r.json();
-    const st=s.stats||{};
-    $('sTr').textContent=st.trades??'–';
-    $('sWr').textContent=st.win_rate!=null?st.win_rate+'%':'–';
-    $('sPl').textContent=st.pl_ratio!=null?st.pl_ratio:'–';
-    $('sAvg').textContent=(st.avg_win_pts??0)+' / '+(st.avg_loss_pts??0);
-    $('sMoney').textContent=st.total_money!=null?st.total_money:'–';
-    $('sMdd').textContent=st.max_dd!=null?st.max_dd:'–';
-    $('sAdd').textContent=st.avg_dd!=null?st.avg_dd:'–';
     const f=s.fee||{};
     $('hmid').innerHTML=
       `<span>每手保证金 <b>${s.margin_per_lot??'–'}</b> 元</span>`+
       `<span>开仓费 <b>${f.open_cost??'–'}</b></span>`+
       `<span>平仓费 <b>${f.close_cost??'–'}</b> 元/手</span>`+
       `<span>乘数 <b>${f.multiplier??'–'}</b></span>`;
+    // 保存乘数和最小跳动给止损计算器用
+    calc.multiplier = (f.multiplier!=null && !isNaN(f.multiplier)) ? Number(f.multiplier) : 10;
+    calc.tick = (f.min_tick!=null && !isNaN(f.min_tick) && Number(f.min_tick)>0) ? Number(f.min_tick) : 1;
     let h='';
     (s.signals||[]).slice().reverse().slice(0,40).forEach(x=>{
       h+=`<div class="sig ${x.side}">${x.side==='buy'?'▲ 买':'▼ 平'} @ <b>${x.price}</b>
@@ -268,7 +302,184 @@ function connect(){
   ws.onclose=()=>setTimeout(connect,1500);
 }
 
-// 初始化：级别已在顶部确定，直接拉当前级别K线，不再先15分再跳
+// ===== 止损计算器 =====
+const calc={
+  capital:100000,
+  riskPct:0.02,
+  fixedLots:null,
+  multiplier:10,
+  tick:1,
+  measuring:false,
+  dragging:false,
+  hasResult:false,
+  startPrice:null,
+  entryLine:null,
+  stopLine:null,
+};
+// 从 localStorage 恢复用户上次设置（不写文件，不上传GitHub）
+try{
+  const sc=localStorage.getItem('cl_calc_capital');
+  if(sc&&parseFloat(sc)>0) calc.capital=parseFloat(sc);
+  const sr=localStorage.getItem('cl_calc_risk_pct');
+  if(sr&&parseFloat(sr)>0) calc.riskPct=parseFloat(sr);
+}catch(e){}
+// 同步到输入框
+$('calcCapital').value=calc.capital;
+document.querySelectorAll('#riskSeg button').forEach(b=>{
+  b.classList.toggle('on', parseFloat(b.dataset.p)===calc.riskPct);
+});
+
+// 止损比例按钮
+document.querySelectorAll('#riskSeg button').forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll('#riskSeg button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+    calc.riskPct=parseFloat(b.dataset.p);
+    try{localStorage.setItem('cl_calc_risk_pct', calc.riskPct);}catch(e){}
+    if(calc.hasResult) updateCalc(calc.startPrice, calc._lastStopPrice);
+  };
+});
+// 总资金输入
+$('calcCapital').addEventListener('input',()=>{
+  calc.capital=parseFloat($('calcCapital').value)||0;
+  try{localStorage.setItem('cl_calc_capital', calc.capital);}catch(e){}
+  if(calc.hasResult) updateCalc(calc.startPrice, calc._lastStopPrice);
+});
+// 固定手数输入
+$('calcLots').addEventListener('input',()=>{
+  const v=$('calcLots').value;
+  calc.fixedLots=(v&&parseFloat(v)>0)?parseFloat(v):null;
+  if(calc.hasResult) updateCalc(calc.startPrice, calc._lastStopPrice);
+});
+
+function toggleMeasure(){
+  calc.measuring=!calc.measuring;
+  const btn=$('calcBtn');
+  const cb=$('chartbox');
+  if(calc.measuring){
+    btn.textContent='✕ 取消测量';
+    btn.classList.add('active');
+    cb.classList.add('measuring');
+    chart.applyOptions({crosshair:{mode:2}});  // 隐藏十字星，避免价格标签遮住止损线标签
+  }else{
+    clearMeasure();
+    btn.textContent='📐 开始测量';
+    btn.classList.remove('active');
+    cb.classList.remove('measuring');
+    chart.applyOptions({crosshair:{mode:0}});  // 恢复十字星
+  }
+}
+
+function clearMeasure(){
+  calc.dragging=false;
+  calc.hasResult=false;
+  calc.startPrice=null;
+  calc._lastStopPrice=null;
+  if(calc.entryLine){candle.removePriceLine(calc.entryLine);calc.entryLine=null;}
+  if(calc.stopLine){candle.removePriceLine(calc.stopLine);calc.stopLine=null;}
+  $('calcResult').style.display='none';
+}
+
+function snapPrice(price){
+  // 吸附到最小变动价位的整数倍
+  const t=calc.tick||1;
+  if(!isFinite(t)||t<=0) return price;
+  const snapped=Math.round(price/t)*t;
+  const decimals=(t.toString().split('.')[1]||'').length;
+  return Number(snapped.toFixed(decimals));
+}
+
+function priceAtMouse(e){
+  const cb=$('chartbox');
+  const rect=cb.getBoundingClientRect();
+  const y=e.clientY-rect.top;
+  let p;
+  try{ p=candle.coordinateToPrice(y); }catch(err){ return undefined; }
+  if(p===undefined||isNaN(p)) return undefined;
+  return snapPrice(p);
+}
+
+const chartbox=$('chartbox');
+chartbox.addEventListener('mousedown',e=>{
+  if(!calc.measuring) return;
+  // 已有测量结果 → 这次点击是清除
+  if(calc.hasResult){
+    clearMeasure();
+    e.preventDefault();
+    return;
+  }
+  const price=priceAtMouse(e);
+  if(price===undefined||isNaN(price)) return;
+  calc.dragging=true;
+  calc.startPrice=price;
+  if(calc.entryLine)candle.removePriceLine(calc.entryLine);
+  calc.entryLine=candle.createPriceLine({
+    price:price,color:'#26a69a',lineWidth:1,lineStyle:2,
+    axisLabelVisible:true,title:'入场 '+price.toFixed(1)
+  });
+  if(calc.stopLine){candle.removePriceLine(calc.stopLine);calc.stopLine=null;}
+  $('calcResult').style.display='block';
+  $('crEntry').textContent=price.toFixed(1);
+});
+
+chartbox.addEventListener('mousemove',e=>{
+  if(!calc.measuring||!calc.dragging) return;
+  const price=priceAtMouse(e);
+  if(price===undefined||isNaN(price)) return;
+  calc._lastStopPrice=price;
+  if(!calc.stopLine){
+    calc.stopLine=candle.createPriceLine({
+      price:price,color:'#ef5350',lineWidth:1,lineStyle:2,
+      axisLabelVisible:true,title:''
+    });
+  }else{
+    calc.stopLine.applyOptions({price:price});
+  }
+  updateCalc(calc.startPrice, price);
+});
+
+chartbox.addEventListener('mouseup',e=>{
+  if(!calc.measuring||!calc.dragging) return;
+  calc.dragging=false;
+  calc.hasResult=true;
+});
+
+function updateCalc(entry, stop){
+  const pts=Math.abs(entry-stop);
+  const tickValue=calc.multiplier;
+  const perLot=pts*tickValue;
+  const cap=calc.capital||0;
+  const maxLoss=cap*calc.riskPct;
+  let lots, autoMode=(calc.fixedLots==null);
+  if(autoMode){
+    // 自动倒推：向下取整，但最小锁死1手（超上限时变红警告）
+    lots=perLot>0?Math.floor(maxLoss/perLot):1;
+    if(lots<1) lots=1;
+  }else{
+    lots=calc.fixedLots;
+  }
+  const loss=lots*perLot;
+  const pct=cap>0?(loss/cap*100):0;
+  const over=pct>calc.riskPct*100+0.001;
+
+  $('crStop').textContent=stop.toFixed(1);
+  $('crPts').textContent=pts.toFixed(1);
+  $('crTick').textContent=tickValue+' 元';
+  $('crLots').textContent=lots+' 手'+(autoMode?(over?' (最小1手·超上限)':''):' (固定)');
+  $('crLots').className=over?'red':'gold';
+  $('crMoney').textContent=loss.toFixed(0)+' 元';
+  $('crMoney').className=over?'red':'green';
+  $('crPct').textContent=pct.toFixed(2)+'%'+(over?' ⚠超上限':'');
+  $('crPct').className=over?'red':'green';
+
+  if(calc.stopLine){
+    calc.stopLine.applyOptions({
+      title:(over?'⚠ ':'')+loss.toFixed(0)+'元/'+lots+'手/'+pts.toFixed(1)+'点'
+    });
+  }
+}
+
+// 初始化
 initChart();
 loadStats();
 loadPeriod(currentPeriod);
