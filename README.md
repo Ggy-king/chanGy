@@ -103,7 +103,7 @@ PERIOD_BIG   = "60"    # 更大级别
 
 ### 3. 模拟账户 / 风控参数 → `config.py` 底部
 ```python
-ACCOUNT_CAPITAL = 100000   # 初始资金
+ACCOUNT_CAPITAL = 1000000   # 初始资金
 RISK_PER_TRADE  = 0.01      # 单笔最大风险 1%（2% 是红线）
 ENTRY_RANGE_TICKS = 2       # 建议开仓区间上下各 N 个最小跳动
 MARGIN_RATE     = 0.10      # 保证金率估算
