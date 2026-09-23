@@ -204,17 +204,19 @@ function saveView(){
 function saveViewSoon(){ if(_saveT)return; _saveT=setTimeout(()=>{_saveT=null;saveView();},300); }
 function applyView(){
   let raw=null; try{raw=localStorage.getItem(VIEW_KEY);}catch(e){}
+  let barSpacing=null;
   if(raw){
     try{
       const r=JSON.parse(raw);
-      if(r&&isFinite(r.barSpacing)&&r.barSpacing>0){
-        chart.timeScale().applyOptions({barSpacing:r.barSpacing,rightOffset:3});
-        chart.timeScale().scrollToRealTime();
-        return;
-      }
+      if(r&&isFinite(r.barSpacing)&&r.barSpacing>0){ barSpacing=r.barSpacing; }
     }catch(e){}
   }
-  chart.timeScale().fitContent();
+  // 直接用 applyOptions 设置位置，不用 scrollToRealTime/fitContent（避免过场动画）
+  if(barSpacing){
+    chart.timeScale().applyOptions({barSpacing:barSpacing,rightOffset:3});
+  }else{
+    chart.timeScale().applyOptions({rightOffset:3});
+  }
 }
 
 function initChart(){
