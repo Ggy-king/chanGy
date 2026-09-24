@@ -87,6 +87,7 @@ def load(force=False):
             picked[c['symbol']] = all_fees[k]
     saved = {'updated_at': dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'fees': picked}
     try:
+        os.makedirs(os.path.dirname(_CACHE), exist_ok=True)
         with open(_CACHE, 'w', encoding='utf-8') as f:
             json.dump(saved, f, ensure_ascii=False, indent=2)
     except Exception as e:

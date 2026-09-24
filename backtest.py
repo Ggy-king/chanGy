@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 回测模块（与实时预警 engine.py 完全分离）
 - 实时预警：engine.py 每15分钟检测最新买卖点推手机
@@ -18,6 +18,9 @@ import akshare as ak
 from chanlun import merge_klines, find_fenxing, build_bi
 import config, fees
 import engine   # 仅用 update_frozen_stats：回测结果覆盖列表页统计
+import tqsdk_data as tq
+
+_TQ_PERIOD = {'30':30, '1':60, '3':180, '15':900, '60':3600, 'daily':86400}
 
 PERIODS = [0, 1, 2, 3]   # 0=全部
 
@@ -126,9 +129,12 @@ def _stats(signals, mult, open_cost, close_cost):
 def _one(symbol, months):
     """单品种回测，返回完整结果 dict。"""
     name = config.CONTRACT_MAP[symbol]['name']
-    df = ak.futures_zh_minute_sina(symbol=symbol, period=config.PERIOD_MAIN)
+    period_sec = _TQ_PERIOD.get(config.PERIOD_MAIN, 900)
+    df = tq.fetch_kline(symbol, period_sec, data_length=5000)
     df = df.reset_index(drop=True)
-    df['datetime'] = pd.to_datetime(df['datetime'])
+    # datetime已经是带时区的北京时间，只在无时区时才转换，避免.timestamp()差8小时
+    if df['datetime'].dt.tz is None:
+        df['datetime'] = pd.to_datetime(df['datetime'])
     df = _slice_by_months(df, months)
 
     merged = merge_klines(df)

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -100,6 +100,14 @@ function run(){
     .catch(e=>{ go.disabled=false; document.getElementById('result').innerHTML='<div class="err">请求失败：'+e+'</div>'; });
 }
 
+// 把UTC时间戳转成本地时间对象，避免lightweight-charts时区问题
+function tsToObj(ts){const d=new Date(ts*1000);return {year:d.getFullYear(),month:d.getMonth()+1,day:d.getDate(),hour:d.getHours(),minute:d.getMinutes()};}
+function toLocalTime(data){return data.map(x=>({...x,time:tsToObj(x.time)}));}
+
+// lightweight-charts把时间戳当UTC显示，加8小时转成北京时间
+const TZ_OFFSET=28800;
+function fixTime(data){return data.map(x=>({...x,time:x.time+TZ_OFFSET}));}
+
 function render(r){
   const box=document.getElementById('result');
   if(r.mode==='all'){ renderAll(r,box); } else { renderOne(r,box); }
@@ -141,9 +149,9 @@ function renderOne(r,box){
     rightPriceScale:{borderColor:'#2a2e39'},
     timeScale:{borderColor:'#2a2e39',timeVisible:true,secondsVisible:false}});
   const kc=chart.addCandlestickSeries({upColor:'#ef5350',downColor:'#26a69a',wickUpColor:'#ef5350',wickDownColor:'#26a69a',borderVisible:false});
-  kc.setData(r.kline); kc.setMarkers(r.markers||[]);
+  kc.setData(fixTime(r.kline)); kc.setMarkers(fixTime(r.markers||[]));
   const bl=chart.addLineSeries({color:'#f0b90b',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
-  bl.setData(r.bi_line||[]);
+  bl.setData(fixTime(r.bi_line||[]));
   chart.timeScale().fitContent();
 
   eqChart = LightweightCharts.createChart(document.getElementById('eq'),{
@@ -151,7 +159,7 @@ function renderOne(r,box){
     grid:{vertLines:{color:'#1e222d'},horzLines:{color:'#1e222d'}},
     rightPriceScale:{borderColor:'#2a2e39'},timeScale:{timeVisible:true,borderVisible:false}});
   const es=eqChart.addAreaSeries({lineColor:'#f0b90b',topColor:'rgba(240,185,11,.3)',bottomColor:'rgba(240,185,11,.02)'});
-  es.setData(r.equity||[]); eqChart.timeScale().fitContent();
+  es.setData(fixTime(r.equity||[])); eqChart.timeScale().fitContent();
 }
 
 function renderAll(r,box){

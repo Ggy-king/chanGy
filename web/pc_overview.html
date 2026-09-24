@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -49,6 +49,8 @@
   .sig{border-radius:11px;padding:11px 13px;border-left:4px solid;animation:fl 1.2s ease 2;}
   .sig.buy{background:linear-gradient(90deg,rgba(239,83,80,.18),rgba(239,83,80,.04));border-color:#ef5350;}
   .sig.sell{background:linear-gradient(90deg,rgba(38,166,154,.18),rgba(38,166,154,.04));border-color:#26a69a;}
+  .sig.alert{background:linear-gradient(90deg,rgba(255,152,0,.18),rgba(255,152,0,.04));border-color:#ff9800;position:relative;}
+  .sig.alert .del{position:absolute;top:6px;right:10px;font-size:16px;color:#787b86;cursor:pointer;}
   .sig .row{display:flex;justify-content:space-between;align-items:center;}
   .sig .nm2{font-size:15px;font-weight:800;}
   .sig .px{font-size:18px;font-weight:800;}
@@ -91,8 +93,8 @@
       <div class="ph"><span>品种状态（点击行查看详情）</span><span class="mut" id="cntInfo"></span></div>
       <div style="flex:1;overflow:auto;">
         <table>
-          <thead><tr><th>品种</th><th>最新价</th><th>涨跌</th><th>最新信号</th><th>笔数</th><th>交易/胜率</th><th>每手保证金</th><th></th></tr></thead>
-          <tbody id="tb"><tr><td colspan="8" class="mut" style="text-align:center;padding:30px;">加载中…</td></tr></tbody>
+          <thead><tr><th style="width:36px;">#</th><th>品种</th><th>最新价</th><th>涨跌</th><th>最新信号</th><th>笔数</th><th>交易/胜率</th><th>每手保证金</th><th></th></tr></thead>
+          <tbody id="tb"><tr><td colspan="9" class="mut" style="text-align:center;padding:30px;">加载中…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -156,7 +158,7 @@ function renderOverview(ov){
   $('cMdd').textContent=fmtYuan(g.max_dd);
   $('upd').textContent=ov.updated_at||'–';
   if(!ov.items||!ov.items.length){
-    $('tb').innerHTML='<tr><td colspan="8" class="mut" style="text-align:center;padding:30px;">正在拉取 17 个品种行情（首次约 1 分钟），价格将先于统计出来…</td></tr>';
+    $('tb').innerHTML='<tr><td colspan="9" class="mut" style="text-align:center;padding:30px;">正在拉取 17 个品种行情（首次约 1 分钟），价格将先于统计出来…</td></tr>';
     $('cntInfo').textContent='';
     return;
   }
@@ -164,8 +166,22 @@ function renderOverview(ov){
   let opts='';
   (ov.items||[]).forEach(it=>{opts+=`<option value="${it.symbol}">${it.name} ${it.symbol}</option>`;});
   $('simSym').innerHTML=opts;
+  // 按用户自定义排序（拖动排序结果存localStorage）
+  let items=(ov.items||[]).slice();
+  try{
+    const order=JSON.parse(localStorage.getItem('cl_symbol_order')||'[]');
+    if(order&&order.length){
+      items.sort((a,b)=>{
+        const ia=order.indexOf(a.symbol), ib=order.indexOf(b.symbol);
+        if(ia===-1&&ib===-1) return 0;
+        if(ia===-1) return 1;
+        if(ib===-1) return -1;
+        return ia-ib;
+      });
+    }
+  }catch(e){}
   let html='';
-  (ov.items||[]).forEach(it=>{
+  items.forEach((it,i)=>{
     const hasChg=it.change!=null;
     const up=hasChg&&it.change>=0;
     const col=up?'red':'green';
@@ -176,7 +192,9 @@ function renderOverview(ov){
     const wr=st.win_rate!=null?`<span class="mut">${st.trades}笔</span> <b class="green">${st.win_rate}%</b>`:'<span class="mut">–</span>';
     const mg=it.margin_per_lot!=null?`<span class="mut">${it.margin_per_lot}</span>`:'<span class="mut">–</span>';
     const chg=hasChg?(up?'▲':'▼')+' '+Math.abs(it.change):'–';
-    html+=`<tr data-sym="${it.symbol}" id="row-${it.symbol}">
+    const seq=String(i+1).padStart(2,'0');
+    html+=`<tr data-sym="${it.symbol}" id="row-${it.symbol}" draggable="true">
+      <td class="mut" style="font-size:12px;cursor:grab;">${seq}</td>
       <td><div class="nm">${it.name}</div><div class="cd">${it.symbol}</div></td>
       <td><b>${it.last_price??'–'}</b></td>
       <td class="${hasChg?col:'mut'}">${chg}</td>
@@ -190,11 +208,47 @@ function renderOverview(ov){
   document.querySelectorAll('#tb tr[data-sym]').forEach(tr=>{
     tr.onclick=()=>location.href='/pc/detail?sym='+tr.dataset.sym;
   });
+  // 拖动排序
+  initDragSort();
 }
 
 function riskLine(r){
   if(!r)return '';
   return `<div class="risk">止损 <b>${r.stop_loss}</b>（${r.stop_pts}点） · 建议 <b>${r.lots}手</b> · 区间 ${r.entry_low}~${r.entry_high} · 保证金 ${r.margin_per_lot}元/手</div>`;
+}
+
+// ===== 拖动排序 =====
+let _dragSrc=null;
+function initDragSort(){
+  const rows=document.querySelectorAll('#tb tr[data-sym]');
+  rows.forEach(tr=>{
+    tr.ondragstart=e=>{
+      _dragSrc=tr;
+      tr.style.opacity='0.4';
+      e.dataTransfer.effectAllowed='move';
+    };
+    tr.ondragend=()=>{ tr.style.opacity='1'; _dragSrc=null; };
+    tr.ondragover=e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move'; };
+    tr.ondragenter=()=>{ if(_dragSrc&&_dragSrc!==tr) tr.style.background='#2a2e39'; };
+    tr.ondragleave=()=>{ tr.style.background=''; };
+    tr.ondrop=e=>{
+      e.preventDefault();
+      tr.style.background='';
+      if(!_dragSrc||_dragSrc===tr) return;
+      // 交换顺序
+      const all=Array.from(document.querySelectorAll('#tb tr[data-sym]'));
+      const srcIdx=all.indexOf(_dragSrc), tgtIdx=all.indexOf(tr);
+      if(srcIdx<tgtIdx) tr.parentNode.insertBefore(_dragSrc, tr.nextSibling);
+      else tr.parentNode.insertBefore(_dragSrc, tr);
+      // 保存排序到localStorage
+      const newOrder=Array.from(document.querySelectorAll('#tb tr[data-sym]')).map(r=>r.dataset.sym);
+      try{ localStorage.setItem('cl_symbol_order', JSON.stringify(newOrder)); }catch(e){}
+      // 重新渲染序号
+      document.querySelectorAll('#tb tr[data-sym]').forEach((r,i)=>{
+        r.children[0].textContent=String(i+1).padStart(2,'0');
+      });
+    };
+  });
 }
 function addSignal(s){
   if(!s.symbol)return;
@@ -235,10 +289,11 @@ function connect(){
   ws.onclose=()=>{$('dot').classList.remove('on');$('connTxt').textContent='重连中…';setTimeout(connect,1500);};
   ws.onmessage=e=>{
     const m=JSON.parse(e.data);
-    if(m.type==='init'){renderDevices(m.devices);(m.history||[]).forEach(x=>{if(x.type==='signal')addSignal(x);else if(x.type==='chat')addChat(x);});}
+    if(m.type==='init'){renderDevices(m.devices);(m.history||[]).forEach(x=>{if(x.type==='signal')addSignal(x);else if(x.type==='chat')addChat(x);else if(x.type==='price_alert')addPriceAlert(x);});}
     else if(m.type==='devices'){renderDevices(m.devices);}
     else if(m.type==='overview'){renderOverview(m.overview);}
     else if(m.type==='signal'){addSignal(m);}
+    else if(m.type==='price_alert'){addPriceAlert(m);}
     else if(m.type==='chat'||m.type==='ack'){addChat(m);}
     else if(m.type==='status'){sys(m.text);}
   };
@@ -271,6 +326,7 @@ async function pollOverview(){
 
 async function refreshQuotes(){
   // 只更新表格里的 最新价/涨跌/保证金 三个格子，不动K线、统计和信号
+  // 注意：加了序号列后，列索引整体右移一位
   try{
     const q=await (await fetch('/api/quotes')).json();
     const qs=q.quotes||{};
@@ -279,9 +335,9 @@ async function refreshQuotes(){
       if(!row)return;
       const it=qs[sym], tds=row.children;
       const up=(it.change||0)>=0;
-      if(tds[1]) tds[1].innerHTML='<b>'+it.price+'</b>';
-      if(tds[2]){ tds[2].className=up?'red':'green'; tds[2].textContent=(up?'▲ ':'▼ ')+Math.abs(it.change||0); }
-      if(tds[6]) tds[6].innerHTML='<span class="mut">'+it.margin_per_lot+'</span>';
+      if(tds[2]) tds[2].innerHTML='<b>'+it.price+'</b>';
+      if(tds[3]){ tds[3].className=up?'red':'green'; tds[3].textContent=(up?'▲ ':'▼ ')+Math.abs(it.change||0); }
+      if(tds[7]) tds[7].innerHTML='<span class="mut">'+it.margin_per_lot+'</span>';
     });
   }catch(e){}
 }

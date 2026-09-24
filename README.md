@@ -1,20 +1,20 @@
-# 缠论期货预警系统（自用说明）
+# 缠论期货量化预警系统（自用说明）
 
-> 本地跑、单机单端口、PC + 手机四页面、FastAPI + WebSocket 双向通信。
-> 数据源：新浪期货分钟线（akshare `futures_zh_minute_sina`），免费、免 token。
+> 本地跑、单机单端口、PC + 手机五页面、FastAPI + WebSocket 双向通信。
+> 数据源：天勤 TqSdk（免费、不限调用次数、支持任意周期），列表页最新价走新浪。
 > 策略骨架：K线包含合并 → 顶底分型 → 笔；只做多，底分型买、顶分型平。
 
 ---
 
 ## 一、怎么启动
 
-### Windows（老方式，不变）
+### Windows（本机一律用 `py`，不是 `python`）
 
 ```bat
 :: 方式一：双击
 启动预警服务.bat
 
-:: 方式二：命令行（注意本机一律用 py，不是 python）
+:: 方式二：命令行
 cd /d E:\agent\chanGy
 py server.py
 ```
@@ -22,60 +22,69 @@ py server.py
 ### macOS（首次使用：装一次环境，以后不用再装）
 
 ```bash
-cd ~/Desktop/chanGy                            # 进入项目目录
-brew install python@3.12                       # 没有 3.12 时才需要（pandas 2.2.2 要求 ≤3.12）
-/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv .venv   # 创建虚拟环境
-.venv/bin/pip install -r requirements.txt      # 安装依赖
+cd ~/Desktop/chanGy
+brew install python@3.12                       # 没有 3.12 时才需要
+/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
-### macOS（日常启动：就三行，忘了照抄）
+### macOS（日常启动：三行）
 
 ```bash
 cd ~/Desktop/chanGy
-source .venv/bin/activate    # 进入虚拟环境（不激活直接 python server.py 会报 No module named 'akshare'）
+source .venv/bin/activate
 python server.py
 ```
 
-> - 懒得激活的等价写法：`.venv/bin/python server.py`，效果完全一样
-> - 退出虚拟环境：`deactivate`（其实不退出直接关终端也行，下次重开终端要重新 source）
-> - `.venv/` 已加入 .gitignore，不会传上 GitHub
+> - 懒得激活的等价写法：`.venv/bin/python server.py`
+> - `.venv/` 已加入 .gitignore
 
-启动后控制台会打印：
+启动后控制台打印：
 - 电脑总览：http://localhost:8000/pc
 - 手机列表：http://<局域网IP>:8000/m （手机连同一个 WiFi）
 
-浏览器打开 `/` 会自动跳 `/pc`。**手机和电脑连同一个 WiFi**，手机访问控制台里那行 IP:8000 即可。
+浏览器打开 `/` 自动跳 `/pc`。**手机和电脑连同一个 WiFi**。
 
-停止：控制台窗口 Ctrl+C，或关掉黑窗口。
+停止：控制台 Ctrl+C，或关掉窗口。
 
 ---
 
-## 二、目录结构（每个文件/文件夹干嘛）
+## 二、目录结构
 
 ```
 E:\agent\chanGy\
-├─ server.py              ★服务入口：FastAPI 路由 + WebSocket + 每15分钟定时刷新
+├─ server.py              ★服务入口：FastAPI 路由 + WebSocket + 定时刷新 + 预警检查
 ├─ engine.py             ★行情引擎：拉数据→缠论结构→买卖点→回测统计→风控手数
-├─ config.py             ★全局配置：合约清单、级别、账户/风控参数（最常改的文件）
-├─ fees.py               手续费/乘数/最小跳动率：启动时超30天自动联网更新，缓存到 fees_cache.json
-├─ backtest_v3.py        【早期demo】甲醇 MA0 单品种离线回测脚本，独立可跑，与线上服务无关
-├─ 启动预警服务.bat       双击启动的批处理
+├─ config.py             ★全局配置：合约清单、级别、账户/风控参数（最常改）
+├─ fees.py               手续费/乘数/最小跳动：启动超30天自动联网更新
+├─ backtest.py           独立回测引擎（PC回测页调用，不影响实时预警）
+├─ alert_manager.py      ★价格预警管理：增删改查、触发判断、持久化
+├─ tqsdk_data.py         ★天勤 TqSdk 数据源封装：单例长连接 + 订阅缓存 + 自动重连
+├─ trading_time.py       交易日历 + 交易时段判断（节假日/非交易时段不刷新）
+├─ 启动预警服务.bat       双击启动
 │
-├─ chanlun\              ★缠论算法包（以后加线段、中枢都放这里）
-│  ├─ kline_merge.py      K线包含处理（merge_klines）——已稳定，勿动
-│  ├─ fenxing.py         顶/底分型识别（find_fenxing）——已稳定，勿动
-│  ├─ bi.py              笔的构建（build_bi）——当前核心算法
-│  └─ __init__.py        导出 merge_klines / find_fenxing / build_bi
+├─ chanlun/              ★缠论算法包（以后加线段、中枢都放这里）
+│  ├─ kline_merge.py      K线包含处理（双向包含，chan.py原版）
+│  ├─ fenxing.py         顶/底分型识别（严格分型）
+│  ├─ bi.py              笔的构建（含 allow_rollback 笔破坏回退开关）
+│  └─ __init__.py
 │
-├─ web\                  前端页面（纯 HTML + lightweight-charts CDN）
-│  ├─ pc_overview.html    PC 总览仪表盘（17品种状态、总胜率/盈亏比/回撤、模拟买卖按钮）
-│  ├─ pc_detail.html      PC 单品种详情（K线+黄笔线+买卖箭头、保证金/手续费、买卖点历史、给手机留言框）
-│  ├─ m_list.html         手机端：预警信号列表
+├─ web/                  前端页面（纯 HTML + lightweight-charts 4.1.3 CDN）
+│  ├─ pc_overview.html    PC总览：17品种状态、总胜率/盈亏比/回撤、实时信号流、预警列表
+│  ├─ pc_detail.html      PC详情：K线+笔+箭头、多级别切换、价格预警、止损计算器、买卖点历史
+│  ├─ pc_backtest.html    PC回测：选品种+时间段，独立跑回测，权益曲线
+│  ├─ m_list.html         手机端：信号列表 + 预警列表（震动响铃）
 │  └─ m_detail.html       手机端：单信号详情（开仓区间/止损/建议手数/策略理由）
 │
-├─ pylibs\               ⚠第三方库便携副本（83MB，已 gitignore，不进 GitHub，不要手工改）
-├─ fees_cache.json       运行时生成的手续费缓存（已 gitignore）
+├─ data/                 运行时数据（全部git跟踪，换电脑clone下来直接能用）
+│  ├─ alerts.json         价格预警设置（换电脑都在）
+│  ├─ fees_cache.json     手续费缓存
+│  ├─ .stats_cache.json   回测统计缓存
+│  └─ trading_days_cache.json  交易日历缓存
+│
+├─ pylibs/               ⚠第三方库便携副本（已gitignore，不进GitHub，不要手工改）
 ├─ requirements.txt      干净环境的 pip 依赖清单
+├─ README.md             本文件
 └─ .gitignore
 ```
 
@@ -83,92 +92,148 @@ E:\agent\chanGy\
 
 ## 三、最常改的东西，在哪改
 
-### 1. 换主力合约 / 增删品种 → 改 `config.py` 的 `CONTRACTS`
-主力合约换月时，只改这里的 `symbol` 即可，其他文件不用动。
-大小写按新浪期货规则：**郑商所大写、大商所小写、上期所大写**。
+### 1. 换主力合约 / 增删品种 → `config.py` 的 `CONTRACTS`
+主力合约换月只改这里的 `symbol`。大小写按天勤规则：**郑商所3位月份大写（CF701），其他4位月份小写（jm2701/rb2701）**。
 ```python
 CONTRACTS = [
-    {"symbol": "jd2611", "name": "鸡蛋",   "exchange": "DCE"},
-    {"symbol": "UR2701", "name": "尿素",   "exchange": "CZCE"},
+    {"symbol": "jm2701", "name": "焦煤", "exchange": "DCE"},
+    {"symbol": "CF2701", "name": "棉花", "exchange": "CZCE"},
     ...
 ]
 ```
 
-### 2. 级别（次级别/本级别/更大级别）→ `config.py` 顶部
+### 2. 级别参数 → `config.py` 顶部
 ```python
-PERIOD_SEC   = "3"     # 次级别（以后做区间套用）
-PERIOD_MAIN  = "15"    # 本级别（当前预警的级别）
+PERIOD_SEC   = "3"     # 次级别
+PERIOD_MAIN  = "15"    # 本级别（当前预警级别）
 PERIOD_BIG   = "60"    # 更大级别
 ```
+详情页支持手动切换：30秒 / 1分 / 3分 / 15分 / 60分 / 日线。
 
 ### 3. 模拟账户 / 风控参数 → `config.py` 底部
 ```python
-ACCOUNT_CAPITAL = 1000000   # 初始资金
-RISK_PER_TRADE  = 0.01      # 单笔最大风险 1%（2% 是红线）
-ENTRY_RANGE_TICKS = 2       # 建议开仓区间上下各 N 个最小跳动
-MARGIN_RATE     = 0.10      # 保证金率估算
+ACCOUNT_CAPITAL  = 100000   # 初始资金
+RISK_PER_TRADE   = 0.01     # 单笔最大风险 1%
+ENTRY_RANGE_TICKS = 2       # 建议开仓区间上下各N跳
+MARGIN_RATE      = 0.10     # 保证金率估算
 ```
 
-### 4. 改缠论"笔"的算法 → `chanlun\bi.py`
-关键常量在文件顶部：
-- `MIN_BI_GAP`：顶底分型中间至少隔几根合并K线
-- `MIN_BREAKS`：从端点逐次新高/新低的最少台阶数
-> 改完笔算法**必须**：删 `chanlun\__pycache__` → 重启服务 → 离线多品种比对前后笔数 → Edge 截图自检，确认没改坏全局。
+### 4. 改缠论"笔"的算法 → `chanlun/bi.py`
+- 双向包含（chan.py原版），已稳定
+- `allow_rollback` 参数：笔破坏回退开关，详情页头部"回退"按钮切换
+- 改完必须：删 `chanlun/__pycache__` → 重启 → 多品种比对前后笔数
 
 ### 5. 改买卖点逻辑（策略）→ `engine.py` 的 `_build()`
-- 第 78-80 行：`merge_klines` → `find_fenxing` → `build_bi`
-- 第 100-122 行：根据每一笔生成买卖点 `markers` / `signals`（up笔=底买、down笔=顶平）
-- 第 141 行 `_stats()`：底买顶卖配对、胜率/盈亏比/回撤统计
-- 第 46 行 `_risk_info()`：按止损距离反推建议手数、开仓区间、保证金
+- 缠论结构计算 → 买卖点生成 → 统计 → 风控手数
+
+### 6. 价格预警 → `alert_manager.py`
+- 预警持久化到 `data/alerts.json`
+- 触发逻辑：up方向 `last < price <= cur`，down方向 `last > price >= cur`
+- 触发后通过WebSocket推送到PC和手机
 
 ---
 
-## 四、服务路由（server.py）
+## 四、价格预警功能（右键K线图）
+
+1. **添加预警**：右键K线图 → "添加价格预警" → 鼠标变十字星 + 黄色临时线跟随 → 点击确认
+2. **方向自动判断**：预警价 > 当前价 → 上穿（红色，等涨破）；预警价 < 当前价 → 下穿（绿色，等跌破）
+3. **拖动调整**：直接拖动预警线改变价格，拖完方向自动重新判断，自动保存
+4. **删除**：右键预警线 → 自定义确认弹窗 → 删除
+5. **触发推送**：价格穿越预警线后 → 线自动消失 → 手机震动响铃 → PC弹窗（手机不在线时）→ 实时信号流显示
+6. **换电脑**：预警存在 `data/alerts.json`，git跟踪，clone下来都在
+
+---
+
+## 五、服务路由
 
 | 路径 | 作用 |
 |---|---|
 | `/` | 自动跳 `/pc` |
-| `/pc` | PC 总览 |
-| `/pc/detail?sym=MA2610` | PC 单品种详情 |
-| `/m` | 手机信号列表 |
-| `/m/detail?sym=...&side=buy&price=...&time=...&reason=...` | 手机单信号详情 |
+| `/pc` | PC总览（品种状态 + 实时信号流 + 预警列表） |
+| `/pc/detail?sym=jm2701&period=15` | PC单品种详情（多级别看盘 + 预警 + 止损计算器） |
+| `/pc/backtest` | PC回测页（选品种 + 时间段） |
+| `/m` | 手机信号列表 + 预警列表 |
+| `/m/detail?sym=...&side=buy&price=...` | 手机单信号详情 |
 | `/api/overview` | 全部品种统计 JSON |
 | `/api/detail?sym=...` | 单品种完整快照 JSON |
-| `/api/fees` | 手续费/乘数表 |
-| `/api/simulate?sym=...&side=buy` | PC 端手动模拟一个信号（测试推送） |
-| `/ws?role=pc\|m` | WebSocket 双向频道，信号/聊天/刷新都走这里 |
+| `/api/live?sym=...&period=15&rollback=1` | 单品种单级别K线 + 笔 + 买卖点 |
+| `/api/backtest?sym=...&months=3` | 回测数据 |
+| `/api/alerts` (GET/POST) | 预警列表 / 添加预警 |
+| `/api/alerts/{id}` (PATCH/DELETE) | 更新 / 删除预警 |
+| `/api/alerts/clear_triggered` (POST) | 清空已触发预警 |
+| `/api/quotes` | 列表页最新价（新浪源） |
+| `/api/contracts` | 合约清单 |
+| `/api/trading_status` | 当前是否交易时段 |
+| `/ws?role=pc\|m` | WebSocket双向频道 |
 
-后台定时：每个 15 分整点后第 20 秒刷新全部品种；新信号才推送给在线手机/电脑。
+**刷新策略**：
+- 详情页：每30秒刷新当前品种当前级别
+- 列表页：交易时段内每15分钟刷新全部品种，非交易时段不刷新
+- 预警检查：每次刷新时同步检查
 
 ---
 
-## 五、依赖与环境
+## 六、交易时段
 
-- Windows：Python 3.12，本机用 `py` 启动，第三方库走 `pylibs/` 便携目录。
-- macOS：Python 3.12（`brew install python@3.12`），依赖装在项目根的 `.venv/` 虚拟环境里，启动前先 `source .venv/bin/activate`。
-- `pylibs/` 是当时为了不污染 Anaconda 环境拷进来的第三方库（akshare / fastapi / uvicorn / websockets / pydantic …），**已 gitignore，不要传 GitHub**；Mac 上不需要它。
-- 全新机器：`pip install -r requirements.txt`（Mac 上是 `.venv/bin/pip install -r requirements.txt`）。
-- 前端图表用 CDN 的 lightweight-charts 4.1.3，首次打开需联网。
+```python
+SESSIONS = [
+    (8, 55, 11, 35),    # 上午（提前5分钟开始，延后5分钟结束）
+    (13, 25, 15, 5),    # 下午
+    (20, 55, 23, 59),   # 夜场上半段
+    (0, 0, 2, 35),      # 夜场下半段（凌晨）
+]
+```
+- 节假日、周末不自动刷新
+- 首次进入详情页仍会拉数据（不受时段限制）
+- 交易日历自动从新浪拉取，缓存到 `data/trading_days_cache.json`
 
 ---
 
-## 六、当前口径与待办（路线图）
+## 七、依赖与环境
 
-**已完成**
-- K线包含合并 / 顶底分型 / 笔（按缠论结合律：顶底分型 + 不共用K线 + 至少1根独立K线，顶高于底）
-- 17 个品种每 15 分钟拉新浪数据、自动识别新买卖点并 WebSocket 推手机
-- PC 总览（总交易笔数/胜率/盈亏比/最大回撤/平均回撤）、PC 详情（K线+笔+箭头+保证金/手续费/每手乘数）
-- 手机列表 + 信号详情（开仓区间±2跳、止损价、建议手数、每手保证金、单笔风险金额）
-- 模拟 10 万账户、按 1% 风险反推手数
+- **Windows**：Python 3.12，用 `py` 启动，第三方库走 `pylibs/` 便携目录
+- **macOS**：Python 3.12，依赖装在 `.venv/`，启动前 `source .venv/bin/activate`
+- **天勤账号**：免费注册，代码中已内置，支持任意周期（秒数表示），不限调用次数
+- **numpy冲突修复**：`pylibs/pandas/compat/pyarrow.py` 已修改禁用pyarrow，重装pandas会丢失需重改
+- **前端**：lightweight-charts 4.1.3 CDN，首次打开需联网
+- **全新机器**：`pip install -r requirements.txt`
 
-**未做（下一步）**
-- 线段（xianduan.py）——用来把下跌趋势里的弱反抽小笔归并成大方向
+---
+
+## 八、已完成功能
+
+- ✅ 缠论三层算法：K线双向包含合并 / 严格顶底分型 / 笔（含笔破坏回退开关）
+- ✅ 17个品种实时预警，WebSocket推送到手机和PC
+- ✅ 天勤TqSdk数据源（单例长连接 + 订阅缓存 + 自动重连）
+- ✅ 多级别看盘：30秒 / 1分 / 3分 / 15分 / 60分 / 日线切换
+- ✅ 价格预警：右键添加、拖动调整、右键删除、触发推送、手机震动响铃
+- ✅ 拖拽式止损计算器：总资金/止损比可编辑，实时显示手数/金额/点数
+- ✅ 独立回测系统：选品种+时间段，权益曲线，胜率/盈亏比/回撤
+- ✅ PC总览：总交易笔数/胜率/盈亏比/最大回撤/平均回撤
+- ✅ 手机端：信号列表 + 预警列表，震动响铃，可删除
+- ✅ 列表页拖动排序，品种名金色加粗，序号显示
+- ✅ 交易时段控制，节假日不刷新
+- ✅ 模拟账户：10万资金，1%风险反推手数
+- ✅ 双向通信：PC和手机互发消息
+
+---
+
+## 九、待办（路线图）
+
+- 线段（xianduan.py）—— 归并弱反抽小笔
 - 中枢 / 次级别走势类型 / 背驰（区间套：3分→15分→60分）
-- 真实结构止损（当前只是把最近底分型低点当止损占位）
-- 手机锁屏推送需 HTTPS（当前是页内弹窗 + 震动）
+- 真实结构止损（当前是最近底分型低点占位）
+- 手机锁屏推送需HTTPS（当前是页内弹窗+震动）
 
+---
 
-### 其他命令
-- 释放端口
+## 十、其他命令
+
+```bat
+:: 释放端口
 netstat -ano | findstr :8000
 taskkill /F /PID 12345
+
+:: 清理缓存（改了chanlun后必做）
+rmdir /s /q __pycache__ chanlun\__pycache__
+```

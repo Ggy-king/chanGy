@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 缠论多品种预警 · 本地双向服务
 - 一个端口(8000)：
@@ -17,11 +17,20 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, 'pylibs'))
 sys.path.insert(0, _HERE)
 
+# 屏蔽系统Anaconda里与pylibs numpy 2.x冲突的可选依赖（pyarrow/numexpr/bottleneck）
+# 这些都是pandas的可选性能优化库，不影响核心功能
+import types as _types
+for _mod in ['pyarrow', 'pyarrow.lib', 'pyarrow.compute', 'numexpr', 'numexpr.interpreter', 'bottleneck', 'bottleneck.move']:
+    if _mod not in sys.modules:
+        _m = _types.ModuleType(_mod)
+        _m.__version__ = '0.0.0'
+        sys.modules[_mod] = _m
+
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 
-import engine, fees, backtest, trading_time, config
+import engine, fees, backtest, trading_time, config, alert_manager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
 PORT = 8000
@@ -205,16 +214,16 @@ async def api_backtest(sym: str = 'ALL', months: int = 1):
 
 
 @app.get('/api/live')
-async def api_live(sym: str, period: str = '15'):
-    """看盘模式：指定周期K线+笔（1/3/15/60/daily），独立于15分钟预警缓存。"""
-    if period not in ('1', '3', '15', '60', 'daily'):
+async def api_live(sym: str, period: str = '15', rollback: str = '1'):
+    """看盘模式：指定周期K线+笔（1/3/15/60/daily），独立于15分钟预警缓存。
+    rollback=1启用笔破坏回退，rollback=0用chan.py原版严格模式。"""
+    if period not in ('30', '1', '3', '15', '60', 'daily'):
         period = '15'
+    allow_rollback = rollback != '0'
     try:
-        return JSONResponse(engine.get_live(sym, period))
+        return JSONResponse(engine.get_live(sym, period, allow_rollback=allow_rollback))
     except Exception as e:
         return JSONResponse({'symbol': sym, 'error': str(e)[:120]}, status_code=200)
-
-
 @app.get('/api/trading_status')
 async def api_trading_status():
     """当前交易时段状态，供前端决定是否自动刷新。"""
@@ -225,6 +234,49 @@ async def api_trading_status():
 async def api_contracts():
     """盯盘合约清单（按 config.py 顺序），供详情页上下切换合约。"""
     return JSONResponse({'contracts': [{'symbol': c['symbol'], 'name': c['name']} for c in config.CONTRACTS]})
+
+
+@app.get('/api/alerts')
+async def api_get_alerts():
+    return JSONResponse({'alerts': alert_manager.get_alerts()})
+
+
+@app.post('/api/alerts')
+async def api_add_alert(symbol: str, name: str, price: float, direction: str):
+    a = alert_manager.add_alert(symbol, name, price, direction)
+    return JSONResponse({'ok': True, 'alert': a})
+
+
+@app.delete('/api/alerts/{alert_id}')
+async def api_remove_alert(alert_id: str):
+    alert_manager.remove_alert(alert_id)
+    return JSONResponse({'ok': True})
+
+
+@app.patch('/api/alerts/{alert_id}')
+async def api_update_alert(alert_id: str, request: Request):
+    try:
+        body = await request.json()
+    except:
+        body = {}
+    price = body.get('price')
+    direction = body.get('direction')
+    alert = alert_manager.update_alert(alert_id, price=price, direction=direction)
+    if alert:
+        return JSONResponse({'ok': True, 'alert': alert})
+    return JSONResponse({'ok': False, 'error': 'not found'}, status_code=404)
+
+
+@app.post('/api/alerts/clear_triggered')
+async def api_clear_triggered():
+    alert_manager.clear_triggered()
+    return JSONResponse({'ok': True})
+
+
+@app.post('/api/alerts/clear_all')
+async def api_clear_all():
+    alert_manager.clear_all()
+    return JSONResponse({'ok': True})
 
 
 @app.websocket('/ws')
@@ -264,4 +316,14 @@ if __name__ == '__main__':
     print(f'  手机列表： http://{ip}:{PORT}/m   （手机连同一 WiFi）')
     print('  Ctrl+C 停止')
     print('=' * 56)
+    # 预初始化天勤连接（后台线程，不阻塞启动）
+    def _init_tq():
+        try:
+            import tqsdk_data as tq
+            tq.TqData()._ensure_api()
+            print('[TqData] 天勤连接预初始化完成')
+        except Exception as e:
+            print(f'[TqData] 预初始化失败（首次请求时会自动重试）: {e}')
+    import threading as _th
+    _th.Thread(target=_init_tq, daemon=True).start()
     uvicorn.run(app, host='0.0.0.0', port=PORT, log_level='warning')
