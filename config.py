@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 """
 全局配置：盯盘合约清单 + 级别参数。
 - 主力合约切换：只改这里的 symbol（合约代码）即可，其他文件不用动。
@@ -36,7 +37,7 @@ CONTRACTS = [
 CONTRACT_MAP = {c["symbol"]: c for c in CONTRACTS}
 
 # 手续费缓存文件与有效期（天）
-FEES_CACHE_FILE = "fees_cache.json"
+FEES_CACHE_FILE = os.path.join("data", "fees_cache.json")
 FEES_REFRESH_DAYS = 30
 
 # ===== 风控（模拟账户）=====

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -53,6 +53,34 @@
   .calc-result .row{padding:4px 0;font-size:13px;}
   .calc-hint{font-size:11px;color:#5a5d6a;margin-top:6px;line-height:1.5;}
   ::-webkit-scrollbar{width:7px;} ::-webkit-scrollbar-thumb{background:#2a2e39;border-radius:4px;}
+  /* 右键菜单 */
+  #ctxMenu{position:absolute;z-index:9999;background:#1e222d;border:1px solid #2a2e39;border-radius:8px;padding:4px;display:none;min-width:140px;box-shadow:0 4px 20px rgba(0,0,0,.5);}
+  #ctxMenu .item{padding:8px 14px;cursor:pointer;border-radius:6px;font-size:13px;color:#d1d4dc;}
+  #ctxMenu .item:hover{background:#2a2e39;}
+  #ctxMenu .item.up{color:#ef5350;}
+  #ctxMenu .item.down{color:#26a69a;}
+  #ctxMenu .sep{height:1px;background:#2a2e39;margin:4px 0;}
+  /* 预警弹窗 */
+  .alert-popup{position:fixed;top:20px;right:20px;z-index:10000;background:#1e222d;border:2px solid #ef5350;border-radius:12px;padding:16px 20px;min-width:280px;box-shadow:0 8px 30px rgba(0,0,0,.6);animation:slideIn .3s ease;}
+  .alert-popup.down{border-color:#26a69a;}
+  .alert-popup .title{font-size:16px;font-weight:700;margin-bottom:6px;}
+  .alert-popup .title.up{color:#ef5350;}
+  .alert-popup .title.down{color:#26a69a;}
+  .alert-popup .info{font-size:13px;color:#787b86;}
+  .alert-popup .close{position:absolute;top:8px;right:12px;cursor:pointer;color:#787b86;font-size:18px;}
+  @keyframes slideIn{from{transform:translateX(100%);opacity:0;}to{transform:translateX(0);opacity:1;}}
+  /* 自定义确认弹窗 */
+  .confirm-mask{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);}
+  .confirm-box{background:#1e222d;border:1px solid #2a2e39;border-radius:14px;padding:24px 28px;min-width:320px;box-shadow:0 20px 60px rgba(0,0,0,.5);animation:popIn .2s ease;}
+  @keyframes popIn{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}
+  .confirm-box h3{font-size:16px;font-weight:700;color:#d1d4dc;margin-bottom:10px;}
+  .confirm-box p{font-size:13px;color:#787b86;margin-bottom:20px;line-height:1.6;}
+  .confirm-box .btns{display:flex;gap:10px;justify-content:flex-end;}
+  .confirm-box .btn{padding:8px 20px;border-radius:8px;font-size:13px;cursor:pointer;border:none;font-weight:600;transition:all .15s;}
+  .confirm-box .btn.cancel{background:#2a2e39;color:#787b86;}
+  .confirm-box .btn.cancel:hover{background:#363b47;color:#d1d4dc;}
+  .confirm-box .btn.danger{background:#ef5350;color:#fff;}
+  .confirm-box .btn.danger:hover{background:#f44336;transform:translateY(-1px);}
 </style>
 </head>
 <body>
@@ -64,6 +92,7 @@
   </div>
   <div style="flex:none;display:flex;align-items:center;gap:8px;">
     <div class="seg" id="periodSeg">
+      <button data-p="30">30秒</button>
       <button data-p="1">1分</button>
       <button data-p="3">3分</button>
       <button data-p="15">15分</button>
@@ -79,9 +108,26 @@
   <div class="price"><div class="p" id="p">–</div><div id="chg" class="mut"></div></div>
   <span id="tradeStatus" class="mut" style="flex:none;width:175px;font-size:12px;white-space:nowrap;"></span>
   <button class="btn" onclick="loadPeriod(currentPeriod)">⟳ 刷新</button>
+  <button class="btn" id="rollbackBtn" onclick="toggleRollback()" title="笔破坏回退开关" style="border-color:#f0b90b;color:#f0b90b;">回退:开</button>
 </header>
 <main>
   <div id="chartbox"></div>
+  <div id="ctxMenu">
+    <div class="item" onclick="startAddAlert()">＋ 添加价格预警</div>
+    <div class="sep"></div>
+    <div class="item" onclick="hideCtxMenu()">取消</div>
+  </div>
+  <!-- 自定义确认弹窗 -->
+  <div id="confirmMask" class="confirm-mask" style="display:none">
+    <div class="confirm-box">
+      <h3 id="confirmTitle">删除预警</h3>
+      <p id="confirmMsg">确定删除这条预警线吗？</p>
+      <div class="btns">
+        <button class="btn cancel" onclick="closeConfirm()">取消</button>
+        <button class="btn danger" id="confirmOkBtn">删除</button>
+      </div>
+    </div>
+  </div>
   <div class="side">
     <!-- 止损计算器 -->
     <div class="card">
@@ -133,7 +179,7 @@
 const $=id=>document.getElementById(id);
 const params=new URLSearchParams(location.search);
 const SYM=params.get('sym')||'MA2610';
-const PERIOD_LABEL={'1':'1分','3':'3分','15':'15分','60':'60分','daily':'日线'};
+const PERIOD_LABEL={'30':'30秒','1':'1分','3':'3分','15':'15分','60':'60分','daily':'日线'};
 let _savedPeriod=null; try{_savedPeriod=localStorage.getItem('cl_chart_period');}catch(e){}
 let currentPeriod=params.get('period')||_savedPeriod||'15';
 if(!PERIOD_LABEL[currentPeriod]) currentPeriod='15';
@@ -142,6 +188,10 @@ let chart,candle,vol,bi;
 let refreshTimer=null;
 let ws;
 const proto=location.protocol==='https:'?'wss':'ws';
+
+// ===== 前端K线缓存：切换级别时先显示缓存，新数据加载后再更新 =====
+const _klineCache={};  // {period: data}
+let _cacheLoading={};  // {period: true}
 
 // ===== 交易时段控制 =====
 const TRADE_SESSIONS=[[8,55,11,35],[13,25,15,5],[20,55,23,59],[0,0,2,35]];
@@ -180,6 +230,19 @@ async function loadContracts(){
     const r=await fetch('/api/contracts');
     const s=await r.json();
     contractList=s.contracts||[];
+    // 按用户自定义排序（拖动排序结果存localStorage）
+    try{
+      const order=JSON.parse(localStorage.getItem('cl_symbol_order')||'[]');
+      if(order&&order.length){
+        contractList.sort((a,b)=>{
+          const ia=order.indexOf(a.symbol), ib=order.indexOf(b.symbol);
+          if(ia===-1&&ib===-1) return 0;
+          if(ia===-1) return 1;
+          if(ib===-1) return -1;
+          return ia-ib;
+        });
+      }
+    }catch(e){}
     contractIdx=contractList.findIndex(c=>c.symbol===SYM);
   }catch(e){}
 }
@@ -240,6 +303,16 @@ function initChart(){
 function fmt(ts){const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');
   return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
 
+// lightweight-charts把时间戳当UTC显示，加8小时转成北京时间
+const TZ_OFFSET=28800;
+function fixTime(data){return data.map(x=>({...x,time:x.time+TZ_OFFSET}));}
+
+
+// 把UTC时间戳转成本地时间对象，避免lightweight-charts时区问题
+function tsToObj(ts){const d=new Date(ts*1000);return {year:d.getFullYear(),month:d.getMonth()+1,day:d.getDate(),hour:d.getHours(),minute:d.getMinutes()};}
+function toLocalTime(data){return data.map(x=>({...x,time:tsToObj(x.time)}));}
+
+
 // 只拉统计/手续费/信号历史，不碰K线图
 async function loadStats(){
   try{
@@ -272,24 +345,78 @@ function switchPeriod(p){
   loadPeriod(p);
 }
 
-async function loadPeriod(period){
+let _rollback=true;
+try{ _rollback=localStorage.getItem('cl_bi_rollback')!=='0'; }catch(e){}
+
+function toggleRollback(){
+  _rollback=!_rollback;
+  try{ localStorage.setItem('cl_bi_rollback', _rollback?'1':'0'); }catch(e){}
+  const btn=$('rollbackBtn');
+  btn.textContent='回退:'+(_rollback?'开':'关');
+  btn.style.color=_rollback?'#f0b90b':'#787b86';
+  btn.style.borderColor=_rollback?'#f0b90b':'#2a2e39';
+  loadPeriod(currentPeriod, false, true);
+}
+
+async function loadPeriod(period, isRefresh, onlyBi){
   try{
-    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period);
+    // 定时刷新时保存当前视图位置，setData后恢复（不跳到最新）
+    let savedRange=null;
+    if(isRefresh){
+      try{ savedRange=chart.timeScale().getVisibleRange(); }catch(e){}
+    }
+    if(onlyBi){
+      const rb=_rollback?'1':'0';
+      const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+'&rollback='+rb);
+      const s=await r.json();
+      if(s.error) return;
+      bi.setData(fixTime(s.bi||[]));
+      candle.setMarkers(fixTime(s.markers||[]));
+      const label=PERIOD_LABEL[period]||period;
+      const ts=new Date().toTimeString().slice(0,8);
+      $('cd').textContent=s.symbol+' · '+label+' · '+s.bar_count+'根/'+s.bi_count+'笔 · 更新 '+ts;
+      return;
+    }
+    // ===== 缓存优先：切换级别时先显示缓存数据，避免空白卡顿 =====
+    const cached=_klineCache[period];
+    if(cached && !isRefresh){
+      // 先显示缓存
+      renderKlineData(cached, period, false);
+      // 如果正在加载中，不重复请求
+      if(_cacheLoading[period]) return;
+    }
+    _cacheLoading[period]=true;
+    const rb=_rollback?'1':'0';
+    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+'&rollback='+rb);
     const s=await r.json();
+    _cacheLoading[period]=false;
     if(s.error){ $('cd').textContent=SYM+' · 出错: '+s.error; return; }
-    const label=PERIOD_LABEL[period]||period;
-    const ts=new Date().toTimeString().slice(0,8);
-    $('nm').textContent=s.name;
-    $('cd').textContent=s.symbol+' · '+label+' · '+s.bar_count+'根/'+s.bi_count+'笔 · 更新 '+ts;
-    $('p').textContent=s.last_price;
-    const up=s.change>=0;
-    $('chg').innerHTML=`<span class="${up?'red':'green'}">${up?'▲':'▼'} ${Math.abs(s.change)} (${s.change_pct}%)</span>`;
-    candle.setData(s.kline);
-    vol.setData(s.vol||[]);
-    bi.setData(s.bi||[]);
-    candle.setMarkers(s.markers||[]);
+    // 存入缓存
+    _klineCache[period]=s;
+    // 渲染新数据（如果当前显示的就是这个级别）
+    if(currentPeriod===period){
+      renderKlineData(s, period, isRefresh, savedRange);
+    }
+  }catch(e){ _cacheLoading[period]=false; }
+}
+
+function renderKlineData(s, period, isRefresh, savedRange){
+  const label=PERIOD_LABEL[period]||period;
+  const ts=new Date().toTimeString().slice(0,8);
+  $('nm').textContent=s.name;
+  $('cd').textContent=s.symbol+' · '+label+' · '+s.bar_count+'根/'+s.bi_count+'笔 · 更新 '+ts;
+  $('p').textContent=s.last_price;
+  const up=s.change>=0;
+  $('chg').innerHTML=`<span class="${up?'red':'green'}">${up?'▲':'▼'} ${Math.abs(s.change)} (${s.change_pct}%)</span>`;
+  candle.setData(fixTime(s.kline));
+  vol.setData(fixTime(s.vol||[]));
+  bi.setData(fixTime(s.bi||[]));
+  candle.setMarkers(fixTime(s.markers||[]));
+  if(isRefresh && savedRange){
+    try{ chart.timeScale().setVisibleRange(savedRange); }catch(e){ applyView(); }
+  }else{
     applyView();
-  }catch(e){}
+  }
 }
 
 function sendChat(){
@@ -302,6 +429,20 @@ $('chat')&&$('chat').addEventListener('keydown',e=>{if(e.key==='Enter')sendChat(
 function connect(){
   ws=new WebSocket(`${proto}://${location.host}/ws?role=pc`);
   ws.onclose=()=>setTimeout(connect,1500);
+  ws.onmessage=ev=>{
+    try{
+      const m=JSON.parse(ev.data);
+      if(m.type==='price_alert'){
+        showAlertPopup(m);
+        if(alertLines[m.id]){
+          try{candle.removePriceLine(alertLines[m.id]);}catch(e){}
+          delete alertLines[m.id];
+        }
+      }else if(m.type==='devices'){
+        window._devices=m.devices||[];
+      }
+    }catch(e){}
+  };
 }
 
 // ===== 止损计算器 =====
@@ -488,11 +629,313 @@ loadPeriod(currentPeriod);
 connect();
 checkTradingStatus();
 loadContracts();
+// 回退开关初始状态
+(function(){ const btn=$('rollbackBtn'); if(btn){ btn.textContent='回退:'+(_rollback?'开':'关'); btn.style.color=_rollback?'#f0b90b':'#787b86'; btn.style.borderColor=_rollback?'#f0b90b':'#2a2e39'; } })();
 document.querySelectorAll('#periodSeg button').forEach(b=>{
   b.classList.toggle('on', b.dataset.p===currentPeriod);
   b.onclick=()=>switchPeriod(b.dataset.p);
 });
-refreshTimer=setInterval(()=>{ if(canAutoRefresh()) loadPeriod(currentPeriod); }, 60000);
+refreshTimer=setInterval(()=>{ if(canAutoRefresh()) loadPeriod(currentPeriod, true); }, 30000);
+
+// ========== 价格预警 ==========
+let alertLines={};
+let addingAlert=false;
+let tempLine=null;
+let _origCrosshairMode=1;
+
+function hideCtxMenu(){const m=document.getElementById('ctxMenu');if(m)m.style.display='none';}
+
+function startAddAlert(){
+  hideCtxMenu();
+  addingAlert=true;
+  const el=document.getElementById('chartbox');
+  el.style.cursor='crosshair';
+  // 隐藏默认十字星
+  _origCrosshairMode=chart.options().crosshair.mode;
+  chart.applyOptions({crosshair:{mode:2}});
+  // 创建临时预警线（黄色）
+  const lastPrice = candle.data().length > 0 ? candle.data()[candle.data().length-1].close : 0;
+  tempLine=candle.createPriceLine({
+    price:lastPrice,color:'#ff9800',lineWidth:2,lineStyle:2,
+    axisLabelVisible:true,title:'拖动选择预警价，点击确认',draggable:true
+  });
+}
+
+function cancelAddAlert(){
+  addingAlert=false;
+  const el=document.getElementById('chartbox');
+  el.style.cursor='';
+  // 恢复默认十字星
+  chart.applyOptions({crosshair:{mode:_origCrosshairMode}});
+  if(tempLine){try{candle.removePriceLine(tempLine);}catch(e){}tempLine=null;}
+}
+
+function confirmAddAlert(price){
+  if(!addingAlert || !tempLine) return;
+  if(!price || isNaN(price)) return;
+  const finalPrice=Math.round(price*100)/100;
+  // 获取当前最新价格，自动判断方向
+  const kdata=candle.data();
+  const curPrice = kdata.length>0 ? kdata[kdata.length-1].close : price;
+  const direction = curPrice <= price ? 'up' : 'down';
+  const color=direction==='up'?'#ef5350':'#26a69a';
+  // 先把临时线改成正式预警线样式（不消失，直接变色）
+  tempLine.applyOptions({
+    price:finalPrice,color:color,lineWidth:2,lineStyle:2,
+    axisLabelVisible:true,title:(direction==='up'?'上穿':'下穿')+' '+finalPrice
+  });
+  const line=tempLine;
+  tempLine=null;
+  addingAlert=false;
+  const el=document.getElementById('chartbox');
+  el.style.cursor='';
+  chart.applyOptions({crosshair:{mode:_origCrosshairMode}});
+  // 调用API添加预警
+  fetch('/api/alerts?symbol='+encodeURIComponent(SYM)+'&name='+encodeURIComponent(SYM_NAME)+'&price='+finalPrice+'&direction='+direction,{method:'POST'})
+    .then(r=>r.json())
+    .then(j=>{
+      if(j.ok){
+        alertLines[j.alert.id]=line;
+        console.log('已添加预警', direction==='up'?'上穿':'下穿', finalPrice, 'id=', j.alert.id);
+      }else{
+        console.error('添加预警失败', j);
+        try{candle.removePriceLine(line);}catch(e){}
+      }
+    })
+    .catch(e=>{
+      console.error('添加预警失败',e);
+      try{candle.removePriceLine(line);}catch(e){}
+    });
+}
+
+async function loadAlertLines(){
+  try{
+    const r=await fetch('/api/alerts');
+    const j=await r.json();
+    for(const a of j.alerts||[]){
+      if(a.symbol!==SYM || a.triggered) continue;
+      const color=a.direction==='up'?'#ef5350':'#26a69a';
+      const line=candle.createPriceLine({
+        price:a.price,color:color,lineWidth:2,lineStyle:2,
+        axisLabelVisible:true,title:(a.direction==='up'?'上穿':'下穿')+' '+a.price,draggable:true
+      });
+      alertLines[a.id]=line;
+    }
+    console.log('已加载预警线', Object.keys(alertLines).length, '条');
+  }catch(e){console.error('加载预警线失败',e);}
+}
+
+function showAlertPopup(alert){
+  const mobileOnline=(window._devices||[]).some(d=>d.role==='m');
+  if(mobileOnline) return;
+  const isUp=alert.direction==='up';
+  const div=document.createElement('div');
+  div.className='alert-popup '+(isUp?'up':'down');
+  div.innerHTML='<span class="close" onclick="this.parentElement.remove()">×</span>'+
+    '<div class="title '+(isUp?'up':'down')+'">'+(isUp?'▲ 涨破预警':'▼ 跌破预警')+'</div>'+
+    '<div class="info">'+alert.name+'（'+alert.symbol+'）<br>'+
+    '预警价：'+alert.price+'　触发价：'+alert.triggered_price+'<br>'+
+    '时间：'+alert.triggered_at+'</div>';
+  document.body.appendChild(div);
+  playAlertSound();
+  setTimeout(()=>{if(div.parentElement)div.remove();},15000);
+}
+
+function playAlertSound(){
+  try{
+    const ctx=new (window.AudioContext||window.webkitAudioContext)();
+    [0,0.15,0.3].forEach((dt,i)=>{
+      const o=ctx.createOscillator(),g=ctx.createGain();
+      o.connect(g);g.connect(ctx.destination);
+      o.frequency.value=880+i*220;o.type='square';
+      const t0=ctx.currentTime+dt;
+      g.gain.setValueAtTime(0.0001,t0);
+      g.gain.exponentialRampToValueAtTime(0.2,t0+0.02);
+      g.gain.exponentialRampToValueAtTime(0.001,t0+0.12);
+      o.start(t0);o.stop(t0+0.13);
+    });
+  }catch(e){}
+}
+
+// 右键菜单
+document.getElementById('chartbox').addEventListener('contextmenu', function(e){
+  e.preventDefault();
+  if(addingAlert){cancelAddAlert();return;}
+  const rect=this.getBoundingClientRect();
+  const y=e.clientY-rect.top;
+  const price=candle.coordinateToPrice(y);
+  if(price===null || price===undefined || isNaN(price)) return;
+  const menu=document.getElementById('ctxMenu');
+  menu.style.display='block';
+  menu.style.left=(e.clientX+window.scrollX)+'px';
+  menu.style.top=(e.clientY+window.scrollY)+'px';
+});
+document.addEventListener('click', (e)=>{
+  if(addingAlert && e.target.closest('#chartbox')){
+    const el=document.getElementById('chartbox');
+    const rect=el.getBoundingClientRect();
+    const y=e.clientY-rect.top;
+    const price=candle.coordinateToPrice(y);
+    if(price!==null && price!==undefined && !isNaN(price)){
+      confirmAddAlert(price);
+      return;
+    }
+  }
+  hideCtxMenu();
+});
+
+// 鼠标移动时更新临时预警线位置
+document.getElementById('chartbox').addEventListener('mousemove', function(e){
+  if(!addingAlert || !tempLine) return;
+  const rect=this.getBoundingClientRect();
+  const y=e.clientY-rect.top;
+  const price=candle.coordinateToPrice(y);
+  if(price!==null && price!==undefined && !isNaN(price)){
+    tempLine.applyOptions({price:price, title:'预警价 '+Math.round(price*100)/100+'（点击确认）'});
+  }
+});
+
+// ESC取消添加预警
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape' && addingAlert) cancelAddAlert();
+});
+
+// ========== 预警线拖动和右键删除 ==========
+let draggingAlert=null;
+let dragOffset=0;
+
+function priceAtY(y){
+  try{ return candle.coordinateToPrice(y); }catch(e){ return null; }
+}
+
+function findAlertNear(y){
+  for(const id in alertLines){
+    try{
+      const line=alertLines[id];
+      const lp=line.options().price;
+      const ly=candle.priceToCoordinate(lp);
+      if(ly!==null && Math.abs(ly-y)<=15){
+        return {id:id, line:line, price:lp, y:ly};
+      }
+    }catch(e){}
+  }
+  return null;
+}
+
+// 用事件委托方式，在document上监听，确保不会被canvas拦截
+document.addEventListener('mousedown', function(e){
+  if(addingAlert || e.button!==0) return;
+  const chartEl=document.getElementById('chartbox');
+  if(!chartEl) return;
+  const rect=chartEl.getBoundingClientRect();
+  if(e.clientX<rect.left || e.clientX>rect.right || e.clientY<rect.top || e.clientY>rect.bottom) return;
+  const y=e.clientY-rect.top;
+  const found=findAlertNear(y);
+  if(found){
+    draggingAlert=found;
+    const curPrice=priceAtY(y);
+    dragOffset = (curPrice!==null) ? (found.price-curPrice) : 0;
+    e.preventDefault();
+    e.stopPropagation();
+    chartEl.style.cursor='ns-resize';
+  }
+}, true);
+
+document.addEventListener('mousemove', function(e){
+  if(!draggingAlert) return;
+  const chartEl=document.getElementById('chartbox');
+  if(!chartEl) return;
+  const rect=chartEl.getBoundingClientRect();
+  const y=e.clientY-rect.top;
+  const price=priceAtY(y);
+  if(price===null) return;
+  const newPrice=Math.round((price+dragOffset)*100)/100;
+  const kdata=candle.data();
+  const curPrice = kdata.length>0 ? kdata[kdata.length-1].close : newPrice;
+  const dir = curPrice<=newPrice ? 'up' : 'down';
+  const color = dir==='up' ? '#ef5350' : '#26a69a';
+  try{ draggingAlert.line.applyOptions({price:newPrice, color:color, title:(dir==='up'?'上穿':'下穿')+' '+newPrice}); }catch(err){}
+}, true);
+
+document.addEventListener('mouseup', function(){
+  if(!draggingAlert) return;
+  const chartEl=document.getElementById('chartbox');
+  if(chartEl) chartEl.style.cursor='';
+  let newPrice=null;
+  try{ newPrice=draggingAlert.line.options().price; }catch(err){}
+  const id=draggingAlert.id;
+  draggingAlert=null;
+  if(newPrice!==null){
+    const kdata=candle.data();
+    const curPrice = kdata.length>0 ? kdata[kdata.length-1].close : newPrice;
+    const dir = curPrice<=newPrice ? 'up' : 'down';
+    fetch('/api/alerts/'+id, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({price:newPrice, direction:dir})})
+      .then(r=>r.json())
+      .then(j=>{})
+      .catch(e=>console.error('[预警] 更新失败', e));
+  }
+});
+
+// 右键删除
+document.addEventListener('contextmenu', function(e){
+  if(addingAlert) return;
+  const chartEl=document.getElementById('chartbox');
+  if(!chartEl) return;
+  const rect=chartEl.getBoundingClientRect();
+  if(e.clientX<rect.left || e.clientX>rect.right || e.clientY<rect.top || e.clientY>rect.bottom) return;
+  const y=e.clientY-rect.top;
+  const found=findAlertNear(y);
+  if(found){
+    e.preventDefault();
+    e.stopPropagation();
+    const lineToDelete=found.line;
+    const idToDelete=found.id;
+    showConfirm('删除预警', '确定删除这条预警线吗？', ()=>{
+      fetch('/api/alerts/'+idToDelete, {method:'DELETE'})
+        .then(r=>r.json())
+        .then(j=>{
+          if(j.ok){
+            try{candle.removePriceLine(lineToDelete);}catch(err){}
+            delete alertLines[idToDelete];
+          }
+        })
+        .catch(err=>console.error('[预警] 删除失败', err));
+    });
+  }
+}, true);
+
+// 加载已有预警线（确保chart和candle都初始化后再加载）
+function tryLoadAlerts(retry){
+  if(typeof chart!=='undefined' && chart && typeof candle!=='undefined' && candle){
+    loadAlertLines();
+  }else if(retry>0){
+    setTimeout(()=>tryLoadAlerts(retry-1), 300);
+  }else{
+    console.error('预警线加载失败：chart未初始化');
+  }
+}
+setTimeout(()=>tryLoadAlerts(10), 300);
+
+// 自定义确认弹窗
+let _confirmCallback=null;
+function showConfirm(title, msg, callback){
+  document.getElementById('confirmTitle').textContent=title;
+  document.getElementById('confirmMsg').textContent=msg;
+  document.getElementById('confirmMask').style.display='flex';
+  _confirmCallback=callback;
+}
+function closeConfirm(){
+  document.getElementById('confirmMask').style.display='none';
+  _confirmCallback=null;
+}
+document.getElementById('confirmOkBtn').onclick=()=>{
+  const cb=_confirmCallback;
+  closeConfirm();
+  if(cb)cb();
+};
+document.getElementById('confirmMask').addEventListener('click', e=>{
+  if(e.target.id==='confirmMask')closeConfirm();
+});
 </script>
 </body>
 </html>

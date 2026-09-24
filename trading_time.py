@@ -19,7 +19,7 @@ import datetime as dt
 import json
 import os
 
-CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'trading_days_cache.json')
+CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.path.join('data', 'trading_days_cache.json'))
 
 # 内置节假日兜底（akshare 不可用时使用，日期为当年法定休市日，含调休后的周末补班不在这里——补班日本身是周末但开市，降级模式下会误判，优先用 akshare）
 FALLBACK_HOLIDAYS = {
@@ -87,6 +87,7 @@ def _load_trading_days():
         days = set(str(d)[:10] for d in df['trade_date'].tolist())
         _trading_days = days
         try:
+            os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
             with open(CACHE_FILE, 'w', encoding='utf-8') as f:
                 json.dump({'days': sorted(days)}, f, ensure_ascii=False)
         except Exception:

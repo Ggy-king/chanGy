@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -91,6 +91,12 @@ function chartW(){
   var el=$('chart');
   return Math.min(el.clientWidth||window.innerWidth,window.innerWidth);
 }
+// 把UTC时间戳转成本地时间对象，避免lightweight-charts时区问题
+// lightweight-charts把时间戳当UTC显示，加8小时转成北京时间
+const TZ_OFFSET=28800;
+function fixTime(data){return data.map(x=>({...x,time:x.time+TZ_OFFSET}));}
+function toLocalTime(data){return data.map(x=>({...x,time:tsToObj(x.time)}));}
+
 function buildChart(k,markers,biArr){
   chart=LightweightCharts.createChart($('chart'),{
     width:chartW(),height:230,
@@ -103,9 +109,9 @@ function buildChart(k,markers,biArr){
   candle=chart.addCandlestickSeries({upColor:'#ef5350',downColor:'#26a69a',
     borderUpColor:'#ef5350',borderDownColor:'#26a69a',wickUpColor:'#ef5350',wickDownColor:'#26a69a'});
   bi=chart.addLineSeries({color:'#f0b90b',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
-  candle.setData(k);
-  bi.setData(biArr);
-  candle.setMarkers(markers);
+  candle.setData(fixTime(k));
+  bi.setData(fixTime(biArr));
+  candle.setMarkers(fixTime(markers));
   applyView();
   // 用户每次缩放/平移都保存视图状态
   chart.timeScale().subscribeVisibleLogicalRangeChange(saveViewSoon);

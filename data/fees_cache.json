@@ -1,0 +1,141 @@
+{
+  "updated_at": "2026-09-20 11:54:30",
+  "fees": {
+    "jd2611": {
+      "multiplier": 10.0,
+      "min_tick": 1.0,
+      "open_cost": 0.01,
+      "close_cost": 0.01,
+      "close_today_cost": 0.01,
+      "margin": 0.0
+    },
+    "UR2701": {
+      "multiplier": 20.0,
+      "min_tick": 1.0,
+      "open_cost": 0.01,
+      "close_cost": 0.01,
+      "close_today_cost": 0.01,
+      "margin": 0.0
+    },
+    "MA2610": {
+      "multiplier": 10.0,
+      "min_tick": 1.0,
+      "open_cost": 0.01,
+      "close_cost": 0.01,
+      "close_today_cost": 0.01,
+      "margin": 0.0
+    },
+    "jm2701": {
+      "multiplier": 60.0,
+      "min_tick": 0.5,
+      "open_cost": 0.01,
+      "close_cost": 0.01,
+      "close_today_cost": 0.01,
+      "margin": 0.0
+    },
+    "CF2701": {
+      "multiplier": 5.0,
+      "min_tick": 5.0,
+      "open_cost": 4.31,
+      "close_cost": 4.31,
+      "close_today_cost": 0.0,
+      "margin": 0.0
+    },
+    "SA2701": {
+      "multiplier": 20.0,
+      "min_tick": 1.0,
+      "open_cost": 0.01,
+      "close_cost": 0.01,
+      "close_today_cost": 0.01,
+      "margin": 0.0
+    },
+    "SR2701": {
+      "multiplier": 10.0,
+      "min_tick": 1.0,
+      "open_cost": 2.01,
+      "close_cost": 2.01,
+      "close_today_cost": 0.0,
+      "margin": 0.0
+    },
+    "v2701": {
+      "multiplier": 5.0,
+      "min_tick": 1.0,
+      "open_cost": 1.01,
+      "close_cost": 1.01,
+      "close_today_cost": 1.01,
+      "margin": 0.0
+    },
+    "CJ2701": {
+      "multiplier": 5.0,
+      "min_tick": 5.0,
+      "open_cost": 3.01,
+      "close_cost": 3.01,
+      "close_today_cost": 3.01,
+      "margin": 0.0
+    },
+    "SP2611": {
+      "multiplier": 10.0,
+      "min_tick": 2.0,
+      "open_cost": 0.01,
+      "close_cost": 0.01,
+      "close_today_cost": 0.0,
+      "margin": 0.0
+    },
+    "RU2701": {
+      "multiplier": 10.0,
+      "min_tick": 5.0,
+      "open_cost": 3.01,
+      "close_cost": 3.01,
+      "close_today_cost": 0.0,
+      "margin": 0.0
+    },
+    "lh2611": {
+      "multiplier": 16.0,
+      "min_tick": 5.0,
+      "open_cost": 0.01,
+      "close_cost": 0.01,
+      "close_today_cost": 0.01,
+      "margin": 0.0
+    },
+    "AP2701": {
+      "multiplier": 10.0,
+      "min_tick": 1.0,
+      "open_cost": 5.01,
+      "close_cost": 5.01,
+      "close_today_cost": 10.01,
+      "margin": 0.0
+    },
+    "pg2611": {
+      "multiplier": 20.0,
+      "min_tick": 1.0,
+      "open_cost": 6.01,
+      "close_cost": 6.01,
+      "close_today_cost": 6.01,
+      "margin": 0.0
+    },
+    "RB2701": {
+      "multiplier": 10.0,
+      "min_tick": 1.0,
+      "open_cost": 0.01,
+      "close_cost": 0.01,
+      "close_today_cost": 0.01,
+      "margin": 0.0
+    },
+    "NI2610": {
+      "multiplier": 1.0,
+      "min_tick": 10.0,
+      "open_cost": 3.01,
+      "close_cost": 3.01,
+      "close_today_cost": 3.01,
+      "margin": 0.0
+    },
+    "PK2611": {
+      "multiplier": 5.0,
+      "min_tick": 2.0,
+      "open_cost": 2.01,
+      "close_cost": 2.01,
+      "close_today_cost": 2.01,
+      "margin": 0.0
+    }
+  }
+}

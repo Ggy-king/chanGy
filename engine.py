@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 多品种行情引擎
 - 循环拉取 config.CONTRACTS 各品种 15 分钟 K -> K线合并/顶底分型/笔 -> 快照
@@ -18,6 +18,10 @@ sys.path.insert(0, _HERE)
 import akshare as ak
 from chanlun import merge_klines, find_fenxing, build_bi
 import config, fees
+import tqsdk_data as tq
+
+# 天勤周期映射（秒数）
+_TQ_PERIOD = {'30':30, '1':60, '3':180, '15':900, '60':3600, 'daily':86400}
 
 _lock = threading.Lock()
 _cache_overview = None
@@ -33,7 +37,7 @@ _LIVE3_CACHE_MAX = 3000  # 每品种缓存上限（≈3~4周的3分钟K线，内
 # 回测统计冻结：显式回测结果落盘，启动时加载；
 # 15分钟常规刷新不再重算，由 update_frozen_stats（回测按钮触发）覆盖
 _DIR = os.path.dirname(os.path.abspath(__file__))
-_STATS_CACHE_FILE = os.path.join(_DIR, '.stats_cache.json')
+_STATS_CACHE_FILE = os.path.join(_DIR, os.path.join('data', '.stats_cache.json'))
 
 
 def _load_stats_cache():
@@ -48,6 +52,7 @@ def _load_stats_cache():
 
 def _save_stats_cache():
     try:
+        os.makedirs(os.path.dirname(_STATS_CACHE_FILE), exist_ok=True)
         with open(_STATS_CACHE_FILE, 'w', encoding='utf-8') as f:
             json.dump(_stats_frozen, f, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -111,13 +116,15 @@ def _risk_info(side, price, stop_loss, fee, last_price):
     }
 
 
-def _build(df, symbol, name):
+def _build(df, symbol, name, allow_rollback=True):
     df = df.reset_index(drop=True)
-    df['datetime'] = __import__('pandas').to_datetime(df['datetime'])
+    # datetime已经是带时区的北京时间，只在无时区时才转换，避免.timestamp()差8小时
+    if df['datetime'].dt.tz is None:
+        df['datetime'] = __import__('pandas').to_datetime(df['datetime'])
 
     merged = merge_klines(df)
     top_fx, bottom_fx = find_fenxing(merged)
-    bi_list = build_bi(top_fx, bottom_fx, merged)
+    bi_list = build_bi(top_fx, bottom_fx, merged, allow_rollback=allow_rollback)
 
     kline, vol = [], []
     for _, r in df.iterrows():
@@ -179,12 +186,13 @@ def _build(df, symbol, name):
 
 
 def _fetch_one(symbol, retries=3, period=None):
-    """拉取单品种分钟 K 线，带指数退避重试。新浪接口偶发 429/超时常见。"""
+    """拉取单品种K线（天勤数据源），带重试。"""
     period = period or config.PERIOD_MAIN
+    period_sec = _TQ_PERIOD.get(period, 900)
     last = None
     for i in range(retries):
         try:
-            df = ak.futures_zh_minute_sina(symbol=symbol, period=period)
+            df = tq.fetch_kline(symbol, period_sec, data_length=2000)
             if df is None or len(df) == 0:
                 raise RuntimeError('empty data')
             return df
@@ -195,10 +203,10 @@ def _fetch_one(symbol, retries=3, period=None):
     raise RuntimeError(f'fetch {symbol} failed after {retries} retries: {last}')
 
 
-def build_symbol(symbol):
+def build_symbol(symbol, allow_rollback=True):
     name = config.CONTRACT_MAP[symbol]['name']
     df = _fetch_one(symbol)
-    snap = _build(df, symbol, name)
+    snap = _build(df, symbol, name, allow_rollback=allow_rollback)
     fee = fees.get(symbol)
     snap['fee'] = fee
     # 不自动跑回测统计：只有用户显式点“回测”后，结果才会写进 _stats_frozen 并落盘。
@@ -557,7 +565,9 @@ def _merge_to_period(df1m, n):
     """
     import pandas as pd
     df = df1m.reset_index(drop=True).copy()
-    df['datetime'] = pd.to_datetime(df['datetime'])
+    # datetime已经是带时区的北京时间，只在无时区时才转换
+    if df['datetime'].dt.tz is None:
+        df['datetime'] = pd.to_datetime(df['datetime'])
     df['_grp'] = df['datetime'].dt.ceil(f'{n}min')
     agg = df.groupby('_grp').agg({
         'open': 'first', 'high': 'max', 'low': 'min',
@@ -591,25 +601,18 @@ def _merge_and_cache_3m(symbol, df1m):
         return pd.DataFrame([cache[k] for k in sorted(cache.keys())])
 
 
-def get_live(symbol, period='15'):
-    """看盘模式：拉指定周期K线，算合并/分型/笔，返回精简快照。
-    period: '1','3','15','60','daily'。3分钟由1分钟合成，日线用日线接口。
+def get_live(symbol, period='15', allow_rollback=True):
+    """看盘模式：拉指定周期K线（天勤数据源），算合并/分型/笔，返回精简快照。
+    period: '30','1','3','15','60','daily'。全部用天勤原生接口，无需合成。
     完全独立，不写入 _cache_detail，不影响15分钟预警与回测。"""
     name = config.CONTRACT_MAP[symbol]['name']
-    if period == 'daily':
-        df = ak.futures_zh_daily_sina(symbol=symbol)
-        if df is not None and 'date' in df.columns:
-            df = df.rename(columns={'date': 'datetime'})
-    elif period == '3':
-        df1m = _fetch_one(symbol, period='1')
-        df = _merge_and_cache_3m(symbol, df1m)
-    else:
-        df = ak.futures_zh_minute_sina(symbol=symbol, period=period)
+    period_sec = _TQ_PERIOD.get(period, 900)
+    df = tq.fetch_kline(symbol, period_sec, data_length=2000)
     if df is None or len(df) == 0:
         raise RuntimeError(f'empty {period} data')
-    snap = _build(df, symbol, name)
+    snap = _build(df, symbol, name, allow_rollback=allow_rollback)
     snap['period'] = period
-    label = period + ('分' if period != 'daily' else '线')
+    label = period + ('秒' if period == '30' else ('分' if period != 'daily' else '线'))
     for s in snap.get('signals', []):
         s['reason'] = s.get('reason', '').replace('15分', label)
         s['label'] = s.get('label', '').replace('15分', label)
