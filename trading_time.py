@@ -158,7 +158,7 @@ def trading_status(now=None):
             'trading': False,
             'trading_day': False,
             'in_session': False,
-            'reason': f'{check_day.isoformat()} 非交易日（节假日/周末），已暂停自动刷新',
+            'reason': '非交易日，暂停更新',
             'sessions': [[f"{sh:02d}:{sm:02d}", f"{eh:02d}:{em:02d}"] for sh, sm, eh, em in SESSIONS],
         }
     in_s = _in_session(now)
@@ -166,7 +166,7 @@ def trading_status(now=None):
         'trading': in_s,
         'trading_day': True,
         'in_session': in_s,
-        'reason': '交易时段' if in_s else '非交易时段，已暂停自动刷新',
+        'reason': '交易时段' if in_s else '非交易时段，暂停更新',
         'sessions': [[f"{sh:02d}:{sm:02d}", f"{eh:02d}:{em:02d}"] for sh, sm, eh, em in SESSIONS],
     }
 

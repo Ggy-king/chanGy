@@ -29,6 +29,7 @@ env/
 # ===== IDE / 编辑器 =====
 .vscode/
 .idea/
+.codebuddy/
 *.swp
 
 # ===== 操作系统 =====

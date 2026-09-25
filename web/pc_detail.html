@@ -9,13 +9,39 @@
   *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
   body{background:#131722;color:#d1d4dc;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
   .red{color:#ef5350;} .green{color:#26a69a;} .gold{color:#f0b90b;} .mut{color:#787b86;}
-  header{display:flex;align-items:center;gap:14px;padding:11px 20px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;}
-  header a{color:#f0b90b;text-decoration:none;font-size:14px;flex:none;width:88px;}
-  header .nm{font-size:19px;font-weight:800;line-height:1.1;}
-  header .cd{font-size:12px;color:#787b86;margin-top:2px;}
-  .head-mid{flex:1;min-width:280px;display:flex;justify-content:center;gap:18px;font-size:12.5px;color:#f0b90b;}
-  .head-mid b{color:#d1d4dc;font-weight:700;}
-  .price{flex:none;width:115px;text-align:right;} .price .p{font-size:24px;font-weight:800;line-height:1;}
+  header{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding:10px 16px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;}
+  header a{color:#f0b90b;text-decoration:none;font-size:14px;flex:none;white-space:nowrap;}
+  .head-group{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;min-width:0;}
+  .head-group.left{flex:0 0 auto;align-items:center;gap:8px;}
+  .head-group.left > a{flex:none;width:76px;font-size:14px;white-space:nowrap;}
+  .head-group.mid{flex:1 1 0;display:flex;justify-content:center;flex-wrap:wrap;gap:8px 16px;font-size:12.5px;color:#f0b90b;min-width:0;}
+  .head-group.mid b{color:#d1d4dc;font-weight:700;}
+  .head-group.right{flex:0 0 auto;margin-left:auto;justify-content:flex-end;gap:6px 8px;}
+  .name-block{flex:none;width:220px;line-height:1.15;}
+  .name-block .nm{display:flex;align-items:baseline;gap:8px;font-size:19px;font-weight:800;white-space:nowrap;}
+  .name-block .upd{font-size:12px;color:#787b86;font-weight:400;}
+  .name-block .cd{font-size:12px;color:#787b86;margin-top:1px;white-space:nowrap;}
+  .period-area{display:flex;align-items:center;gap:8px;flex:none;}
+  .price{flex:none;min-width:90px;text-align:right;white-space:nowrap;}
+  .price .p{font-size:24px;font-weight:800;line-height:1;}
+  #tradeStatus{flex:none;font-size:12px;white-space:nowrap;}
+  .icon-btn{width:40px;min-width:40px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:17px;}
+  #rollbackBtn{font-weight:700;}
+  /* 极窄屏再压缩，默认MacBook一行能放下 */
+  @media (max-width:1150px){
+    .name-block{width:200px;}
+    .name-block .nm{font-size:17px;}
+    .price .p{font-size:21px;}
+    .seg button{padding:6px 9px;font-size:12px;}
+    .navbtns button{padding:5px 8px;font-size:12px;}
+    .head-group.mid{font-size:12px;gap:6px 12px;}
+    .icon-btn{width:36px;min-width:36px;font-size:16px;}
+  }
+  @media (max-width:980px){
+    .head-group.mid{order:99;flex-basis:100%;border-top:1px solid #2a2e39;padding-top:8px;justify-content:flex-start;}
+  }
+  /* 右侧信息栏显隐 */
+  .side.hidden{display:none!important;}
   .btn{border:1px solid #2a2e39;background:#2a2e39;color:#d1d4dc;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;flex:none;}
   .btn:hover{filter:brightness(1.2);}
   .seg{display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;}
@@ -85,35 +111,41 @@
 </head>
 <body>
 <header>
-  <a href="/pc">‹ 返回总览</a>
-  <div style="flex:none;width:130px;">
-    <div class="nm" id="nm">加载中</div>
-    <div class="cd" id="cd"></div>
-  </div>
-  <div style="flex:none;display:flex;align-items:center;gap:8px;">
-    <div class="seg" id="periodSeg">
-      <button data-p="30">30秒</button>
-      <button data-p="1">1分</button>
-      <button data-p="3">3分</button>
-      <button data-p="15">15分</button>
-      <button data-p="60">60分</button>
-      <button data-p="daily">日线</button>
+  <div class="head-group left">
+    <a href="/pc">‹ 返回总览</a>
+    <div class="name-block">
+      <div class="nm"><span id="nm">加载中</span><span class="upd" id="nameUpd"></span></div>
+      <div class="cd" id="cd"></div>
     </div>
-    <div class="navbtns">
-      <button class="btn" onclick="prevContract()" title="上一个合约">↑</button>
-      <button class="btn" onclick="nextContract()" title="下一个合约">↓</button>
+    <div class="period-area">
+      <div class="seg" id="periodSeg">
+        <button data-p="30">30秒</button>
+        <button data-p="1">1分</button>
+        <button data-p="3">3分</button>
+        <button data-p="15">15分</button>
+        <button data-p="60">60分</button>
+        <button data-p="daily">日线</button>
+      </div>
+      <div class="navbtns">
+        <button class="btn" onclick="prevContract()" title="上一个合约">↑</button>
+        <button class="btn" onclick="nextContract()" title="下一个合约">↓</button>
+      </div>
     </div>
   </div>
-  <div class="head-mid" id="hmid"></div>
-  <div class="price"><div class="p" id="p">–</div><div id="chg" class="mut"></div></div>
-  <span id="tradeStatus" class="mut" style="flex:none;width:175px;font-size:12px;white-space:nowrap;"></span>
-  <button class="btn" onclick="loadPeriod(currentPeriod)">⟳ 刷新</button>
-  <button class="btn" id="rollbackBtn" onclick="toggleRollback()" title="笔破坏回退开关" style="border-color:#f0b90b;color:#f0b90b;">回退:开</button>
+  <div class="head-group mid" id="hmid"></div>
+  <div class="head-group right">
+    <div class="price"><div class="p" id="p">–</div><div id="chg" class="mut"></div></div>
+    <span id="tradeStatus" class="mut"></span>
+    <button class="btn icon-btn" onclick="loadPeriod(currentPeriod)" title="刷新" style="font-size: 30px;">⟳</button>
+    <button class="btn icon-btn" id="rollbackBtn" onclick="toggleRollback()" title="笔破坏回退开关">回</button>
+  </div>
 </header>
 <main>
   <div id="chartbox"></div>
   <div id="ctxMenu">
     <div class="item" onclick="startAddAlert()">＋ 添加价格预警</div>
+    <div class="sep"></div>
+    <div class="item" id="ctxToggleSide" onclick="toggleSidePanel()">隐藏右侧信息栏</div>
     <div class="sep"></div>
     <div class="item" onclick="hideCtxMenu()">取消</div>
   </div>
@@ -128,7 +160,7 @@
       </div>
     </div>
   </div>
-  <div class="side">
+  <div class="side" id="sidePanel">
     <!-- 止损计算器 -->
     <div class="card">
       <div class="t">止损计算器 · 拖拽测量</div>
@@ -320,9 +352,9 @@ async function loadStats(){
     const s=await r.json();
     const f=s.fee||{};
     $('hmid').innerHTML=
-      `<span>每手保证金 <b>${s.margin_per_lot??'–'}</b> 元</span>`+
-      `<span>开仓费 <b>${f.open_cost??'–'}</b></span>`+
-      `<span>平仓费 <b>${f.close_cost??'–'}</b> 元/手</span>`+
+      `<span>保证金 <b>${s.margin_per_lot??'–'}</b> 元</span>`+
+      `<span>开 <b>${f.open_cost??'–'}</b></span>`+
+      `<span>平 <b>${f.close_cost??'–'}</b></span>`+
       `<span>乘数 <b>${f.multiplier??'–'}</b></span>`;
     // 保存乘数和最小跳动给止损计算器用
     calc.multiplier = (f.multiplier!=null && !isNaN(f.multiplier)) ? Number(f.multiplier) : 10;
@@ -348,11 +380,27 @@ function switchPeriod(p){
 let _rollback=true;
 try{ _rollback=localStorage.getItem('cl_bi_rollback')!=='0'; }catch(e){}
 
+// 右侧信息栏显隐状态（跨会话记忆）
+let sideVisible=true;
+try{ sideVisible=localStorage.getItem('cl_detail_side_hidden')!=='1'; }catch(e){}
+function updateSidePanel(visible){
+  const side=$('sidePanel');
+  if(!side) return;
+  side.classList.toggle('hidden', !visible);
+  sideVisible=visible;
+  try{ localStorage.setItem('cl_detail_side_hidden', visible?'0':'1'); }catch(e){}
+  // 面板隐藏/显示后重设图表尺寸，ResizeObserver会接管后续变化
+  if(chart) chart.applyOptions({width:$('chartbox').clientWidth,height:$('chartbox').clientHeight});
+}
+function toggleSidePanel(){ updateSidePanel(!sideVisible); hideCtxMenu(); }
+// 初始化时恢复用户上次的隐藏偏好
+(function(){ updateSidePanel(sideVisible); })();
+
 function toggleRollback(){
   _rollback=!_rollback;
   try{ localStorage.setItem('cl_bi_rollback', _rollback?'1':'0'); }catch(e){}
   const btn=$('rollbackBtn');
-  btn.textContent='回退:'+(_rollback?'开':'关');
+  btn.textContent='回';
   btn.style.color=_rollback?'#f0b90b':'#787b86';
   btn.style.borderColor=_rollback?'#f0b90b':'#2a2e39';
   loadPeriod(currentPeriod, false, true);
@@ -374,7 +422,8 @@ async function loadPeriod(period, isRefresh, onlyBi){
       candle.setMarkers(fixTime(s.markers||[]));
       const label=PERIOD_LABEL[period]||period;
       const ts=new Date().toTimeString().slice(0,8);
-      $('cd').textContent=s.symbol+' · '+label+' · '+s.bar_count+'根/'+s.bi_count+'笔 · 更新 '+ts;
+      $('nameUpd').textContent='更新 '+ts;
+      $('cd').textContent=s.symbol+' · '+label+' · '+s.bar_count+'根/'+s.bi_count+'笔';
       return;
     }
     // ===== 缓存优先：切换级别时先显示缓存数据，避免空白卡顿 =====
@@ -404,7 +453,8 @@ function renderKlineData(s, period, isRefresh, savedRange){
   const label=PERIOD_LABEL[period]||period;
   const ts=new Date().toTimeString().slice(0,8);
   $('nm').textContent=s.name;
-  $('cd').textContent=s.symbol+' · '+label+' · '+s.bar_count+'根/'+s.bi_count+'笔 · 更新 '+ts;
+  $('nameUpd').textContent='更新 '+ts;
+  $('cd').textContent=s.symbol+' · '+label+' · '+s.bar_count+'根/'+s.bi_count+'笔';
   $('p').textContent=s.last_price;
   const up=s.change>=0;
   $('chg').innerHTML=`<span class="${up?'red':'green'}">${up?'▲':'▼'} ${Math.abs(s.change)} (${s.change_pct}%)</span>`;
@@ -630,7 +680,7 @@ connect();
 checkTradingStatus();
 loadContracts();
 // 回退开关初始状态
-(function(){ const btn=$('rollbackBtn'); if(btn){ btn.textContent='回退:'+(_rollback?'开':'关'); btn.style.color=_rollback?'#f0b90b':'#787b86'; btn.style.borderColor=_rollback?'#f0b90b':'#2a2e39'; } })();
+(function(){ const btn=$('rollbackBtn'); if(btn){ btn.textContent='回'; btn.style.color=_rollback?'#f0b90b':'#787b86'; btn.style.borderColor=_rollback?'#f0b90b':'#2a2e39'; } })();
 document.querySelectorAll('#periodSeg button').forEach(b=>{
   b.classList.toggle('on', b.dataset.p===currentPeriod);
   b.onclick=()=>switchPeriod(b.dataset.p);
@@ -766,6 +816,8 @@ document.getElementById('chartbox').addEventListener('contextmenu', function(e){
   const price=candle.coordinateToPrice(y);
   if(price===null || price===undefined || isNaN(price)) return;
   const menu=document.getElementById('ctxMenu');
+  const toggleItem=document.getElementById('ctxToggleSide');
+  if(toggleItem) toggleItem.textContent=(sideVisible?'隐藏':'显示')+'右侧信息栏';
   menu.style.display='block';
   menu.style.left=(e.clientX+window.scrollX)+'px';
   menu.style.top=(e.clientY+window.scrollY)+'px';
