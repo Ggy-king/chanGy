@@ -32,6 +32,9 @@ env/
 .codebuddy/
 *.swp
 
+# ===== 本地凭证（切勿入库）=====
+secret.py
+
 # ===== 操作系统 =====
 .DS_Store
 Thumbs.db
