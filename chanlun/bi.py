@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-缠论 笔（bi）构建 —— 严格移植 chan.py + 笔破坏回退
+缠论 笔（bi）构建 —— 严格移植 chan.py
 
-在 chan.py 原版基础上增加"笔破坏回退"：
-- 向上笔 A(底)→B(顶) 成立后，若后续底 C 跌破 A.low（且 B→C 不成笔），
-  则 A→B 为假突破，取消该笔，将前一笔向下笔的终点从 A 延伸到 C。
+含 chan.py 原版 update_peak（次高点处理，bi_allow_sub_peak=False 时启用）：
+- 向上笔 A(底)→B(顶) 成立后，若 B 未突破前高（次高点）且后续底 C 跌破 A.low
+  （且 B→C 不成笔、C 为区间最极端点），则取消 A→B，前一笔向下笔终点延伸到 C。
 - 向下笔对称处理。
 """
 
@@ -60,9 +60,10 @@ def _can_make_bi(merged, last_end, cur):
     return True
 
 
-def build_bi(top_fx, bottom_fx, merged, allow_rollback=True):
+def build_bi(top_fx, bottom_fx, merged, bi_allow_sub_peak=True):
     """
-    allow_rollback: True=启用笔破坏回退（假突破则延伸端点），False=chan.py原版严格模式（不回退）
+    bi_allow_sub_peak: True=允许次高点成笔（chan.py 原版默认）；
+                       False=启用 chan.py 原版 update_peak（次高点不成笔，回退延伸）
     """
     allfx = [dict(f, t='top') for f in top_fx] + \
             [dict(f, t='bottom') for f in bottom_fx]
@@ -105,25 +106,36 @@ def build_bi(top_fx, bottom_fx, merged, allow_rollback=True):
                 bi_list.append({'start': last_end, 'end': klc})
                 last_end = klc
             else:
-                # === 笔破坏回退（仅当 allow_rollback=True 时启用）===
-                if allow_rollback and len(bi_list) >= 2:
+                # === chan.py 原版 update_peak（次高点处理，bi_allow_sub_peak=False 时启用）===
+                # 对应原版 BiList.can_update_peak + update_peak + try_update_end
+                if not bi_allow_sub_peak and len(bi_list) >= 2:
                     curr_bi = bi_list[-1]
                     prev_bi = bi_list[-2]
-                    if klc['t'] == 'bottom' and curr_bi['start']['t'] == 'bottom':
-                        # 向上笔 A→B，A = prev_bi['end']（底），B = curr_bi['end']（顶）
-                        a_low = float(prev_bi['end']['low'])
-                        if float(klc['low']) < a_low:
-                            # 回退：取消向上笔，prev_bi终点从A延伸到C
-                            prev_bi['end'] = klc
-                            last_end = klc
-                            bi_list.pop()
-                    elif klc['t'] == 'top' and curr_bi['start']['t'] == 'top':
-                        # 向下笔 A→B，A = prev_bi['end']（顶），B = curr_bi['end']（底）
-                        a_high = float(prev_bi['end']['high'])
-                        if float(klc['high']) > a_high:
-                            prev_bi['end'] = klc
-                            last_end = klc
-                            bi_list.pop()
+                    ok = False
+                    if curr_bi['start']['t'] == 'bottom':
+                        # 最后一笔为向上笔 A→B（A=curr_bi['start']，B=curr_bi['end']），klc 为新底
+                        a_low = float(curr_bi['start']['low'])
+                        b_high = float(curr_bi['end']['high'])
+                        prev_top_high = float(prev_bi['start']['high'])
+                        # 条件1: klc.low <= A.low（跌破向上笔起点）
+                        # 条件2: B.high <= 前一笔起点的高（B 是次高点，未真突破）
+                        # 条件3: klc 是从前高到 klc 区间内最低点（end_is_peak）
+                        if (float(klc['low']) <= a_low and b_high <= prev_top_high
+                                and _end_is_peak(merged, prev_bi['start'], klc)):
+                            ok = True
+                    else:
+                        # 最后一笔为向下笔 A→B，klc 为新顶（对称）
+                        a_high = float(curr_bi['start']['high'])
+                        b_low = float(curr_bi['end']['low'])
+                        prev_bottom_low = float(prev_bi['start']['low'])
+                        if (float(klc['high']) >= a_high and b_low >= prev_bottom_low
+                                and _end_is_peak(merged, prev_bi['start'], klc)):
+                            ok = True
+                    if ok:
+                        # 删除次高点那一笔，前一笔终点延伸到 klc
+                        bi_list.pop()
+                        prev_bi['end'] = klc
+                        last_end = klc
 
     rows = []
     for s in bi_list:

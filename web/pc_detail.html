@@ -26,7 +26,7 @@
   .price .p{font-size:24px;font-weight:800;line-height:1;}
   #tradeStatus{flex:none;font-size:12px;white-space:nowrap;}
   .icon-btn{width:40px;min-width:40px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:17px;}
-  #rollbackBtn{font-weight:700;}
+  #subpeakBtn{font-weight:700;}
   /* 极窄屏再压缩，默认MacBook一行能放下 */
   @media (max-width:1150px){
     .name-block{width:200px;}
@@ -137,7 +137,7 @@
     <div class="price"><div class="p" id="p">–</div><div id="chg" class="mut"></div></div>
     <span id="tradeStatus" class="mut"></span>
     <button class="btn icon-btn" onclick="loadPeriod(currentPeriod)" title="刷新" style="font-size: 18px;">⟳</button>
-    <button class="btn icon-btn" id="rollbackBtn" onclick="toggleRollback()" title="笔破坏回退开关">回</button>
+    <button class="btn icon-btn" id="subpeakBtn" onclick="toggleSubpeak()" title="次高点成笔开关（chan.py bi_allow_sub_peak）：亮=允许次高点成笔（原版默认），灰=次高点不成笔并回退延伸（原版update_peak）">次</button>
   </div>
 </header>
 <main>
@@ -378,8 +378,8 @@ function switchPeriod(p){
   loadPeriod(p);
 }
 
-let _rollback=true;
-try{ _rollback=localStorage.getItem('cl_bi_rollback')!=='0'; }catch(e){}
+let _subpeak=true;
+try{ _subpeak=localStorage.getItem('cl_bi_subpeak')!=='0'; }catch(e){}
 
 // 右侧信息栏显隐状态（跨会话记忆）
 let sideVisible=true;
@@ -397,13 +397,13 @@ function toggleSidePanel(){ updateSidePanel(!sideVisible); hideCtxMenu(); }
 // 初始化时恢复用户上次的隐藏偏好
 (function(){ updateSidePanel(sideVisible); })();
 
-function toggleRollback(){
-  _rollback=!_rollback;
-  try{ localStorage.setItem('cl_bi_rollback', _rollback?'1':'0'); }catch(e){}
-  const btn=$('rollbackBtn');
-  btn.textContent='回';
-  btn.style.color=_rollback?'#f0b90b':'#787b86';
-  btn.style.borderColor=_rollback?'#f0b90b':'#2a2e39';
+function toggleSubpeak(){
+  _subpeak=!_subpeak;
+  try{ localStorage.setItem('cl_bi_subpeak', _subpeak?'1':'0'); }catch(e){}
+  const btn=$('subpeakBtn');
+  btn.textContent='次';
+  btn.style.color=_subpeak?'#f0b90b':'#787b86';
+  btn.style.borderColor=_subpeak?'#f0b90b':'#2a2e39';
   loadPeriod(currentPeriod, false, true);
 }
 
@@ -415,8 +415,8 @@ async function loadPeriod(period, isRefresh, onlyBi){
       try{ savedRange=chart.timeScale().getVisibleRange(); }catch(e){}
     }
     if(onlyBi){
-      const rb=_rollback?'1':'0';
-      const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+'&rollback='+rb);
+      const rb=_subpeak?'1':'0';
+      const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+'&subpeak='+rb);
       const s=await r.json();
       if(s.error) return;
       bi.setData(fixTime(s.bi||[]));
@@ -436,8 +436,8 @@ async function loadPeriod(period, isRefresh, onlyBi){
       if(_cacheLoading[period]) return;
     }
     _cacheLoading[period]=true;
-    const rb=_rollback?'1':'0';
-    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+'&rollback='+rb);
+    const rb=_subpeak?'1':'0';
+    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+'&subpeak='+rb);
     const s=await r.json();
     _cacheLoading[period]=false;
     if(s.error){ $('cd').textContent=SYM+' · 出错: '+s.error; return; }
@@ -683,7 +683,7 @@ connect();
 checkTradingStatus();
 loadContracts();
 // 回退开关初始状态
-(function(){ const btn=$('rollbackBtn'); if(btn){ btn.textContent='回'; btn.style.color=_rollback?'#f0b90b':'#787b86'; btn.style.borderColor=_rollback?'#f0b90b':'#2a2e39'; } })();
+(function(){ const btn=$('subpeakBtn'); if(btn){ btn.textContent='次'; btn.style.color=_subpeak?'#f0b90b':'#787b86'; btn.style.borderColor=_subpeak?'#f0b90b':'#2a2e39'; } })();
 document.querySelectorAll('#periodSeg button').forEach(b=>{
   b.classList.toggle('on', b.dataset.p===currentPeriod);
   b.onclick=()=>switchPeriod(b.dataset.p);
