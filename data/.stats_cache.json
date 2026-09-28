@@ -15,14 +15,6 @@
     "max_dd": 0.0,
     "avg_dd": 0.0
   },
-  "MA2610": {
-    "trades": 9,
-    "win_rate": 100.0,
-    "pl_ratio": null,
-    "total_money": 17150.0,
-    "max_dd": 0.0,
-    "avg_dd": 0.0
-  },
   "jm2701": {
     "trades": 14,
     "win_rate": 100.0,
@@ -119,19 +111,19 @@
     "max_dd": 0.0,
     "avg_dd": 0.0
   },
-  "NI2610": {
-    "trades": 14,
-    "win_rate": 100.0,
-    "pl_ratio": null,
-    "total_money": 17446.0,
-    "max_dd": 0.0,
-    "avg_dd": 0.0
-  },
   "PK2611": {
     "trades": 5,
     "win_rate": 100.0,
     "pl_ratio": null,
     "total_money": 2260.0,
+    "max_dd": 0.0,
+    "avg_dd": 0.0
+  },
+  "MA2611": {
+    "trades": 7,
+    "win_rate": 100.0,
+    "pl_ratio": null,
+    "total_money": 12930.0,
     "max_dd": 0.0,
     "avg_dd": 0.0
   }
