@@ -35,25 +35,38 @@ _STATS_CACHE_FILE = os.path.join(_DIR, os.path.join('data', '.stats_cache.json')
 
 
 def _load_stats_cache():
+    """加载回测统计缓存；自动剔除已不在 config.CONTRACTS 盯盘清单里的旧合约（换月自动替换）。"""
+    data = {}
     try:
         if os.path.exists(_STATS_CACHE_FILE):
             with open(_STATS_CACHE_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                data = json.load(f)
     except Exception as e:
         print('load stats cache error:', e)
-    return {}
+    valid = set(config.CONTRACT_MAP)
+    return {k: v for k, v in data.items() if k in valid}
 
 
 def _save_stats_cache():
     try:
         os.makedirs(os.path.dirname(_STATS_CACHE_FILE), exist_ok=True)
+        valid = set(config.CONTRACT_MAP)   # 落盘前同样过滤，不把已换下的旧合约写回去
+        data = {k: v for k, v in _stats_frozen.items() if k in valid}
         with open(_STATS_CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(_stats_frozen, f, ensure_ascii=False, indent=2)
+            json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print('save stats cache error:', e)
 
 
 _stats_frozen = _load_stats_cache()
+# 磁盘上若残留已换下的旧合约（如换月 MA2610→MA2611），启动时立即重写清理
+try:
+    if os.path.exists(_STATS_CACHE_FILE):
+        with open(_STATS_CACHE_FILE, 'r', encoding='utf-8') as _f:
+            if set(json.load(_f)) != set(_stats_frozen):
+                _save_stats_cache()
+except Exception:
+    pass
 
 # 并发抓取线程池（akshare 对新浪接口有频率限制，6 并发安全且最快）
 _FETCH_WORKERS = 6
