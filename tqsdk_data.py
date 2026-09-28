@@ -3,7 +3,7 @@
 天勤量化 TqSdk 数据源封装
 - 合约代码转换：CF2701 -> CZCE.CF701
 - 周期用秒数：30秒=30, 3分钟=180, 15分钟=900, 60分钟=3600, 日线=86400
-- 单例模式，全局一个TqApi连接
+- 单例模式，全局一个TqApi连接，心跳线程保活
 """
 import sys, os, types, logging, threading, time, re
 
@@ -40,7 +40,6 @@ import pandas as pd
 from tqsdk import TqApi, TqAuth
 
 # 品种 -> (交易所, 天勤品种代码) 映射
-# 郑商所/中金所/广期所品种代码大写；上期所/大商所/能源中心品种代码小写
 _PRODUCT_MAP = {
     # 郑商所 CZCE（大写）
     'CF':('CZCE','CF'), 'UR':('CZCE','UR'), 'MA':('CZCE','MA'), 'SA':('CZCE','SA'),
@@ -88,13 +87,11 @@ def to_tq_symbol(symbol):
     info = _PRODUCT_MAP.get(product)
     if info:
         exch, tq_product = info
-        # 郑商所用3位月份，其他交易所用4位月份
         if exch == 'CZCE':
             contract_short = contract[-3:] if len(contract) > 3 else contract
             return f'{exch}.{tq_product}{contract_short}'
         else:
             return f'{exch}.{tq_product}{contract}'
-    # 兜底：大写品种默认郑商所（3位），小写默认上期所（4位）
     if product[0].isupper():
         contract_short = contract[-3:] if len(contract) > 3 else contract
         return f'CZCE.{product}{contract_short}'
@@ -103,7 +100,7 @@ def to_tq_symbol(symbol):
 
 
 class TqData:
-    """单例长连接：全局一个TqApi，订阅过的K线序列缓存，后续只等更新不重建连。"""
+    """单例长连接：全局一个TqApi，心跳线程保活，异常自动重连。"""
     _instance = None
     _lock = threading.Lock()
 
@@ -114,49 +111,103 @@ class TqData:
                     inst = super().__new__(cls)
                     inst._api = None
                     inst._api_lock = threading.Lock()
-                    inst._klines = {}  # {(tq_sym, period_sec): kline_serial}
+                    inst._klines = {}
+                    inst._heartbeat_thread = None
+                    inst._heartbeat_stop = False
+                    inst._last_heartbeat = 0
                     cls._instance = inst
         return cls._instance
 
+    def _create_api(self):
+        """创建新的TqApi连接（调用方必须已持有_api_lock）"""
+        # 先关闭旧连接
+        if self._api:
+            try:
+                self._api.close()
+            except:
+                pass
+        self._api = None
+        self._klines = {}
+        # 创建新连接
+        self._api = TqApi(auth=TqAuth('guangyuan', 'Ggy20030111'))
+        print('[TqData] 天勤连接成功')
+        self._last_heartbeat = time.time()
+        # 启动心跳线程
+        self._start_heartbeat()
+
     def _ensure_api(self):
+        """确保连接可用，不可用时重连。注意：不要在持有_api_lock时调用！"""
         if self._api is None:
             with self._api_lock:
                 if self._api is None:
-                    self._api = TqApi(auth=TqAuth('guangyuan', 'Ggy20030111'))
-                    print('[TqData] 天勤连接成功')
+                    self._create_api()
         return self._api
+
+    def _start_heartbeat(self):
+        """启动心跳线程，每30秒调用一次wait_update保活"""
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            return
+        self._heartbeat_stop = False
+        self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        self._heartbeat_thread.start()
+        print('[TqData] 心跳保活线程已启动')
+
+    def _heartbeat_loop(self):
+        """心跳循环：每30秒调用wait_update，防止服务器主动断开"""
+        while not self._heartbeat_stop:
+            time.sleep(30)
+            if self._heartbeat_stop:
+                break
+            try:
+                if self._api and self._api_lock.acquire(blocking=False):
+                    try:
+                        if self._api:
+                            self._api.wait_update(deadline=5)
+                            self._last_heartbeat = time.time()
+                    except Exception as e:
+                        print(f'[TqData] 心跳异常，准备重连: {e}')
+                        self._api = None
+                        self._klines = {}
+                    finally:
+                        self._api_lock.release()
+            except:
+                pass
 
     def get_kline(self, symbol, period_sec, data_length=2000):
         """获取K线。已订阅的只等2秒，新订阅的等10秒，异常自动重连。"""
-        api = self._ensure_api()
         tq_sym = to_tq_symbol(symbol)
         key = (tq_sym, period_sec)
-        with self._api_lock:
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                if key not in self._klines:
-                    self._klines[key] = api.get_kline_serial(tq_sym, period_sec, data_length=data_length)
-                    api.wait_update(deadline=10)  # 新订阅等数据到位
-                else:
-                    api.wait_update(deadline=2)   # 已订阅只等2秒，避免长时间阻塞
-                k = self._klines[key]
-                df = k.copy()
-            except Exception as e:
-                print(f'[TqData] 连接异常，自动重连: {e}')
-                self._api = None
-                self._klines = {}
                 api = self._ensure_api()
-                self._klines[key] = api.get_kline_serial(tq_sym, period_sec, data_length=data_length)
-                api.wait_update(deadline=10)
-                k = self._klines[key]
-                df = k.copy()
-        # 转换时间戳（纳秒UTC -> 北京时间，保留时区信息）
-        df['datetime'] = pd.to_datetime(df['datetime'], unit='ns', utc=True).dt.tz_convert('Asia/Shanghai')
-        # 只保留需要的列，去掉空行
-        df = df[['datetime','open','high','low','close','volume']].dropna(subset=['open'])
-        df = df[df['open'] > 0].reset_index(drop=True)
-        return df
+                with self._api_lock:
+                    if key not in self._klines:
+                        self._klines[key] = api.get_kline_serial(tq_sym, period_sec, data_length=data_length)
+                        api.wait_update(deadline=10)
+                    else:
+                        api.wait_update(deadline=2)
+                    k = self._klines[key]
+                    df = k.copy()
+                # 转换时间戳
+                df['datetime'] = pd.to_datetime(df['datetime'], unit='ns', utc=True).dt.tz_convert('Asia/Shanghai')
+                df = df[['datetime','open','high','low','close','volume']].dropna(subset=['open'])
+                df = df[df['open'] > 0].reset_index(drop=True)
+                return df
+            except Exception as e:
+                print(f'[TqData] 连接异常(第{attempt+1}次)，自动重连: {e}')
+                # 重连：直接在锁内创建新连接，避免死锁
+                with self._api_lock:
+                    try:
+                        self._create_api()
+                    except Exception as e2:
+                        print(f'[TqData] 重连失败: {e2}')
+                if attempt == max_retries - 1:
+                    raise
+                time.sleep(2)
 
     def close(self):
+        self._heartbeat_stop = True
         if self._api:
             try:
                 self._api.close()
