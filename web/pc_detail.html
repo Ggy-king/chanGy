@@ -211,6 +211,7 @@
 const $=id=>document.getElementById(id);
 const params=new URLSearchParams(location.search);
 const SYM=params.get('sym')||'MA2610';
+let SYM_NAME=SYM; // 数据加载完成后会更新为真实品种名（右键加预警时用作 alert.name）
 const PERIOD_LABEL={'30':'30秒','1':'1分','3':'3分','15':'15分','60':'60分','daily':'日线'};
 let _savedPeriod=null; try{_savedPeriod=localStorage.getItem('cl_chart_period');}catch(e){}
 let currentPeriod=params.get('period')||_savedPeriod||'15';
@@ -453,6 +454,7 @@ function renderKlineData(s, period, isRefresh, savedRange){
   const label=PERIOD_LABEL[period]||period;
   const ts=new Date().toTimeString().slice(0,8);
   $('nm').textContent=s.name;
+  SYM_NAME=s.name||SYM;
   $('nameUpd').textContent='更新 '+ts;
   $('cd').textContent=s.symbol+' · '+label+' · '+s.bar_count+'根/'+s.bi_count+'笔';
   $('p').textContent=s.last_price;
@@ -487,6 +489,7 @@ function connect(){
         if(alertLines[m.id]){
           try{candle.removePriceLine(alertLines[m.id]);}catch(e){}
           delete alertLines[m.id];
+          delete alertDirections[m.id];
         }
       }else if(m.type==='devices'){
         window._devices=m.devices||[];
@@ -689,9 +692,13 @@ refreshTimer=setInterval(()=>{ if(canAutoRefresh()) loadPeriod(currentPeriod, tr
 
 // ========== 价格预警 ==========
 let alertLines={};
+let alertDirections={}; // 记录每条预警线的方向（拖动吸附后更新标题用）
 let addingAlert=false;
 let tempLine=null;
 let _origCrosshairMode=1;
+const ALERT_LINE_COLOR='#ffffff';   // 预警线统一颜色
+const ALERT_LINE_WIDTH=1;           // 与默认价格线同粗细
+const ALERT_LINE_STYLE=2;
 
 function hideCtxMenu(){const m=document.getElementById('ctxMenu');if(m)m.style.display='none';}
 
@@ -703,10 +710,10 @@ function startAddAlert(){
   // 隐藏默认十字星
   _origCrosshairMode=chart.options().crosshair.mode;
   chart.applyOptions({crosshair:{mode:2}});
-  // 创建临时预警线（黄色）
+  // 创建临时预警线（黄色，便于和正式线区分）
   const lastPrice = candle.data().length > 0 ? candle.data()[candle.data().length-1].close : 0;
   tempLine=candle.createPriceLine({
-    price:lastPrice,color:'#ff9800',lineWidth:2,lineStyle:2,
+    price:snapPrice(lastPrice),color:'#ff9800',lineWidth:ALERT_LINE_WIDTH,lineStyle:ALERT_LINE_STYLE,
     axisLabelVisible:true,title:'拖动选择预警价，点击确认',draggable:true
   });
 }
@@ -723,15 +730,14 @@ function cancelAddAlert(){
 function confirmAddAlert(price){
   if(!addingAlert || !tempLine) return;
   if(!price || isNaN(price)) return;
-  const finalPrice=Math.round(price*100)/100;
+  const finalPrice=snapPrice(price);
   // 获取当前最新价格，自动判断方向
   const kdata=candle.data();
   const curPrice = kdata.length>0 ? kdata[kdata.length-1].close : price;
-  const direction = curPrice <= price ? 'up' : 'down';
-  const color=direction==='up'?'#ef5350':'#26a69a';
-  // 先把临时线改成正式预警线样式（不消失，直接变色）
+  const direction = curPrice <= finalPrice ? 'up' : 'down';
+  // 先把临时线改成正式预警线样式：统一白色、变细
   tempLine.applyOptions({
-    price:finalPrice,color:color,lineWidth:2,lineStyle:2,
+    price:finalPrice,color:ALERT_LINE_COLOR,lineWidth:ALERT_LINE_WIDTH,lineStyle:ALERT_LINE_STYLE,
     axisLabelVisible:true,title:(direction==='up'?'上穿':'下穿')+' '+finalPrice
   });
   const line=tempLine;
@@ -746,6 +752,7 @@ function confirmAddAlert(price){
     .then(j=>{
       if(j.ok){
         alertLines[j.alert.id]=line;
+        alertDirections[j.alert.id]=direction;
         console.log('已添加预警', direction==='up'?'上穿':'下穿', finalPrice, 'id=', j.alert.id);
       }else{
         console.error('添加预警失败', j);
@@ -764,12 +771,13 @@ async function loadAlertLines(){
     const j=await r.json();
     for(const a of j.alerts||[]){
       if(a.symbol!==SYM || a.triggered) continue;
-      const color=a.direction==='up'?'#ef5350':'#26a69a';
+      const finalPrice=snapPrice(a.price);
       const line=candle.createPriceLine({
-        price:a.price,color:color,lineWidth:2,lineStyle:2,
-        axisLabelVisible:true,title:(a.direction==='up'?'上穿':'下穿')+' '+a.price,draggable:true
+        price:finalPrice,color:ALERT_LINE_COLOR,lineWidth:ALERT_LINE_WIDTH,lineStyle:ALERT_LINE_STYLE,
+        axisLabelVisible:true,title:(a.direction==='up'?'上穿':'下穿')+' '+finalPrice,draggable:true
       });
       alertLines[a.id]=line;
+      alertDirections[a.id]=a.direction;
     }
     console.log('已加载预警线', Object.keys(alertLines).length, '条');
   }catch(e){console.error('加载预警线失败',e);}
@@ -836,14 +844,15 @@ document.addEventListener('click', (e)=>{
   hideCtxMenu();
 });
 
-// 鼠标移动时更新临时预警线位置
+// 鼠标移动时更新临时预警线位置（吸附到最小变动价位）
 document.getElementById('chartbox').addEventListener('mousemove', function(e){
   if(!addingAlert || !tempLine) return;
   const rect=this.getBoundingClientRect();
   const y=e.clientY-rect.top;
   const price=candle.coordinateToPrice(y);
   if(price!==null && price!==undefined && !isNaN(price)){
-    tempLine.applyOptions({price:price, title:'预警价 '+Math.round(price*100)/100+'（点击确认）'});
+    const sp=snapPrice(price);
+    tempLine.applyOptions({price:sp, title:'预警价 '+sp+'（点击确认）'});
   }
 });
 
@@ -901,29 +910,34 @@ document.addEventListener('mousemove', function(e){
   const y=e.clientY-rect.top;
   const price=priceAtY(y);
   if(price===null) return;
-  const newPrice=Math.round((price+dragOffset)*100)/100;
+  const newPrice=snapPrice(price+dragOffset);
   const kdata=candle.data();
   const curPrice = kdata.length>0 ? kdata[kdata.length-1].close : newPrice;
   const dir = curPrice<=newPrice ? 'up' : 'down';
-  const color = dir==='up' ? '#ef5350' : '#26a69a';
-  try{ draggingAlert.line.applyOptions({price:newPrice, color:color, title:(dir==='up'?'上穿':'下穿')+' '+newPrice}); }catch(err){}
+  try{ draggingAlert.line.applyOptions({price:newPrice, color:ALERT_LINE_COLOR, title:(dir==='up'?'上穿':'下穿')+' '+newPrice}); }catch(err){}
 }, true);
 
 document.addEventListener('mouseup', function(){
   if(!draggingAlert) return;
   const chartEl=document.getElementById('chartbox');
   if(chartEl) chartEl.style.cursor='';
-  let newPrice=null;
-  try{ newPrice=draggingAlert.line.options().price; }catch(err){}
+  let rawPrice=null;
+  try{ rawPrice=draggingAlert.line.options().price; }catch(err){}
   const id=draggingAlert.id;
+  const dirSaved = alertDirections[id];
   draggingAlert=null;
-  if(newPrice!==null){
+  if(rawPrice!==null){
+    const newPrice=snapPrice(rawPrice);
     const kdata=candle.data();
     const curPrice = kdata.length>0 ? kdata[kdata.length-1].close : newPrice;
     const dir = curPrice<=newPrice ? 'up' : 'down';
+    // 同步吸附后的视觉位置
+    if(alertLines[id]){
+      try{ alertLines[id].applyOptions({price:newPrice, color:ALERT_LINE_COLOR, title:(dir==='up'?'上穿':'下穿')+' '+newPrice}); }catch(err){}
+    }
     fetch('/api/alerts/'+id, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({price:newPrice, direction:dir})})
       .then(r=>r.json())
-      .then(j=>{})
+      .then(j=>{ if(j.ok && j.alert) alertDirections[id]=j.alert.direction||dir; })
       .catch(e=>console.error('[预警] 更新失败', e));
   }
 });
@@ -949,6 +963,7 @@ document.addEventListener('contextmenu', function(e){
           if(j.ok){
             try{candle.removePriceLine(lineToDelete);}catch(err){}
             delete alertLines[idToDelete];
+            delete alertDirections[idToDelete];
           }
         })
         .catch(err=>console.error('[预警] 删除失败', err));

@@ -320,9 +320,17 @@ if __name__ == '__main__':
     def _init_tq():
         try:
             import tqsdk_data as tq
+        except Exception as e:
+            print(f'[TqData] 导入数据源模块失败: {e}')
+            return
+        try:
             tq.TqData()._ensure_api()
             print('[TqData] 天勤连接预初始化完成')
+        except tq.TqAuthError as e:
+            # 致命认证错误：明确提示用户改 secret.py 后重启，不会静默重试
+            print(f'[TqData] 预初始化失败（致命 - 不会自动重试）: {e}')
         except Exception as e:
+            # 网络等瞬时错误：保留旧的"首次请求时会自动重试"提示
             print(f'[TqData] 预初始化失败（首次请求时会自动重试）: {e}')
     import threading as _th
     _th.Thread(target=_init_tq, daemon=True).start()
