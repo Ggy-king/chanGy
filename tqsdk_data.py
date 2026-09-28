@@ -3,9 +3,10 @@
 天勤量化 TqSdk 数据源封装
 - 合约代码转换：CF2701 -> CZCE.CF701
 - 周期用秒数：30秒=30, 3分钟=180, 15分钟=900, 60分钟=3600, 日线=86400
-- 单例模式，全局一个TqApi连接，心跳线程保活
+- 单例模式，全局一个TqApi连接，ws 重连由 TqSdk 内部处理
 """
 import sys, os, types, logging, threading, time, re
+from typing import Optional
 
 # ========== mock 冲突库 ==========
 _original_log = logging.Logger._log
@@ -99,10 +100,28 @@ def to_tq_symbol(symbol):
         return f'SHFE.{product}{contract}'
 
 
+class TqAuthError(Exception):
+    """致命错误：天勤认证失败（密码错/账号失效）。不应重试，需用户修改 secret.py 后重启服务。"""
+
+
 class TqData:
-    """单例长连接：全局一个TqApi，心跳线程保活，异常自动重连。"""
-    _instance = None
+    """单例长连接：全局一个TqApi，WebSocket 重连由 TqSdk 内部处理（指数退避 10s→640s）。
+
+    注意：
+      1. 不要在本类里再加心跳线程 —— TqSdk 内部已自带 ws 重连，
+         我们的心跳反而会推应用层包，触发 free-api 的 120s 应用包寿命限制。
+      2. 不要在异常路径里 close()+new() —— TqSdk 后台正在退避重连，
+         我们抢活会导致连接重复/重连后只活 60s 等异常。
+      3. 致命错误（TqAuthError）直接抛，不重试，让用户去改 secret.py。
+    """
+    _instance: Optional['TqData'] = None
     _lock = threading.Lock()
+
+    # 实例属性声明：实际在 __new__ 里赋值，这里只声明类型供静态检查识别
+    _api: Optional[TqApi]
+    _api_lock: threading.Lock
+    _klines: dict
+    _auth_failed: bool
 
     def __new__(cls):
         if cls._instance is None:
@@ -112,14 +131,14 @@ class TqData:
                     inst._api = None
                     inst._api_lock = threading.Lock()
                     inst._klines = {}
-                    inst._heartbeat_thread = None
-                    inst._heartbeat_stop = False
-                    inst._last_heartbeat = 0
+                    inst._auth_failed = False   # 一旦认证失败置位，所有路径停止重试
                     cls._instance = inst
         return cls._instance
 
     def _create_api(self):
-        """创建新的TqApi连接（调用方必须已持有_api_lock）"""
+        """创建新的TqApi连接（调用方必须已持有_api_lock）。"""
+        if self._auth_failed:
+            raise TqAuthError('天勤认证已失败，请检查 secret.py 中的账号密码并重启服务')
         # 先关闭旧连接
         if self._api:
             try:
@@ -137,64 +156,55 @@ class TqData:
             raise RuntimeError(
                 '缺少 secret.py：请复制项目根目录的 secret.py.local 为 secret.py，'
                 '填入天勤账号密码（该文件不入库）')
-        # 创建新连接
-        self._api = TqApi(auth=TqAuth(user, pwd))
+        # 创建新连接 —— 区分认证失败（致命）vs 网络等瞬时错误（可重试）
+        try:
+            self._api = TqApi(auth=TqAuth(user, pwd))
+        except Exception as e:
+            msg = str(e)
+            # 致命错误特征：天勤认证失败 / 401 / 403 / invalid_grant
+            fatal_kw = ('用户权限认证失败', 'invalid_grant', 'Invalid user credentials',
+                        '认证失败', 'unauthorized', '401', '403')
+            if any(kw in msg for kw in fatal_kw):
+                self._auth_failed = True
+                raise TqAuthError(
+                    f'天勤认证失败（已停止重试，请检查 secret.py 中账号密码后重启服务）: {e}'
+                ) from e
+            # 其他异常（网络中断等）继续向上抛，由上层重试
+            raise
         print('[TqData] 天勤连接成功')
-        self._last_heartbeat = time.time()
-        # 启动心跳线程
-        self._start_heartbeat()
 
-    def _ensure_api(self):
-        """确保连接可用，不可用时重连。注意：不要在持有_api_lock时调用！"""
+    def _ensure_api(self) -> TqApi:
+        """懒创建 TqApi。TqSdk 内部自己处理 ws 重连，我们不抢活。"""
+        if self._auth_failed:
+            raise TqAuthError('天勤认证已失败，请检查 secret.py 并重启服务')
         if self._api is None:
             with self._api_lock:
                 if self._api is None:
                     self._create_api()
+        assert self._api is not None, '_create_api 后 _api 必非 None'
         return self._api
 
-    def _start_heartbeat(self):
-        """启动心跳线程，每30秒调用一次wait_update保活"""
-        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
-            return
-        self._heartbeat_stop = False
-        self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
-        self._heartbeat_thread.start()
-        print('[TqData] 心跳保活线程已启动')
-
-    def _heartbeat_loop(self):
-        """心跳循环：每30秒调用wait_update，防止服务器主动断开"""
-        while not self._heartbeat_stop:
-            time.sleep(30)
-            if self._heartbeat_stop:
-                break
-            try:
-                if self._api and self._api_lock.acquire(blocking=False):
-                    try:
-                        if self._api:
-                            self._api.wait_update(deadline=5)
-                            self._last_heartbeat = time.time()
-                    except Exception as e:
-                        print(f'[TqData] 心跳异常，准备重连: {e}')
-                        self._api = None
-                        self._klines = {}
-                    finally:
-                        self._api_lock.release()
-            except:
-                pass
-
     def get_kline(self, symbol, period_sec, data_length=2000):
-        """获取K线。已订阅的只等2秒，新订阅的等10秒，异常自动重连。"""
+        """获取K线。TqSdk 内部 ws 重连对 wait_update 透明（阻塞到重连完成），
+        所以我们只需对极少见的瞬时异常做短重试即可，不再 close()+new() 重建。
+
+        致命认证错误（TqAuthError）不重试，直接抛给上层。
+        """
+        if self._auth_failed:
+            raise TqAuthError('天勤认证已失败，请检查 secret.py 并重启服务')
         tq_sym = to_tq_symbol(symbol)
         key = (tq_sym, period_sec)
-        max_retries = 3
-        for attempt in range(max_retries):
+        last_err = None
+        for attempt in range(3):
             try:
                 api = self._ensure_api()
                 with self._api_lock:
                     if key not in self._klines:
+                        # 新订阅：等首推
                         self._klines[key] = api.get_kline_serial(tq_sym, period_sec, data_length=data_length)
                         api.wait_update(deadline=10)
                     else:
+                        # 已订阅：短等即可
                         api.wait_update(deadline=2)
                     k = self._klines[key]
                     df = k.copy()
@@ -203,20 +213,18 @@ class TqData:
                 df = df[['datetime','open','high','low','close','volume']].dropna(subset=['open'])
                 df = df[df['open'] > 0].reset_index(drop=True)
                 return df
+            except TqAuthError:
+                # 致命错误：不再重试，直接抛出
+                raise
             except Exception as e:
-                print(f'[TqData] 连接异常(第{attempt+1}次)，自动重连: {e}')
-                # 重连：直接在锁内创建新连接，避免死锁
-                with self._api_lock:
-                    try:
-                        self._create_api()
-                    except Exception as e2:
-                        print(f'[TqData] 重连失败: {e2}')
-                if attempt == max_retries - 1:
-                    raise
-                time.sleep(2)
+                last_err = e
+                print(f'[TqData] 拉数据失败（第{attempt+1}次）: {type(e).__name__}: {e}')
+                if attempt < 2:
+                    time.sleep(2)
+                # 不再 close()+new()，让 TqSdk 自己重连
+        raise RuntimeError(f'拉数据失败，已重试3次: {last_err}')
 
     def close(self):
-        self._heartbeat_stop = True
         if self._api:
             try:
                 self._api.close()
