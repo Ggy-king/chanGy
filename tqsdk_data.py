@@ -141,6 +141,17 @@ class TqData:
             with self._api_lock:
                 if self._api is None:
                     self._create_api()
+                    # 凭证放本地 secret.py（已 .gitignore，不入库）；
+                    # 首次使用参考模板 secret.py.local
+                    try:
+                        import secret
+                        user, pwd = secret.TQ_USER, secret.TQ_PASS
+                    except ImportError:
+                        raise RuntimeError(
+                            '缺少 secret.py：请复制项目根目录的 secret.py.local 为 secret.py，'
+                            '填入天勤账号密码（该文件不入库）')
+                    self._api = TqApi(auth=TqAuth(user, pwd))
+                    print('[TqData] 天勤连接成功')
         return self._api
 
     def _start_heartbeat(self):
