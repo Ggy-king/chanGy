@@ -123,7 +123,7 @@ def _risk_info(side, price, stop_loss, fee, last_price):
     }
 
 
-def _build(df, symbol, name, allow_rollback=True):
+def _build(df, symbol, name, bi_allow_sub_peak=True):
     df = df.reset_index(drop=True)
     # datetime已经是带时区的北京时间，只在无时区时才转换，避免.timestamp()差8小时
     if df['datetime'].dt.tz is None:
@@ -131,7 +131,7 @@ def _build(df, symbol, name, allow_rollback=True):
 
     merged = merge_klines(df)
     top_fx, bottom_fx = find_fenxing(merged)
-    bi_list = build_bi(top_fx, bottom_fx, merged, allow_rollback=allow_rollback)
+    bi_list = build_bi(top_fx, bottom_fx, merged, bi_allow_sub_peak=bi_allow_sub_peak)
 
     kline, vol = [], []
     for _, r in df.iterrows():
@@ -210,10 +210,10 @@ def _fetch_one(symbol, retries=3, period=None):
     raise RuntimeError(f'fetch {symbol} failed after {retries} retries: {last}')
 
 
-def build_symbol(symbol, allow_rollback=True):
+def build_symbol(symbol, bi_allow_sub_peak=True):
     name = config.CONTRACT_MAP[symbol]['name']
     df = _fetch_one(symbol)
-    snap = _build(df, symbol, name, allow_rollback=allow_rollback)
+    snap = _build(df, symbol, name, bi_allow_sub_peak=bi_allow_sub_peak)
     fee = fees.get(symbol)
     snap['fee'] = fee
     # 不自动跑回测统计：只有用户显式点“回测”后，结果才会写进 _stats_frozen 并落盘。
@@ -560,7 +560,7 @@ def get_quotes():
 # ==================== 看盘模式（多周期，独立于15分钟预警） ====================
 
 
-def get_live(symbol, period='15', allow_rollback=True):
+def get_live(symbol, period='15', bi_allow_sub_peak=True):
     """看盘模式：拉指定周期K线（天勤数据源），算合并/分型/笔，返回精简快照。
     period: '30','1','3','15','60','daily'。全部用天勤原生接口，无需合成。
     完全独立，不写入 _cache_detail，不影响15分钟预警与回测。"""
@@ -569,7 +569,7 @@ def get_live(symbol, period='15', allow_rollback=True):
     df = tq.fetch_kline(symbol, period_sec, data_length=2000)
     if df is None or len(df) == 0:
         raise RuntimeError(f'empty {period} data')
-    snap = _build(df, symbol, name, allow_rollback=allow_rollback)
+    snap = _build(df, symbol, name, bi_allow_sub_peak=bi_allow_sub_peak)
     snap['period'] = period
     label = period + ('秒' if period == '30' else ('分' if period != 'daily' else '线'))
     for s in snap.get('signals', []):

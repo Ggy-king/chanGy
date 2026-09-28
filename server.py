@@ -214,14 +214,14 @@ async def api_backtest(sym: str = 'ALL', months: int = 1):
 
 
 @app.get('/api/live')
-async def api_live(sym: str, period: str = '15', rollback: str = '1'):
+async def api_live(sym: str, period: str = '15', subpeak: str = '1'):
     """看盘模式：指定周期K线+笔（1/3/15/60/daily），独立于15分钟预警缓存。
-    rollback=1启用笔破坏回退，rollback=0用chan.py原版严格模式。"""
+    subpeak=1允许次高点成笔（chan.py原版默认），subpeak=0启用原版update_peak（次高点回退延伸）。"""
     if period not in ('30', '1', '3', '15', '60', 'daily'):
         period = '15'
-    allow_rollback = rollback != '0'
+    bi_allow_sub_peak = subpeak != '0'
     try:
-        return JSONResponse(engine.get_live(sym, period, allow_rollback=allow_rollback))
+        return JSONResponse(engine.get_live(sym, period, bi_allow_sub_peak=bi_allow_sub_peak))
     except Exception as e:
         return JSONResponse({'symbol': sym, 'error': str(e)[:120]}, status_code=200)
 @app.get('/api/trading_status')
