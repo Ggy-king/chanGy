@@ -23,7 +23,7 @@ import types as _types
 for _mod in ['pyarrow', 'pyarrow.lib', 'pyarrow.compute', 'numexpr', 'numexpr.interpreter', 'bottleneck', 'bottleneck.move']:
     if _mod not in sys.modules:
         _m = _types.ModuleType(_mod)
-        _m.__version__ = '0.0.0'
+        setattr(_m, '__version__', '0.0.0')  # 动态挂属性，避免类型检查器误报
         sys.modules[_mod] = _m
 
 import uvicorn
