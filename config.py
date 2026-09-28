@@ -16,7 +16,7 @@ PERIOD_BIG = "60"     # 更大级别
 CONTRACTS = [
     {"symbol": "jd2611", "name": "鸡蛋",   "exchange": "DCE"},
     {"symbol": "UR2701", "name": "尿素",   "exchange": "CZCE"},
-    {"symbol": "MA2610", "name": "甲醇",   "exchange": "CZCE"},
+    {"symbol": "MA2611", "name": "甲醇",   "exchange": "CZCE"},
     {"symbol": "jm2701", "name": "焦煤",   "exchange": "DCE"},
     {"symbol": "CF2701", "name": "棉花",   "exchange": "CZCE"},
     {"symbol": "SA2701", "name": "纯碱",   "exchange": "CZCE"},
@@ -29,7 +29,7 @@ CONTRACTS = [
     {"symbol": "AP2701", "name": "苹果",   "exchange": "CZCE"},
     {"symbol": "pg2611", "name": "液化气", "exchange": "DCE"},
     {"symbol": "RB2701", "name": "螺纹钢", "exchange": "SHFE"},
-    {"symbol": "NI2610", "name": "沪镍",   "exchange": "SHFE"},
+    {"symbol": "NI2611", "name": "沪镍",   "exchange": "SHFE"},
     {"symbol": "PK2611", "name": "花生",   "exchange": "CZCE"},
 ]
 
