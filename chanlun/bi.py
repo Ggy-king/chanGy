@@ -1,39 +1,114 @@
 # -*- coding: utf-8 -*-
 """
-缠论 笔（bi）构建 —— 严格移植 chan.py
+缠论 笔（bi）构建 —— 严格移植 chan.py（Bi/BiList.py + KLine/KLine.py check_fx_valid）
 
-含 chan.py 原版 update_peak（次高点处理，bi_allow_sub_peak=False 时启用）：
-- 向上笔 A(底)→B(顶) 成立后，若 B 未突破前高（次高点）且后续底 C 跌破 A.low
-  （且 B→C 不成笔、C 为区间最极端点），则取消 A→B，前一笔向下笔终点延伸到 C。
-- 向下笔对称处理。
+六个开关与 chan.py CBiConfig 一一对应，默认值 = 原版默认：
+- bi_algo:          'normal' 常规（要求跨度达标） / 'fx' 有分型就成笔（跳过跨度检查）
+- is_strict:        True 严格笔（老笔，合并K线跨度>=4） / False 宽松笔（新笔，跨度>=3 且两分型间原始K线>=3）
+- bi_fx_check:      'loss'/'half'/'strict'/'totally' 两分型价格重叠检查的严格度
+- gap_as_kl:        True 跳空缺口按一根K线计入跨度（chan.py get_klc_span）
+- bi_end_is_peak:   True 笔端点必须是区间最极端点
+- bi_allow_sub_peak: True=允许次高点成笔（原版默认）；False=启用原版 update_peak（次高点回退延伸）
 """
 
-MIN_BI_SPAN = 4
+MIN_BI_SPAN = 4  # 严格笔最小跨度（chan.py satisfy_bi_span: bi_span >= 4）
 
 
-def _fx_valid_strict(merged, a, b):
+def _hi(merged, i):
     n = len(merged)
+    return float(merged['high'].iloc[i]) if 0 <= i < n else float('inf')
 
-    def hi(i):
-        return float(merged['high'].iloc[i]) if 0 <= i < n else float('inf')
 
-    def lo(i):
-        return float(merged['low'].iloc[i]) if 0 <= i < n else float('-inf')
+def _lo(merged, i):
+    n = len(merged)
+    return float(merged['low'].iloc[i]) if 0 <= i < n else float('-inf')
 
-    def bnext_hi(i):
-        return float(merged['init_high'].iloc[i]) if 0 <= i < n else float('inf')
 
-    def bnext_lo(i):
-        return float(merged['init_low'].iloc[i]) if 0 <= i < n else float('-inf')
+def _bnext_hi(merged, i):
+    n = len(merged)
+    return float(merged['init_high'].iloc[i]) if 0 <= i < n else float('inf')
 
+
+def _bnext_lo(merged, i):
+    n = len(merged)
+    return float(merged['init_low'].iloc[i]) if 0 <= i < n else float('-inf')
+
+
+def _fx_valid(merged, a, b, mode='strict'):
+    """两分型价格重叠检查。逐行移植 chan.py CKLine.check_fx_valid 四种模式。
+
+    a=前分型(last_end)，b=后分型。
+    b 的 next 一侧用"创建瞬间"值（init_high/init_low），与原版增量算法时序一致：
+    新分型在它成为倒数第二根合并K线时确认，此时它的 next 尚未走完。
+    """
     if a['t'] == 'top':
-        item2_high = max(hi(b['idx'] - 1), float(b['high']), bnext_hi(b['idx'] + 1))
-        self_low = min(lo(a['idx'] - 1), float(a['low']), lo(a['idx'] + 1))
+        # a 是顶分型，b 是底分型（向下笔）
+        if mode == 'loss':       # 只检查分型本身那一根
+            item2_high = float(b['high'])
+            self_low = float(a['low'])
+        elif mode == 'half':     # 各自向对方扩半边
+            item2_high = max(_hi(merged, b['idx'] - 1), float(b['high']))
+            self_low = min(float(a['low']), _lo(merged, a['idx'] + 1))
+        else:                    # strict / totally：双方前后各扩一根
+            item2_high = max(_hi(merged, b['idx'] - 1), float(b['high']),
+                             _bnext_hi(merged, b['idx'] + 1))
+            self_low = min(_lo(merged, a['idx'] - 1), float(a['low']),
+                           _lo(merged, a['idx'] + 1))
+        if mode == 'totally':    # 两个分型区间必须完全不重叠
+            return float(a['low']) > item2_high
         return float(a['high']) > item2_high and float(b['low']) < self_low
     else:
-        item2_low = min(lo(b['idx'] - 1), float(b['low']), bnext_lo(b['idx'] + 1))
-        cur_high = max(hi(a['idx'] - 1), float(a['high']), hi(a['idx'] + 1))
+        # a 是底分型，b 是顶分型（向上笔）
+        if mode == 'loss':
+            item2_low = float(b['low'])
+            cur_high = float(a['high'])
+        elif mode == 'half':
+            item2_low = min(_lo(merged, b['idx'] - 1), float(b['low']))
+            cur_high = max(float(a['high']), _hi(merged, a['idx'] + 1))
+        else:                    # strict / totally
+            item2_low = min(_lo(merged, b['idx'] - 1), float(b['low']),
+                            _bnext_lo(merged, b['idx'] + 1))
+            cur_high = max(_hi(merged, a['idx'] - 1), float(a['high']),
+                          _hi(merged, a['idx'] + 1))
+        if mode == 'totally':
+            return float(a['high']) < item2_low
         return float(a['low']) < item2_low and float(b['high']) > cur_high
+
+
+def _has_gap_with_next(merged, i):
+    """merged[i] 与 merged[i+1] 的原始K线之间是否有跳空缺口。
+    对应 chan.py has_gap_with_next + has_overlap(equal=True)：相等算重叠（无缺口）。"""
+    return (float(merged['raw_high'].iloc[i]) < float(merged['raw_low'].iloc[i + 1]) or
+            float(merged['raw_high'].iloc[i + 1]) < float(merged['raw_low'].iloc[i]))
+
+
+def _klc_span(merged, a, b, gap_as_kl):
+    """对应 chan.py get_klc_span：合并K线索引跨度；gap_as_kl 时跳空缺口按一根K线计。"""
+    span = b['idx'] - a['idx']
+    if not gap_as_kl:
+        return span
+    if span >= 4:  # 原版加速：跨度已达标，无需精确
+        return span
+    i = a['idx']
+    while i < b['idx']:
+        if _has_gap_with_next(merged, i):
+            span += 1
+        i += 1
+    return span
+
+
+def _satisfy_span(merged, last_end, cur, bi_algo, is_strict, gap_as_kl):
+    """对应 chan.py satisfy_bi_span。bi_algo='fx' 时跳过跨度检查。"""
+    if bi_algo == 'fx':
+        return True
+    span = _klc_span(merged, last_end, cur, gap_as_kl)
+    if is_strict:
+        return span >= MIN_BI_SPAN
+    # 宽松笔（新笔）：跨度>=3 且两分型之间原始K线数>=3（原版 uint_kl_cnt）
+    uint_kl_cnt = 0
+    for i in range(last_end['idx'] + 1, cur['idx']):
+        uint_kl_cnt += int(merged['end_idx'].iloc[i] - merged['start_idx'].iloc[i]) + 1
+    return span >= 3 and uint_kl_cnt >= 3
 
 
 def _end_is_peak(merged, last_end, cur_end):
@@ -50,21 +125,28 @@ def _end_is_peak(merged, last_end, cur_end):
     return True
 
 
-def _can_make_bi(merged, last_end, cur):
-    if cur['idx'] - last_end['idx'] < MIN_BI_SPAN:
+def _can_make_bi(merged, last_end, cur, conf):
+    if not _satisfy_span(merged, last_end, cur, conf['bi_algo'],
+                         conf['is_strict'], conf['gap_as_kl']):
         return False
-    if not _fx_valid_strict(merged, last_end, cur):
+    if not _fx_valid(merged, last_end, cur, conf['bi_fx_check']):
         return False
-    if not _end_is_peak(merged, last_end, cur):
+    if conf['bi_end_is_peak'] and not _end_is_peak(merged, last_end, cur):
         return False
     return True
 
 
-def build_bi(top_fx, bottom_fx, merged, bi_allow_sub_peak=True):
+def build_bi(top_fx, bottom_fx, merged, bi_allow_sub_peak=True, bi_algo='normal',
+             is_strict=True, bi_fx_check='strict', bi_end_is_peak=True, gap_as_kl=False):
     """
-    bi_allow_sub_peak: True=允许次高点成笔（chan.py 原版默认）；
+    六个开关见模块 docstring，默认值 = chan.py 原版默认。
+    bi_allow_sub_peak: True=允许次高点成笔（原版默认）；
                        False=启用 chan.py 原版 update_peak（次高点不成笔，回退延伸）
     """
+    conf = {'bi_algo': bi_algo, 'is_strict': is_strict, 'bi_fx_check': bi_fx_check,
+            'bi_end_is_peak': bi_end_is_peak, 'gap_as_kl': gap_as_kl,
+            'bi_allow_sub_peak': bi_allow_sub_peak}
+
     allfx = [dict(f, t='top') for f in top_fx] + \
             [dict(f, t='bottom') for f in bottom_fx]
     allfx.sort(key=lambda x: x['idx'])
@@ -79,7 +161,7 @@ def build_bi(top_fx, bottom_fx, merged, bi_allow_sub_peak=True):
             for exist in free_lst:
                 if exist['t'] == klc['t']:
                     continue
-                if _can_make_bi(merged, exist, klc):
+                if _can_make_bi(merged, exist, klc, conf):
                     bi_list.append({'start': exist, 'end': klc})
                     last_end = klc
                     made = True
@@ -102,7 +184,7 @@ def build_bi(top_fx, bottom_fx, merged, bi_allow_sub_peak=True):
                     last_end = klc
         else:
             # 异性质分型
-            if _can_make_bi(merged, last_end, klc):
+            if _can_make_bi(merged, last_end, klc, conf):
                 bi_list.append({'start': last_end, 'end': klc})
                 last_end = klc
             else:

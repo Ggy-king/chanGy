@@ -179,6 +179,11 @@ async def page_backtest():
     return FileResponse(os.path.join(WEB_DIR, 'pc_backtest.html'))
 
 
+@app.get('/pc/help')
+async def page_pc_help():
+    return FileResponse(os.path.join(WEB_DIR, 'pc_help.html'))
+
+
 @app.get('/api/overview')
 async def api_overview():
     return JSONResponse(engine.get_overview())
@@ -214,14 +219,29 @@ async def api_backtest(sym: str = 'ALL', months: int = 1):
 
 
 @app.get('/api/live')
-async def api_live(sym: str, period: str = '15', subpeak: str = '1'):
-    """看盘模式：指定周期K线+笔（1/3/15/60/daily），独立于15分钟预警缓存。
-    subpeak=1允许次高点成笔（chan.py原版默认），subpeak=0启用原版update_peak（次高点回退延伸）。"""
+async def api_live(sym: str, period: str = '15', subpeak: str = '1',
+                   algo: str = 'normal', strict: str = '1', fxcheck: str = 'strict',
+                   endpeak: str = '1', gap: str = '0'):
+    """看盘模式：指定周期K线+笔，独立于15分钟预警缓存。
+    六个笔开关对应 chan.py CBiConfig，默认值=原版默认：
+    algo(normal/fx) strict(1/0) fxcheck(loss/half/strict/totally)
+    endpeak(1/0) subpeak(1/0) gap(1/0)"""
     if period not in ('30', '1', '3', '15', '60', 'daily'):
         period = '15'
-    bi_allow_sub_peak = subpeak != '0'
+    if algo not in ('normal', 'fx'):
+        algo = 'normal'
+    if fxcheck not in ('loss', 'half', 'strict', 'totally'):
+        fxcheck = 'strict'
+    bi_conf = {
+        'bi_algo': algo,
+        'is_strict': strict != '0',
+        'bi_fx_check': fxcheck,
+        'bi_end_is_peak': endpeak != '0',
+        'bi_allow_sub_peak': subpeak != '0',
+        'gap_as_kl': gap == '1',
+    }
     try:
-        return JSONResponse(engine.get_live(sym, period, bi_allow_sub_peak=bi_allow_sub_peak))
+        return JSONResponse(engine.get_live(sym, period, bi_conf=bi_conf))
     except Exception as e:
         return JSONResponse({'symbol': sym, 'error': str(e)[:120]}, status_code=200)
 @app.get('/api/trading_status')

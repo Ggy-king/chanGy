@@ -231,8 +231,12 @@ SESSIONS = [
 
 ```bat
 :: 释放端口
+windows版
 netstat -ano | findstr :8000
 taskkill /F /PID 12345
+
+mac版
+lsof -ti:8000 | xargs kill -9
 
 :: 清理缓存（改了chanlun后必做）
 rmdir /s /q __pycache__ chanlun\__pycache__

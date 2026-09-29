@@ -90,6 +90,9 @@ def merge_klines(df):
             # 此时它的 next（最后一根）尚未走完，fx_valid 用的是 next 创建时的值。
             'init_high': float(df['high'].iloc[m['start']]),
             'init_low': float(df['low'].iloc[m['start']]),
+            # 组内原始K线的真实高低点（缺口检测用，对应原版 get_klu_max_high/min_low）
+            'raw_high': float(df['high'].iloc[m['start']:m['end'] + 1].max()),
+            'raw_low': float(df['low'].iloc[m['start']:m['end'] + 1].min()),
             'datetime': df['datetime'].iloc[m['start']],
         })
     return pd.DataFrame(rows)
