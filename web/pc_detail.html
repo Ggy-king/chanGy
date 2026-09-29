@@ -25,8 +25,21 @@
   .price{flex:none;min-width:90px;text-align:right;white-space:nowrap;}
   .price .p{font-size:24px;font-weight:800;line-height:1;}
   #tradeStatus{flex:none;font-size:12px;white-space:nowrap;}
-  .icon-btn{width:40px;min-width:40px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:17px;}
-  #subpeakBtn{font-weight:700;}
+  .icon-btn{width:40px;min-width:40px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:17px;text-decoration:none;}
+  /* ⚙ 笔设置按钮：有非默认设置时右上角金色小点提示 */
+  #biConfBtn{position:relative;}
+  #biConfBtn.dirty::after{content:'';position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:#f0b90b;}
+  /* ⚙ 下拉设置面板 */
+  #biConfPanel{position:fixed;z-index:9998;background:#1e222d;border:1px solid #2a2e39;border-radius:12px;padding:12px 14px 10px;width:316px;box-shadow:0 8px 30px rgba(0,0,0,.6);display:none;}
+  .bc-title{font-size:13px;font-weight:700;color:#d1d4dc;margin-bottom:10px;}
+  .bc-title .mut{font-weight:400;font-size:11px;}
+  .bc-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;}
+  .bc-label{font-size:12.5px;color:#a0a4b0;flex:none;cursor:help;white-space:nowrap;}
+  #biConfPanel .seg button{padding:5px 11px;font-size:12px;}
+  #biConfPanel .seg button.on{font-weight:700;}
+  .bc-foot{display:flex;align-items:center;justify-content:space-between;border-top:1px solid #2a2e39;padding-top:9px;margin-top:3px;}
+  .bc-hint{font-size:11px;color:#5a5d6a;}
+  #biConfReset{padding:5px 14px;font-size:12px;}
   /* 极窄屏再压缩，默认MacBook一行能放下 */
   @media (max-width:1150px){
     .name-block{width:200px;}
@@ -136,8 +149,9 @@
   <div class="head-group right">
     <div class="price"><div class="p" id="p">–</div><div id="chg" class="mut"></div></div>
     <span id="tradeStatus" class="mut"></span>
-    <button class="btn icon-btn" onclick="loadPeriod(currentPeriod)" title="刷新" style="font-size: 18px;">⟳</button>
-    <button class="btn icon-btn" id="subpeakBtn" onclick="toggleSubpeak()" title="次高点成笔开关（chan.py bi_allow_sub_peak）：亮=允许次高点成笔（原版默认），灰=次高点不成笔并回退延伸（原版update_peak）">次</button>
+    <button class="btn icon-btn" onclick="loadPeriod(currentPeriod, true)" title="刷新（保持当前视图不动）">⟳</button>
+    <button class="btn icon-btn" id="biConfBtn" onclick="toggleBiConfPanel(event)" title="缠论笔设置：六个开关对应 chan.py CBiConfig，默认=原版默认；有非默认设置时按钮右上角显示金点">⚙</button>
+    <a href="/pc/help" class="btn icon-btn" title="打开设置说明（缠论·笔参数详解）">?</a>
   </div>
 </header>
 <main>
@@ -148,6 +162,58 @@
     <div class="item" id="ctxToggleSide" onclick="toggleSidePanel()">隐藏右侧信息栏</div>
     <div class="sep"></div>
     <div class="item" onclick="hideCtxMenu()">取消</div>
+  </div>
+  <!-- ⚙ 缠论笔设置下拉面板 -->
+  <div id="biConfPanel">
+    <div class="bc-title">缠论 · 笔 <span class="mut">默认 = chan.py 原版</span></div>
+    <div class="bc-row">
+      <span class="bc-label" title="bi_algo：常规=要求跨度达标才成笔；分型=有分型就成笔（跳过跨度检查，笔最多）">笔算法</span>
+      <div class="seg" data-key="bi_algo">
+        <button data-v="normal">常规</button>
+        <button data-v="fx">分型</button>
+      </div>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="is_strict：严格=老笔（合并K线跨度≥4）；宽松=新笔（跨度≥3 且两分型间原始K线≥3）">笔型</span>
+      <div class="seg" data-key="is_strict">
+        <button data-v="1">严格</button>
+        <button data-v="0">宽松</button>
+      </div>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="bi_fx_check：两分型之间价格重叠检查的严格度。松=只比分型各自一根；半=各向对方扩半边；严=双方前后各扩一根全比（原版默认）；全=两分型区间必须完全不重叠">分型校验</span>
+      <div class="seg" data-key="bi_fx_check">
+        <button data-v="loss">松</button>
+        <button data-v="half">半</button>
+        <button data-v="strict">严</button>
+        <button data-v="totally">全</button>
+      </div>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="bi_end_is_peak：笔端点必须是起点到终点区间内最极端的价格点（关掉后可能出现端点非极值的笔）">端点极值</span>
+      <div class="seg" data-key="bi_end_is_peak">
+        <button data-v="1">开</button>
+        <button data-v="0">关</button>
+      </div>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="bi_allow_sub_peak：允许=次高点可直接成笔（原版默认）；回退=次高点不成笔，启用原版 update_peak 回退延伸">次高点</span>
+      <div class="seg" data-key="bi_allow_sub_peak">
+        <button data-v="1">允许</button>
+        <button data-v="0">回退</button>
+      </div>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="gap_as_kl：跳空缺口按一根K线计入跨度（跨度不足时缺口可补足；chan.py 原版默认关）">缺口算K</span>
+      <div class="seg" data-key="gap_as_kl">
+        <button data-v="1">开</button>
+        <button data-v="0">关</button>
+      </div>
+    </div>
+    <div class="bc-foot">
+      <span class="bc-hint">实时生效并记忆（localStorage）</span>
+      <button class="btn" id="biConfReset">恢复默认</button>
+    </div>
   </div>
   <!-- 自定义确认弹窗 -->
   <div id="confirmMask" class="confirm-mask" style="display:none">
@@ -378,8 +444,65 @@ function switchPeriod(p){
   loadPeriod(p);
 }
 
-let _subpeak=true;
-try{ _subpeak=localStorage.getItem('cl_bi_subpeak')!=='0'; }catch(e){}
+// ===== 缠论笔设置（六开关，默认=chan.py原版默认） =====
+const BI_DEFAULTS={bi_algo:'normal',is_strict:'1',bi_fx_check:'strict',
+                   bi_end_is_peak:'1',bi_allow_sub_peak:'1',gap_as_kl:'0'};
+let biConf={...BI_DEFAULTS};
+try{
+  const saved=JSON.parse(localStorage.getItem('cl_bi_conf')||'null');
+  if(saved) Object.keys(BI_DEFAULTS).forEach(k=>{ if(saved[k]!=null) biConf[k]=String(saved[k]); });
+  // 迁移旧版独立的"次"开关
+  if(localStorage.getItem('cl_bi_subpeak')==='0') biConf.bi_allow_sub_peak='0';
+}catch(e){}
+function biConfIsDefault(){ return Object.keys(BI_DEFAULTS).every(k=>biConf[k]===BI_DEFAULTS[k]); }
+function saveBiConf(){ try{localStorage.setItem('cl_bi_conf',JSON.stringify(biConf));}catch(e){} }
+function biQuery(){
+  return '&subpeak='+biConf.bi_allow_sub_peak+'&algo='+biConf.bi_algo+
+         '&strict='+biConf.is_strict+'&fxcheck='+biConf.bi_fx_check+
+         '&endpeak='+biConf.bi_end_is_peak+'&gap='+biConf.gap_as_kl;
+}
+function applyBiConf(reload){
+  saveBiConf();
+  document.querySelectorAll('#biConfPanel .seg').forEach(seg=>{
+    const key=seg.dataset.key;
+    seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===biConf[key]));
+  });
+  $('biConfBtn').classList.toggle('dirty', !biConfIsDefault());
+  if(reload){
+    // 笔配置变了，K线缓存里的旧笔一并作废
+    Object.keys(_klineCache).forEach(k=>delete _klineCache[k]);
+    loadPeriod(currentPeriod, false, true);
+  }
+}
+function toggleBiConfPanel(e){
+  if(e) e.stopPropagation();
+  const p=$('biConfPanel');
+  if(p.style.display==='block'){ p.style.display='none'; return; }
+  applyBiConf(false);
+  const btn=$('biConfBtn'), r=btn.getBoundingClientRect();
+  p.style.display='block';
+  let left=r.right-p.offsetWidth; if(left<8) left=8;
+  p.style.left=left+'px';
+  p.style.top=(r.bottom+6)+'px';
+}
+document.querySelectorAll('#biConfPanel .seg button').forEach(b=>{
+  b.addEventListener('click',ev=>{
+    ev.stopPropagation();
+    const seg=b.closest('.seg');
+    biConf[seg.dataset.key]=b.dataset.v;
+    applyBiConf(true);
+  });
+});
+$('biConfReset').addEventListener('click',ev=>{
+  ev.stopPropagation();
+  biConf={...BI_DEFAULTS};
+  applyBiConf(true);
+});
+document.addEventListener('click',e=>{
+  if(!e.target.closest('#biConfPanel') && !e.target.closest('#biConfBtn'))
+    $('biConfPanel').style.display='none';
+});
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') $('biConfPanel').style.display='none'; });
 
 // 右侧信息栏显隐状态（跨会话记忆）
 let sideVisible=true;
@@ -397,28 +520,14 @@ function toggleSidePanel(){ updateSidePanel(!sideVisible); hideCtxMenu(); }
 // 初始化时恢复用户上次的隐藏偏好
 (function(){ updateSidePanel(sideVisible); })();
 
-function toggleSubpeak(){
-  _subpeak=!_subpeak;
-  try{ localStorage.setItem('cl_bi_subpeak', _subpeak?'1':'0'); }catch(e){}
-  const btn=$('subpeakBtn');
-  btn.textContent='次';
-  btn.style.color=_subpeak?'#f0b90b':'#787b86';
-  btn.style.borderColor=_subpeak?'#f0b90b':'#2a2e39';
-  loadPeriod(currentPeriod, false, true);
-}
+let _errRetryTimer=null;
 
 async function loadPeriod(period, isRefresh, onlyBi){
   try{
-    // 定时刷新时保存当前视图位置，setData后恢复（不跳到最新）
-    let savedRange=null;
-    if(isRefresh){
-      try{ savedRange=chart.timeScale().getVisibleRange(); }catch(e){}
-    }
     if(onlyBi){
-      const rb=_subpeak?'1':'0';
-      const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+'&subpeak='+rb);
+      const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery());
       const s=await r.json();
-      if(s.error) return;
+      if(s.error){ console.warn('[笔刷新] 后端返回错误:', s.error); return; }
       bi.setData(fixTime(s.bi||[]));
       candle.setMarkers(fixTime(s.markers||[]));
       const label=PERIOD_LABEL[period]||period;
@@ -436,21 +545,64 @@ async function loadPeriod(period, isRefresh, onlyBi){
       if(_cacheLoading[period]) return;
     }
     _cacheLoading[period]=true;
-    const rb=_subpeak?'1':'0';
-    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+'&subpeak='+rb);
+    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery());
     const s=await r.json();
     _cacheLoading[period]=false;
-    if(s.error){ $('cd').textContent=SYM+' · 出错: '+s.error; return; }
+    if(s.error){
+      $('cd').textContent=SYM+' · 出错: '+s.error;
+      console.warn('[刷新] 后端返回错误（5秒后自动重试）:', s.error);
+      // 定时刷新失败（如天勤重连窗口）：5 秒后自动补一次，别让图表卡到下个周期
+      if(isRefresh && !_errRetryTimer){
+        _errRetryTimer=setTimeout(()=>{ _errRetryTimer=null; loadPeriod(period, true); }, 5000);
+      }
+      return;
+    }
     // 存入缓存
     _klineCache[period]=s;
     // 渲染新数据（如果当前显示的就是这个级别）
     if(currentPeriod===period){
-      renderKlineData(s, period, isRefresh, savedRange);
+      renderKlineData(s, period, isRefresh);
     }
-  }catch(e){ _cacheLoading[period]=false; }
+  }catch(e){ _cacheLoading[period]=false; console.error('[loadPeriod]', e); }
 }
 
-function renderKlineData(s, period, isRefresh, savedRange){
+// 增量合并刷新：
+// 1) 保留比后端窗口更早的头部K线（后端固定返回最近2000根，窗口会平移，
+//    保住前缀后所有K线的索引永远不变，视图不可能被带动）
+// 2) 尾部有变化时从第一处差异起逐根 series.update()（时间轴不重建，零抖动）
+// 3) 只有中间K线被修订等罕见情况才全量 setData，并原位恢复视图区间
+function _barDiff(a, b){
+  for(const k in b){ if(a[k]!==b[k]) return true; }
+  return false;
+}
+function mergeRefresh(series, fresh){
+  const cur=series.data();
+  if(!cur || !cur.length || !fresh.length){ series.setData(fresh); return; }
+  const prefix=cur.filter(b=>b.time<fresh[0].time);
+  let merged=prefix.concat(fresh);
+  if(merged.length>15000) merged=merged.slice(merged.length-12000);  // 防无限增长
+  let diff=-1;
+  const n=Math.max(cur.length, merged.length);
+  for(let i=0;i<n;i++){
+    const a=cur[i], b=merged[i];
+    if(!a || !b || _barDiff(a,b)){ diff=i; break; }
+  }
+  if(diff===-1) return;                        // 数据无变化
+  if(diff>=cur.length-1){
+    // 变化只发生在最后一根/新增：update() 不重建时间轴
+    for(let i=diff;i<merged.length;i++) series.update(merged[i]);
+  }else{
+    // 中间被修订（罕见）：全量重置但视图原位恢复
+    const lr=chart.timeScale().getVisibleLogicalRange();
+    series.setData(merged);
+    try{ if(lr) chart.timeScale().setVisibleLogicalRange(lr); }catch(e){}
+  }
+}
+
+// bi/markers 内容没变就跳过 setData，避免无效重绘
+let _lastBiStr=null, _lastMarkerStr=null;
+
+function renderKlineData(s, period, isRefresh){
   const label=PERIOD_LABEL[period]||period;
   const ts=new Date().toTimeString().slice(0,8);
   $('nm').textContent=s.name;
@@ -460,15 +612,24 @@ function renderKlineData(s, period, isRefresh, savedRange){
   $('p').textContent=s.last_price;
   const up=s.change>=0;
   $('chg').innerHTML=`<span class="${up?'red':'green'}">${up?'▲':'▼'} ${Math.abs(s.change)} (${s.change_pct}%)</span>`;
-  candle.setData(fixTime(s.kline));
-  vol.setData(fixTime(s.vol||[]));
-  bi.setData(fixTime(s.bi||[]));
-  candle.setMarkers(fixTime(s.markers||[]));
-  if(isRefresh && savedRange){
-    try{ chart.timeScale().setVisibleRange(savedRange); }catch(e){ applyView(); }
+  const biStr=JSON.stringify(s.bi||[]);
+  const mkStr=JSON.stringify(s.markers||[]);
+  if(isRefresh && candle.data().length){
+    // 定时刷新/⟳按钮：增量合并，视图不动
+    mergeRefresh(candle, fixTime(s.kline));
+    mergeRefresh(vol, fixTime(s.vol||[]));
+    if(biStr!==_lastBiStr){ bi.setData(fixTime(s.bi||[])); }
+    if(mkStr!==_lastMarkerStr){ candle.setMarkers(fixTime(s.markers||[])); }
   }else{
+    // 切换级别/首次/缓存显示：全量渲染
+    candle.setData(fixTime(s.kline));
+    vol.setData(fixTime(s.vol||[]));
+    bi.setData(fixTime(s.bi||[]));
+    candle.setMarkers(fixTime(s.markers||[]));
     applyView();
   }
+  _lastBiStr=biStr;
+  _lastMarkerStr=mkStr;
 }
 
 function sendChat(){
@@ -682,8 +843,6 @@ loadPeriod(currentPeriod);
 connect();
 checkTradingStatus();
 loadContracts();
-// 回退开关初始状态
-(function(){ const btn=$('subpeakBtn'); if(btn){ btn.textContent='次'; btn.style.color=_subpeak?'#f0b90b':'#787b86'; btn.style.borderColor=_subpeak?'#f0b90b':'#2a2e39'; } })();
 document.querySelectorAll('#periodSeg button').forEach(b=>{
   b.classList.toggle('on', b.dataset.p===currentPeriod);
   b.onclick=()=>switchPeriod(b.dataset.p);

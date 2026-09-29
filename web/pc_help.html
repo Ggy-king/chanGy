@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>缠论 · 设置说明</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
+  body{background:#131722;color:#d1d4dc;min-height:100vh;display:flex;flex-direction:column;}
+  header{display:flex;align-items:center;gap:14px;padding:12px 18px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;}
+  header a{color:#f0b90b;text-decoration:none;font-size:14px;flex:none;}
+  header h1{font-size:17px;font-weight:700;color:#d1d4dc;flex:1;}
+  main{flex:1;max-width:980px;width:100%;margin:0 auto;padding:26px 20px 40px;line-height:1.65;}
+  h2{font-size:18px;font-weight:700;color:#f0b90b;margin:28px 0 14px;padding-bottom:8px;border-bottom:1px solid #2a2e39;}
+  h2:first-of-type{margin-top:0;}
+  h3{font-size:15px;font-weight:700;color:#d1d4dc;margin:20px 0 8px;}
+  .lead{color:#a0a4b0;font-size:13.5px;margin-bottom:22px;}
+  .switch-card{background:#1e222d;border:1px solid #2a2e39;border-radius:12px;padding:16px 18px;margin-bottom:14px;}
+  .switch-head{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;}
+  .switch-title{font-size:15px;font-weight:700;color:#d1d4dc;}
+  .tag{font-size:11px;color:#787b86;border:1px solid #2a2e39;border-radius:5px;padding:2px 7px;white-space:nowrap;}
+  .tag.gold{color:#f0b90b;border-color:#f0b90b;}
+  .default-row{display:flex;flex-wrap:wrap;gap:8px 18px;margin:10px 0 12px;font-size:12.5px;color:#a0a4b0;}
+  .default-row b{color:#f0b90b;font-weight:700;}
+  .switch-body{font-size:13px;color:#a0a4b0;}
+  .switch-body p{margin-bottom:8px;}
+  .switch-body code{background:#2a2e39;border-radius:4px;padding:1px 5px;font-size:12px;color:#f0b90b;}
+  .switch-body .part{margin-top:10px;padding-top:10px;border-top:1px dashed #2a2e39;}
+  .switch-body .part strong{display:block;color:#d1d4dc;margin-bottom:4px;font-size:13px;}
+  ul{margin-left:18px;margin-bottom:8px;}
+  li{margin-bottom:4px;}
+  .note{background:rgba(240,185,11,.08);border-left:3px solid #f0b90b;padding:12px 14px;border-radius:0 8px 8px 0;font-size:12.5px;color:#d1d4dc;margin:22px 0;}
+  .future{background:#1e222d;border:1px dashed #2a2e39;border-radius:12px;padding:14px 16px;margin-top:22px;}
+  .future h3{margin-top:0;}
+  footer{padding:18px;text-align:center;font-size:12px;color:#5a5d6a;border-top:1px solid #2a2e39;}
+  a.back{display:inline-flex;align-items:center;gap:6px;}
+  .toc{display:flex;flex-wrap:wrap;gap:8px 16px;margin-bottom:20px;}
+  .toc a{color:#a0a4b0;text-decoration:none;font-size:13px;}
+  .toc a:hover{color:#f0b90b;}
+</style>
+</head>
+<body>
+<header>
+  <a href="javascript:history.back()" class="back">‹ 返回上一级</a>
+  <h1>缠论 · 设置说明</h1>
+</header>
+<main>
+  <p class="lead">
+    本页详细说明 PC 端详情页「⚙ 缠论设置」面板里的每一个选项。每个选项都从两个层面解释：
+    <b>缠论层面</b>（你在图上看到什么）和 <b>代码层面</b>（它映射到哪个参数、算法做了什么）。
+    默认值均对齐参考项目 <code>chan.py</code>（本地副本 <code>chanpy_review</code>）。
+  </p>
+  <div class="toc">
+    <a href="#bi">一、缠论 · 笔</a>
+    <a href="#algo">笔算法</a>
+    <a href="#strict">笔型</a>
+    <a href="#fxcheck">分型校验</a>
+    <a href="#endpeak">端点极值</a>
+    <a href="#subpeak">次高点</a>
+    <a href="#gap">缺口算K</a>
+    <a href="#future">后续扩展</a>
+  </div>
+
+  <h2 id="bi">一、缠论 · 笔</h2>
+  <p class="lead" style="margin-bottom:18px;">
+    "笔" 是缠论结构的最小单位：由相邻的一个顶分型和一个底分型连接而成。以下 6 个开关控制"什么样的顶底分型之间才能被认定为同一笔的两端"。
+  </p>
+
+  <div class="switch-card" id="algo">
+    <div class="switch-head">
+      <span class="switch-title">1. 笔算法</span>
+      <span class="tag">UI 选项：常规 / 分型</span>
+      <span class="tag gold">默认：常规</span>
+    </div>
+    <div class="default-row">
+      <span>代码参数：<code>bi_algo</code></span>
+      <span>参考项目默认值：<code>"normal"</code></span>
+      <span>对应文件：<code>ChanConfig.py:24</code></span>
+    </div>
+    <div class="switch-body">
+      <div class="part">
+        <strong>缠论层面</strong>
+        <p>成笔前是否要求"跨度"——两个分型之间必须隔着一定数量的 K 线，否则视为噪音，不成笔。</p>
+        <ul>
+          <li><b>常规</b>：必须满足跨度要求，笔更粗、更少，过滤毛刺。</li>
+          <li><b>分型</b>：只要出现一对相邻的顶/底分型，就直接视为一笔起点和终点，笔更密、更短。</li>
+        </ul>
+      </div>
+      <div class="part">
+        <strong>代码层面</strong>
+        <p>在 <code>chanlun/bi.py</code> 的 <code>_try_add_bi</code> 中，若 <code>bi_algo == 'fx'</code> 则跳过 <code>_satisfy_bi_span()</code> 检查；否则必须满足 <code>MIN_BI_SPAN</code> 或宽松笔的跨度条件。</p>
+      </div>
+      <div class="part">
+        <strong>为什么默认是「常规」？</strong>
+        <p>参考项目 <code>chan.py</code> 把 "normal" 作为默认，代表作者倾向于"有跨度的笔"，避免分型一现就画笔导致图形过碎。"fx" 是留给想要更多信号、更短笔的备选。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="switch-card" id="strict">
+    <div class="switch-head">
+      <span class="switch-title">2. 笔型</span>
+      <span class="tag">UI 选项：严格 / 宽松</span>
+      <span class="tag gold">默认：严格</span>
+    </div>
+    <div class="default-row">
+      <span>代码参数：<code>is_strict</code></span>
+      <span>参考项目默认值：<code>True</code></span>
+      <span>对应文件：<code>ChanConfig.py:25</code></span>
+    </div>
+    <div class="switch-body">
+      <div class="part">
+        <strong>缠论层面</strong>
+        <p>区分缠论里的"老笔"与"新笔"流派。</p>
+        <ul>
+          <li><b>严格（老笔）</b>：一笔内部至少包含 4 根合并 K 线的跨度，笔更粗、更稳定。</li>
+          <li><b>宽松（新笔）</b>：跨度 ≥ 3 根合并 K 线，且两分型之间的原始 K 线 ≥ 3 根，笔更细、更多。</li>
+        </ul>
+      </div>
+      <div class="part">
+        <strong>代码层面</strong>
+        <p><code>MIN_BI_SPAN = 4</code>。严格模式下 <code>_satisfy_bi_span</code> 检查 <code>span &gt;= 4</code>；宽松模式下检查 <code>span &gt;= 3</code> 且 <code>raw_kl_cnt &gt;= 3</code>（对应 <code>ChanConfig.py</code> 中 <code>bi_strict</code> 语义）。</p>
+      </div>
+      <div class="part">
+        <strong>为什么默认是「严格」？</strong>
+        <p><code>chan.py</code> 默认走老笔逻辑。老笔在缠论传统教材中更常见，结构更稳定；新笔是部分现代实现的简化，笔更多但噪音也多。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="switch-card" id="fxcheck">
+    <div class="switch-head">
+      <span class="switch-title">3. 分型校验</span>
+      <span class="tag">UI 选项：松 / 半 / 严 / 全</span>
+      <span class="tag gold">默认：严</span>
+    </div>
+    <div class="default-row">
+      <span>代码参数：<code>bi_fx_check</code></span>
+      <span>参考项目默认值：<code>"strict"</code></span>
+      <span>对应文件：<code>ChanConfig.py:26</code> / <code>KLine/KLine.py</code></span>
+    </div>
+    <div class="switch-body">
+      <div class="part">
+        <strong>缠论层面</strong>
+        <p>检查相邻两个分型之间的"价格重叠区域"，决定它们能否被认定为同一笔的两端。越严，两个分型必须拉得越开，笔越少。</p>
+        <ul>
+          <li><b>松（loss）</b>：只比较分型自身那一根 K 线的价格，最易成笔。</li>
+          <li><b>半（half）</b>：各自向对方扩半边（±1 根里取一半区域）进行比较。</li>
+          <li><b>严（strict）</b>：双方前后各扩一根 K 线，3 根全比。参考项目默认。</li>
+          <li><b>全（totally）</b>：两个分型区间必须完全不重叠，最难成笔。</li>
+        </ul>
+      </div>
+      <div class="part">
+        <strong>代码层面</strong>
+        <p>对应 <code>chanlun/bi.py</code> 中的 <code>_fx_valid()</code>，逐行移植自 <code>chanpy_review/KLine/KLine.py::check_fx_valid()</code>。四个模式分别对应 <code>loss / half / strict / totally</code>，其中 <code>strict</code> 与 <code>totally</code> 取同一扩展区间，但 <code>totally</code> 进一步要求 <code>a.low &gt; b.high</code>（或反向），即分型区间无重叠。</p>
+      </div>
+      <div class="part">
+        <strong>为什么默认是「严」？</strong>
+        <p>参考项目原作者在 <code>ChanConfig.py</code> 中把 <code>bi_fx_check</code> 设为 <code>"strict"</code>。这是一种折中：比 "loss/half" 更能过滤假笔，又不像 "totally" 那样苛刻导致大量本可成笔的结构被丢弃。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="switch-card" id="endpeak">
+    <div class="switch-head">
+      <span class="switch-title">4. 端点极值</span>
+      <span class="tag">UI 选项：开 / 关</span>
+      <span class="tag gold">默认：开</span>
+    </div>
+    <div class="default-row">
+      <span>代码参数：<code>bi_end_is_peak</code></span>
+      <span>参考项目默认值：<code>True</code></span>
+      <span>对应文件：<code>ChanConfig.py:28</code></span>
+    </div>
+    <div class="switch-body">
+      <div class="part">
+        <strong>缠论层面</strong>
+        <p>一笔的起点和终点是否必须是从起点到终点这段区间内的最极端价格。开着更严格：顶必须是区间最高点，底必须是区间最低点；关了允许端点不是区间极值。</p>
+      </div>
+      <div class="part">
+        <strong>代码层面</strong>
+        <p>在 <code>chanlun/bi.py</code> 的 <code>_try_add_bi</code> 中，若 <code>bi_end_is_peak=True</code>，新加入的潜在端点会被要求高于/低于区间内所有合并 K 线的对应极值。</p>
+      </div>
+      <div class="part">
+        <strong>为什么默认是「开」？</strong>
+        <p>标准缠论定义中，一笔的端点应包含该笔范围内最极端的价格。开着保证端点的几何意义，关着则会让端点可能落在次高/次低，结构会显得"歪斜"。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="switch-card" id="subpeak">
+    <div class="switch-head">
+      <span class="switch-title">5. 次高点</span>
+      <span class="tag">UI 选项：允许 / 回退</span>
+      <span class="tag gold">默认：允许</span>
+    </div>
+    <div class="default-row">
+      <span>代码参数：<code>bi_allow_sub_peak</code></span>
+      <span>参考项目默认值：<code>True</code></span>
+      <span>对应文件：<code>ChanConfig.py:29</code> / <code>Bi/BiList.py</code></span>
+    </div>
+    <div class="switch-body">
+      <div class="part">
+        <strong>缠论层面</strong>
+        <p>当后面出现一个比前面分型更极端的新分型时，前面那个次高/次低点怎么处理。</p>
+        <ul>
+          <li><b>允许</b>：次高点/次低点直接独立成笔。笔更密，更早出现。</li>
+          <li><b>回退</b>：次高点暂时不成笔，启用 <code>update_peak</code> 机制，把后续更极端的分型拉回来，让笔的端点向后延伸。笔更少、更"完整"。</li>
+        </ul>
+      </div>
+      <div class="part">
+        <strong>代码层面</strong>
+        <p><code>chanlun/bi.py</code> 在 <code>_try_add_bi</code> 中，若 <code>bi_allow_sub_peak=False</code> 且当前分型比前一笔的端点更极端，则调用 <code>_update_peak()</code> 把前一笔的端点"更新"到当前分型（即回退延伸）。移植自 <code>chanpy_review/Bi/BiList.py::update_peak()</code>。</p>
+      </div>
+      <div class="part">
+        <strong>为什么默认是「允许」？</strong>
+        <p><code>chan.py</code> 默认允许次高点成笔，这样每一根明显分型都能及时形成一笔，图形更连续。"回退"模式更像某些保守实现，只在更极端分型确认后才固定端点。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="switch-card" id="gap">
+    <div class="switch-head">
+      <span class="switch-title">6. 缺口算K</span>
+      <span class="tag">UI 选项：开 / 关</span>
+      <span class="tag gold">默认：关</span>
+    </div>
+    <div class="default-row">
+      <span>代码参数：<code>gap_as_kl</code></span>
+      <span>参考项目默认值：<code>False</code></span>
+      <span>对应文件：<code>ChanConfig.py:27</code></span>
+    </div>
+    <div class="switch-body">
+      <div class="part">
+        <strong>缠论层面</strong>
+        <p>两个合并 K 线之间若出现跳空缺口，在判断笔的"跨度"时，是否把缺口折算成一根 K 线。开着：跳空可补足跨度，某些因跳空而"缺 K"的结构也能成笔；关着：只按实际 K 线数量算。</p>
+      </div>
+      <div class="part">
+        <strong>代码层面</strong>
+        <p><code>chanlun/bi.py</code> 中的 <code>_has_gap_with_next()</code> 检测缺口，<code>_get_klc_span()</code> 在 <code>gap_as_kl=True</code> 时把缺口加 1 计入跨度。对应 <code>chanpy_review/Common/func_util.py</code> 中的缺口处理逻辑。</p>
+      </div>
+      <div class="part">
+        <strong>为什么默认是「关」？</strong>
+        <p><code>chan.py</code> 把 <code>gap_as_kl</code> 默认设为 <code>False</code>，表示作者保守处理：缺口是否成笔有争议，默认不把它当一根真实 K 线。只有在明确认同"跳空等于一根 K" 的流派时才打开。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>关于默认值</b>：页面顶部「⚙」按钮右上角出现金色小点时，表示当前至少有一项偏离了上述默认。点击「恢复默认」可一键回到 <code>chan.py</code> 原版配置。
+  </div>
+
+  <div class="future" id="future">
+    <h3>后续扩展</h3>
+    <p class="lead" style="margin:0;">
+      本页面会继续补充「中枢」「线段」「买卖点」「预警条件」等设置项的说明。当前只覆盖了你截图中显示的「缠论 · 笔」面板。
+    </p>
+  </div>
+</main>
+<footer>
+  chanGy · 缠论多品种预警 · 设置说明
+</footer>
+</body>
+</html>

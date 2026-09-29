@@ -40,6 +40,21 @@ sys.path.insert(0, _HERE)
 import pandas as pd
 from tqsdk import TqApi, TqAuth
 
+# ========== 过滤 tqsdk 断线/重连噪声日志 ==========
+# free-api 对有应用包的连接有 ~120s 寿命限制，掐线后 TqSdk 自动重连（对业务透明），
+# 但每次都会 print "网络连接断开/重新建立/已建立" 刷屏。这里只屏蔽这三类通知，
+# 认证失败等致命错误照常打印（我们自己的 TqAuthError 处理也依赖可见的错误信息）。
+_TQ_NOISE_KEYWORDS = ('网络连接断开', '网络连接重新建立', '网络连接已建立')
+_tq_orig_print = TqApi._print
+def _tq_quiet_print(self, msg='', level='INFO'):
+    try:
+        if any(k in str(msg) for k in _TQ_NOISE_KEYWORDS):
+            return
+    except Exception:
+        pass
+    _tq_orig_print(self, msg, level)
+TqApi._print = _tq_quiet_print
+
 # 品种 -> (交易所, 天勤品种代码) 映射
 _PRODUCT_MAP = {
     # 郑商所 CZCE（大写）
@@ -110,8 +125,10 @@ class TqData:
     注意：
       1. 不要在本类里再加心跳线程 —— TqSdk 内部已自带 ws 重连，
          我们的心跳反而会推应用层包，触发 free-api 的 120s 应用包寿命限制。
-      2. 不要在异常路径里 close()+new() —— TqSdk 后台正在退避重连，
-         我们抢活会导致连接重复/重连后只活 60s 等异常。
+      2. 一般异常路径不要 close()+new() —— TqSdk 后台正在退避重连，抢活会出乱子。
+         唯一例外：交易时段内等 15s 收不到任何数据（判定连接死亡），
+         由 get_kline 主动重建连接（见 _can_recreate，限频3分钟），因为
+         TqSdk 的重连退避最长可达 640s，被动等会把图表卡死几分钟。
       3. 致命错误（TqAuthError）直接抛，不重试，让用户去改 secret.py。
     """
     _instance: Optional['TqData'] = None
@@ -122,6 +139,7 @@ class TqData:
     _api_lock: threading.Lock
     _klines: dict
     _auth_failed: bool
+    _last_recreate: float
 
     def __new__(cls):
         if cls._instance is None:
@@ -132,6 +150,7 @@ class TqData:
                     inst._api_lock = threading.Lock()
                     inst._klines = {}
                     inst._auth_failed = False   # 一旦认证失败置位，所有路径停止重试
+                    inst._last_recreate = 0.0    # 上次主动重建连接的时间（限频用）
                     cls._instance = inst
         return cls._instance
 
@@ -172,6 +191,7 @@ class TqData:
             # 其他异常（网络中断等）继续向上抛，由上层重试
             raise
         print('[TqData] 天勤连接成功')
+        self._last_recreate = time.time()
 
     def _ensure_api(self) -> TqApi:
         """懒创建 TqApi。TqSdk 内部自己处理 ws 重连，我们不抢活。"""
@@ -185,8 +205,13 @@ class TqData:
         return self._api
 
     def get_kline(self, symbol, period_sec, data_length=2000):
-        """获取K线。TqSdk 内部 ws 重连对 wait_update 透明（阻塞到重连完成），
-        所以我们只需对极少见的瞬时异常做短重试即可，不再 close()+new() 重建。
+        """获取K线。
+
+        断线韧性（free-api 会周期性掐连接，~120s 一次）：
+          - TqSdk 自带重连但退避越来越长（10s→20s→…→640s），被动等可能卡几分钟；
+          - 所以交易时段内若等 15s 收不到任何数据（8个品种的订阅正常时秒级来数据），
+            判定连接死亡，主动 close+new 重建（新连接立即连上），限频 3 分钟一次。
+        连续4次尝试失败则抛错，由前端5秒后自动重试。
 
         致命认证错误（TqAuthError）不重试，直接抛给上层。
         """
@@ -195,7 +220,8 @@ class TqData:
         tq_sym = to_tq_symbol(symbol)
         key = (tq_sym, period_sec)
         last_err = None
-        for attempt in range(3):
+        df = None
+        for attempt in range(4):
             try:
                 api = self._ensure_api()
                 with self._api_lock:
@@ -204,25 +230,49 @@ class TqData:
                         self._klines[key] = api.get_kline_serial(tq_sym, period_sec, data_length=data_length)
                         api.wait_update(deadline=10)
                     else:
-                        # 已订阅：短等即可
-                        api.wait_update(deadline=2)
-                    k = self._klines[key]
-                    df = k.copy()
-                # 转换时间戳
-                df['datetime'] = pd.to_datetime(df['datetime'], unit='ns', utc=True).dt.tz_convert('Asia/Shanghai')
-                df = df[['datetime','open','high','low','close','volume']].dropna(subset=['open'])
-                df = df[df['open'] > 0].reset_index(drop=True)
-                return df
+                        # 已订阅：把网络里积累的更新收进来
+                        if not api.wait_update(deadline=3):
+                            # 3秒没等到任何数据 → 可能处于断线窗口，再等15s骑过重连
+                            if not api.wait_update(deadline=15) and self._can_recreate():
+                                # 交易时段内15s收不到任何数据：连接大概率已死（重连退避可达640s），
+                                # 主动重建连接立即恢复。close+new 会清空 _klines，下面重新订阅。
+                                print('[TqData] 连接疑似死亡（15s无任何数据），主动重建连接')
+                                self._create_api()
+                                api = self._api
+                                self._klines[key] = api.get_kline_serial(tq_sym, period_sec, data_length=data_length)
+                                api.wait_update(deadline=10)
+                    df = self._klines[key].copy()
+                return self._to_df(df)
             except TqAuthError:
                 # 致命错误：不再重试，直接抛出
                 raise
             except Exception as e:
                 last_err = e
                 print(f'[TqData] 拉数据失败（第{attempt+1}次）: {type(e).__name__}: {e}')
-                if attempt < 2:
-                    time.sleep(2)
-                # 不再 close()+new()，让 TqSdk 自己重连
-        raise RuntimeError(f'拉数据失败，已重试3次: {last_err}')
+                if attempt < 3:
+                    time.sleep(1 + attempt * 2)   # 1s/3s/5s
+        raise RuntimeError(f'拉数据失败，已重试4次: {last_err}')
+
+    def _can_recreate(self):
+        """交易时段内且距上次重建超过3分钟才允许重建（防止反复close+new抖动）。"""
+        try:
+            import trading_time
+            if not trading_time.is_trading_time():
+                return False
+        except Exception:
+            pass   # 判断失败时保守允许重建（限频仍生效）
+        # 限频45s：实盘时段free-api约每2分钟掐一次线，tqsdk自身重连失败时
+        # 靠主动重建兜底，最坏冻结=检测13s+限频等待+重建3s ≈ 1分钟内
+        return time.time() - self._last_recreate > 45
+
+    @staticmethod
+    def _to_df(serial):
+        """tqsdk serial -> 清洗后的 DataFrame。"""
+        df = serial
+        df['datetime'] = pd.to_datetime(df['datetime'], unit='ns', utc=True).dt.tz_convert('Asia/Shanghai')
+        df = df[['datetime', 'open', 'high', 'low', 'close', 'volume']].dropna(subset=['open'])
+        df = df[df['open'] > 0].reset_index(drop=True)
+        return df
 
     def close(self):
         if self._api:
