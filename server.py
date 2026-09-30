@@ -139,11 +139,49 @@ async def periodic():
             print('periodic error:', e)
 
 
+async def alert_loop():
+    await asyncio.sleep(30)
+    while True:
+        try:
+            if not trading_time.is_trading_time():
+                await asyncio.sleep(10)
+                continue
+            loop = asyncio.get_event_loop()
+            import tqsdk_data as tq
+            syms = sorted({a['symbol'] for a in alert_manager.get_active_alerts()}
+                          | {c['symbol'] for c in config.CONTRACTS})
+            prices = {}
+            def _one(s):
+                try:
+                    df = tq.fetch_kline(s, 30, data_length=2)
+                    if df is not None and len(df):
+                        return float(df['close'].iloc[-1])
+                except Exception:
+                    pass
+                return None
+            for s in syms:
+                p = _one(s)
+                if p is not None:
+                    prices[s] = p
+            triggered = alert_manager.check_prices(prices)
+            for a in triggered:
+                msg = {'type': 'price_alert', 'id': a['id'], 'symbol': a['symbol'],
+                       'name': a['name'], 'price': a['price'], 'direction': a['direction'],
+                       'triggered_price': a['triggered_price'], 'triggered_at': a['triggered_at'],
+                       'ts': time.time()}
+                await manager.broadcast(msg)
+        except Exception as e:
+            print('[alert_loop] error:', e)
+        await asyncio.sleep(30)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(periodic())
+    alert_task = asyncio.create_task(alert_loop())
     yield
     task.cancel()
+    alert_task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -259,6 +297,11 @@ async def api_contracts():
 @app.get('/api/alerts')
 async def api_get_alerts():
     return JSONResponse({'alerts': alert_manager.get_alerts()})
+
+
+@app.get('/api/triggered_alerts')
+async def api_get_triggered_alerts():
+    return JSONResponse({'alerts': alert_manager.get_triggered_alerts()})
 
 
 @app.post('/api/alerts')

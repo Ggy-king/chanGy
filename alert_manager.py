@@ -130,7 +130,13 @@ def check_prices(prices_dict):
             cur = prices_dict[sym]
             last = _last_prices.get(sym)
             if last is None:
-                # 第一次记录价格，不触发
+                # 第一次记录价格：若已穿越则立即触发（避免服务器重启后漏掉已发生的穿越）
+                if (alert['direction'] == 'up' and cur >= alert['price']) or \
+                   (alert['direction'] == 'down' and cur <= alert['price']):
+                    alert['triggered'] = True
+                    alert['triggered_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    alert['triggered_price'] = cur
+                    triggered_now.append(alert)
                 _last_prices[sym] = cur
                 continue
             # 判断是否穿越

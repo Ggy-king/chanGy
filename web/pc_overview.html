@@ -62,6 +62,28 @@
   .bar input:focus{border-color:#f0b90b;}
   .bar button{flex:none;background:#f0b90b;border:none;color:#1a1a1a;font-weight:700;border-radius:8px;padding:9px 16px;cursor:pointer;}
   ::-webkit-scrollbar{width:7px;height:7px;} ::-webkit-scrollbar-thumb{background:#2a2e39;border-radius:4px;}
+  /* 预警列表 */
+  .alert-list-btn{position:relative;margin-left:6px;}
+  .alert-list-btn .badge{position:absolute;top:-5px;right:-5px;background:#ef5350;color:#fff;font-size:11px;font-weight:700;border-radius:50%;padding:2px 5px;display:none;}
+  .alert-list-btn .badge.on{display:block;}
+  .alert-list-panel{position:fixed;top:120px;left:50%;transform:translateX(-50%);width:680px;max-width:92vw;height:260px;background:#f5f7fa;color:#1a1a1a;border:1px solid #d8dde6;border-radius:12px;z-index:10001;display:none;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.55);}
+  .alert-list-panel.open{display:flex;}
+  .alert-list-panel .ph{padding:9px 14px;border-bottom:1px solid #d8dde6;display:flex;justify-content:space-between;align-items:center;cursor:move;background:#fff;border-radius:12px 12px 0 0;user-select:none;}
+  .alert-list-panel .ph .title{font-size:14px;font-weight:800;color:#1a1a1a;}
+  .alert-list-panel .ph .close{font-size:20px;color:#666;cursor:pointer;line-height:1;padding:0 6px;}
+  .alert-list-panel .ph .close:hover{color:#ef5350;}
+  .alert-list-panel .body{flex:1;overflow-y:auto;background:#fff;padding:4px 0;}
+  .alert-list-panel .empty{padding:20px;text-align:center;color:#888;font-size:13px;}
+  .alert-list-panel .item{padding:7px 14px;border-bottom:1px solid #eef0f4;cursor:pointer;display:flex;gap:12px;align-items:center;font-size:13px;transition:background .12s;}
+  .alert-list-panel .item:hover{background:#eef4ff;}
+  .alert-list-panel .item .nm{min-width:130px;font-weight:700;color:#1a1a1a;}
+  .alert-list-panel .item .dir{font-size:12px;font-weight:700;padding:2px 8px;border-radius:10px;flex:none;}
+  .alert-list-panel .item .dir.up{background:#ef5350;color:#fff;}
+  .alert-list-panel .item .dir.down{background:#26a69a;color:#fff;}
+  .alert-list-panel .item .price{min-width:180px;color:#444;}
+  .alert-list-panel .item .time{min-width:130px;color:#888;font-size:12px;}
+  .alert-list-panel .foot{padding:8px 14px;border-top:1px solid #d8dde6;background:#fff;border-radius:0 0 12px 12px;display:flex;justify-content:flex-end;}
+  .alert-list-panel .foot .btn{background:#ef5350;border-color:#ef5350;color:#fff;padding:6px 14px;font-size:12.5px;border-radius:8px;cursor:pointer;border-style:solid;border-width:1px;}
 </style>
 </head>
 <body>
@@ -77,6 +99,7 @@
   <button class="btn sell" onclick="simulate('sell')">模拟卖出</button>
   <button class="btn" onclick="refresh()">⟳ 刷新</button>
   <button class="btn" style="border-color:#f0b90b;color:#f0b90b;" onclick="location.href='/pc/backtest'">📈 回测</button>
+  <button class="btn alert-list-btn" id="alertListBtn" onclick="toggleAlertList()" title="预警列表">🔔<span class="badge" id="alertBadge">0</span></button>
   <div id="qr"></div>
 </header>
 <main>
@@ -110,6 +133,52 @@
     </div>
   </div>
 </main>
+<div id="alertListPanel" class="alert-list-panel">
+  <div class="ph"><span class="title">预警列表</span><span class="close" onclick="closeAlertList()">×</span></div>
+  <div class="body" id="alertListBody"><div class="empty">暂无已触发预警</div></div>
+  <div class="foot"><button class="btn" onclick="clearAlertList()">一键清空</button></div>
+</div>
+<script>/*alert-drag*/
+(function(){
+  const panel=document.getElementById('alertListPanel');
+  const handle=panel.querySelector('.ph');
+  const KEY='__alert_list_pos__';
+  function applyPos(pos){
+    if(!pos) return;
+    panel.style.left=pos.left+'px';
+    panel.style.top=pos.top+'px';
+    panel.style.transform='none';
+  }
+  function savePos(){
+    const r=panel.getBoundingClientRect();
+    try{ localStorage.setItem(KEY, JSON.stringify({left:r.left, top:r.top})); }catch(e){}
+  }
+  let dragging=false, sx=0, sy=0, ox=0, oy=0;
+  handle.addEventListener('mousedown', e=>{
+    if(e.target.classList.contains('close')) return;
+    dragging=true;
+    const rect=panel.getBoundingClientRect();
+    ox=rect.left; oy=rect.top;
+    sx=e.clientX; sy=e.clientY;
+    panel.style.left=ox+'px';
+    panel.style.top=oy+'px';
+    panel.style.transform='none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e=>{
+    if(!dragging) return;
+    let nl=ox+(e.clientX-sx);
+    let nt=oy+(e.clientY-sy);
+    nl=Math.max(0, Math.min(window.innerWidth-panel.offsetWidth-4, nl));
+    nt=Math.max(0, Math.min(window.innerHeight-panel.offsetHeight-4, nt));
+    panel.style.left=nl+'px';
+    panel.style.top=nt+'px';
+  });
+  document.addEventListener('mouseup', ()=>{ if(dragging){ dragging=false; savePos(); } });
+  try{ applyPos(JSON.parse(localStorage.getItem(KEY))); }catch(e){}
+  window.addEventListener('resize', ()=>{ try{ applyPos(JSON.parse(localStorage.getItem(KEY))); }catch(e){} });
+})();
+</script>
 <script>
 const $=id=>document.getElementById(id);
 let ws;
@@ -341,6 +410,62 @@ async function refreshQuotes(){
     });
   }catch(e){}
 }
+
+// ===== 预警列表 =====
+let alertHistory=[];
+async function loadTriggeredAlerts(){
+  try{
+    const j=await (await fetch('/api/triggered_alerts')).json();
+    alertHistory=(j.alerts||[]).reverse();
+    renderAlertList();
+  }catch(e){console.error('loadTriggeredAlerts',e);}
+}
+function toggleAlertList(){
+  const p=$('alertListPanel');
+  if(p.classList.contains('open')) closeAlertList(); else openAlertList();
+}
+function openAlertList(){
+  $('alertListPanel').classList.add('open');
+}
+function closeAlertList(){
+  $('alertListPanel').classList.remove('open');
+}
+function updateAlertBadge(){
+  const n=alertHistory.length;
+  const b=$('alertBadge');
+  b.textContent=n;
+  b.classList.toggle('on', n>0);
+}
+function renderAlertList(){
+  const body=$('alertListBody');
+  if(!alertHistory.length){body.innerHTML='<div class="empty">暂无已触发预警</div>';updateAlertBadge();return;}
+  body.innerHTML=alertHistory.map(a=>{
+    const up=a.direction==='up';
+    return `<div class="item" ondblclick="jumpAlert('${a.symbol}')">
+      <span class="nm">${a.name}（${a.symbol}）</span>
+      <span class="dir ${up?'up':'down'}">${up?'▲ 涨破':'▼ 跌破'}</span>
+      <span class="price">预警 ${a.price} → 触发 ${a.triggered_price||'–'}</span>
+      <span class="time">${a.triggered_at||''}</span>
+    </div>`;
+  }).join('');
+  updateAlertBadge();
+}
+function addPriceAlert(a){appendAlert(a);}
+function appendAlert(a){
+  if(alertHistory.some(x=>x.id===a.id)) return;
+  alertHistory.unshift(a);
+  renderAlertList();
+  updateAlertBadge();
+}
+function clearAlertList(){
+  alertHistory=[];
+  renderAlertList();
+  fetch('/api/alerts/clear_triggered',{method:'POST'}).catch(e=>console.error(e));
+}
+function jumpAlert(sym){
+  location.href='/pc/detail?sym='+encodeURIComponent(sym);
+}
+loadTriggeredAlerts();
 </script>
 </body>
 </html>
