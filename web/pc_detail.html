@@ -60,6 +60,13 @@
   .bc-label{font-size:12.5px;color:#a0a4b0;flex:none;cursor:help;white-space:nowrap;}
   #biConfPanel .seg button{padding:5px 11px;font-size:12px;}
   #biConfPanel .seg button.on{font-weight:700;}
+  .bc-toggle{display:flex;align-items:center;gap:8px;cursor:pointer;}
+  .bc-toggle input{display:none;}
+  .bc-toggle .switch{position:relative;width:34px;height:18px;background:#2a2e39;border-radius:9px;transition:background .2s;}
+  .bc-toggle .switch::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;background:#787b86;border-radius:50%;transition:transform .2s,background .2s;}
+  .bc-toggle input:checked+.switch{background:#f0b90b;}
+  .bc-toggle input:checked+.switch::after{transform:translateX(16px);background:#fff;}
+  .bc-toggle .txt{font-size:12.5px;color:#d1d4dc;}
   .bc-foot{display:flex;align-items:center;justify-content:space-between;border-top:1px solid #2a2e39;padding-top:9px;margin-top:3px;}
   .bc-hint{font-size:11px;color:#5a5d6a;}
   #biConfReset{padding:5px 14px;font-size:12px;}
@@ -233,6 +240,14 @@
         <button data-v="1">开</button>
         <button data-v="0">关</button>
       </div>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="显示或隐藏黄色笔线及顶底分型标记">显示笔</span>
+      <label class="bc-toggle" for="biVisibleToggle" title="切换笔线显示">
+        <input type="checkbox" id="biVisibleToggle">
+        <span class="switch"></span>
+        <span class="txt" id="biVisibleTxt">开</span>
+      </label>
     </div>
     <div class="bc-foot">
       <span class="bc-hint">实时生效并记忆（localStorage）</span>
@@ -455,7 +470,7 @@ function initChart(){
   const el=$('chartbox');
   chart=LightweightCharts.createChart(el,{
     layout:{background:{type:'solid',color:'#131722'},textColor:'#787b86',fontSize:11},
-    grid:{vertLines:{visible:false},horzLines:{color:'rgba(42,46,57,.5)'}},
+    grid:{vertLines:{visible:false},horzLines:{visible:false}},
     crosshair:{mode:0},
     rightPriceScale:{borderColor:'rgba(197,203,206,.15)'},
     timeScale:{borderVisible:false,timeVisible:true,secondsVisible:false}});
@@ -524,6 +539,9 @@ try{
   // 迁移旧版独立的"次"开关
   if(localStorage.getItem('cl_bi_subpeak')==='0') biConf.bi_allow_sub_peak='0';
 }catch(e){}
+let biVisible=true;
+try{ biVisible=localStorage.getItem('cl_bi_visible')!=='0'; }catch(e){}
+let _biMarkers=[];
 function biConfIsDefault(){ return Object.keys(BI_DEFAULTS).every(k=>biConf[k]===BI_DEFAULTS[k]); }
 function saveBiConf(){ try{localStorage.setItem('cl_bi_conf',JSON.stringify(biConf));}catch(e){} }
 function biQuery(){
@@ -531,12 +549,28 @@ function biQuery(){
          '&strict='+biConf.is_strict+'&fxcheck='+biConf.bi_fx_check+
          '&endpeak='+biConf.bi_end_is_peak+'&gap='+biConf.gap_as_kl;
 }
+function applyBiVisibility(save){
+  const cb=$('biVisibleToggle'), txt=$('biVisibleTxt');
+  if(cb) cb.checked=biVisible;
+  if(txt) txt.textContent=biVisible?'开':'关';
+  if(bi) bi.applyOptions({visible:biVisible});
+  if(candle) candle.setMarkers(biVisible?_biMarkers:[]);
+  if(save!==false){
+    try{ localStorage.setItem('cl_bi_visible', biVisible?'1':'0'); }catch(e){}
+  }
+}
+function setBiData(lineData, markers){
+  _biMarkers=markers||[];
+  if(bi) bi.setData(lineData||[]);
+  if(candle) candle.setMarkers(biVisible?_biMarkers:[]);
+}
 function applyBiConf(reload){
   saveBiConf();
   document.querySelectorAll('#biConfPanel .seg').forEach(seg=>{
     const key=seg.dataset.key;
     seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===biConf[key]));
   });
+  applyBiVisibility(false);
   $('biConfBtn').classList.toggle('dirty', !biConfIsDefault());
   if(reload){
     // 笔配置变了，K线缓存里的旧笔一并作废
@@ -566,7 +600,14 @@ document.querySelectorAll('#biConfPanel .seg button').forEach(b=>{
 $('biConfReset').addEventListener('click',ev=>{
   ev.stopPropagation();
   biConf={...BI_DEFAULTS};
+  biVisible=true;
   applyBiConf(true);
+  applyBiVisibility();
+});
+$('biVisibleToggle').addEventListener('change',ev=>{
+  ev.stopPropagation();
+  biVisible=ev.target.checked;
+  applyBiVisibility();
 });
 document.addEventListener('click',e=>{
   if(!e.target.closest('#biConfPanel') && !e.target.closest('#biConfBtn'))
@@ -598,8 +639,7 @@ async function loadPeriod(period, isRefresh, onlyBi){
       const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery());
       const s=await r.json();
       if(s.error){ console.warn('[笔刷新] 后端返回错误:', s.error); return; }
-      bi.setData(fixTime(s.bi||[]));
-      candle.setMarkers(fixTime(s.markers||[]));
+      setBiData(fixTime(s.bi||[]), fixTime(s.markers||[]));
       const label=PERIOD_LABEL[period]||period;
       const ts=new Date().toTimeString().slice(0,8);
       $('nameUpd').textContent='更新 '+ts;
@@ -688,14 +728,13 @@ function renderKlineData(s, period, isRefresh){
     // 定时刷新/⟳按钮：增量合并，视图不动
     mergeRefresh(candle, fixTime(s.kline));
     mergeRefresh(vol, fixTime(s.vol||[]));
-    if(biStr!==_lastBiStr){ bi.setData(fixTime(s.bi||[])); }
-    if(mkStr!==_lastMarkerStr){ candle.setMarkers(fixTime(s.markers||[])); }
+    if(biStr!==_lastBiStr){ setBiData(fixTime(s.bi||[]), _biMarkers); }
+    if(mkStr!==_lastMarkerStr){ _biMarkers=fixTime(s.markers||[]); if(candle) candle.setMarkers(biVisible?_biMarkers:[]); }
   }else{
     // 切换级别/首次/缓存显示：全量渲染
     candle.setData(fixTime(s.kline));
     vol.setData(fixTime(s.vol||[]));
-    bi.setData(fixTime(s.bi||[]));
-    candle.setMarkers(fixTime(s.markers||[]));
+    setBiData(fixTime(s.bi||[]), fixTime(s.markers||[]));
     applyView();
   }
   _lastBiStr=biStr;
