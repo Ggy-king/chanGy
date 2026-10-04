@@ -21,7 +21,7 @@ import config, fees
 import tqsdk_data as tq
 
 # 天勤周期映射（秒数）
-_TQ_PERIOD = {'30':30, '1':60, '3':180, '15':900, '60':3600, 'daily':86400}
+_TQ_PERIOD = {'30':30, '1':60, '3':180, '5':300, '15':900, '30m':1800, '60':3600, 'daily':86400}
 
 _lock = threading.Lock()
 _cache_overview = None
@@ -572,7 +572,7 @@ def get_quotes():
 
 def get_live(symbol, period='15', bi_conf=None):
     """看盘模式：拉指定周期K线（天勤数据源），算合并/分型/笔，返回精简快照。
-    period: '30','1','3','15','60','daily'。全部用天勤原生接口，无需合成。
+    period: '30','1','3','5','15','30m','60','daily'。全部用天勤原生接口，无需合成。
     bi_conf: 笔构建配置（六开关，见 BI_CONF_DEFAULT），不传=原版默认。
     完全独立，不写入 _cache_detail，不影响15分钟预警与回测。"""
     name = config.CONTRACT_MAP[symbol]['name']
@@ -582,7 +582,8 @@ def get_live(symbol, period='15', bi_conf=None):
         raise RuntimeError(f'empty {period} data')
     snap = _build(df, symbol, name, bi_conf=bi_conf)
     snap['period'] = period
-    label = period + ('秒' if period == '30' else ('分' if period != 'daily' else '线'))
+    _p_label = {'30': '30秒', '1': '1分', '3': '3分', '5': '5分', '15': '15分', '30m': '30分', '60': '60分', 'daily': '日线'}
+    label = _p_label.get(period, period)
     for s in snap.get('signals', []):
         s['reason'] = s.get('reason', '').replace('15分', label)
         s['label'] = s.get('label', '').replace('15分', label)

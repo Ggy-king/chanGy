@@ -264,7 +264,7 @@ async def api_live(sym: str, period: str = '15', subpeak: str = '1',
     六个笔开关对应 chan.py CBiConfig，默认值=原版默认：
     algo(normal/fx) strict(1/0) fxcheck(loss/half/strict/totally)
     endpeak(1/0) subpeak(1/0) gap(1/0)"""
-    if period not in ('30', '1', '3', '15', '60', 'daily'):
+    if period not in ('30', '1', '3', '5', '15', '30m', '60', 'daily'):
         period = '15'
     if algo not in ('normal', 'fx'):
         algo = 'normal'

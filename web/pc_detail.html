@@ -165,7 +165,9 @@
         <button data-p="30">30秒</button>
         <button data-p="1">1分</button>
         <button data-p="3">3分</button>
+        <button data-p="5">5分</button>
         <button data-p="15">15分</button>
+        <button data-p="30m">30分</button>
         <button data-p="60">60分</button>
         <button data-p="daily">日线</button>
       </div>
@@ -363,7 +365,7 @@ const $=id=>document.getElementById(id);
 const params=new URLSearchParams(location.search);
 const SYM=params.get('sym')||'MA2610';
 let SYM_NAME=SYM; // 数据加载完成后会更新为真实品种名（右键加预警时用作 alert.name）
-const PERIOD_LABEL={'30':'30秒','1':'1分','3':'3分','15':'15分','60':'60分','daily':'日线'};
+const PERIOD_LABEL={'30':'30秒','1':'1分','3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分','daily':'日线'};
 let _savedPeriod=null; try{_savedPeriod=localStorage.getItem('cl_chart_period');}catch(e){}
 let currentPeriod=params.get('period')||_savedPeriod||'15';
 if(!PERIOD_LABEL[currentPeriod]) currentPeriod='15';
