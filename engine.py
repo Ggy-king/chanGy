@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(_HERE, 'pylibs'))
 sys.path.insert(0, _HERE)
 
 import akshare as ak
-from chanlun import merge_klines, find_fenxing, build_bi
+from chanlun import merge_klines, find_fenxing, build_bi, build_zs
 import config, fees
 import tqsdk_data as tq
 
@@ -123,7 +123,7 @@ def _risk_info(side, price, stop_loss, fee, last_price):
     }
 
 
-def _build(df, symbol, name, bi_conf=None):
+def _build(df, symbol, name, bi_conf=None, zs_conf=None):
     df = df.reset_index(drop=True)
     # datetime已经是带时区的北京时间，只在无时区时才转换，避免.timestamp()差8小时
     if df['datetime'].dt.tz is None:
@@ -135,6 +135,12 @@ def _build(df, symbol, name, bi_conf=None):
     if bi_conf:
         conf.update({k: v for k, v in bi_conf.items() if k in conf})
     bi_list = build_bi(top_fx, bottom_fx, merged, **conf)
+
+    # 中枢：三笔重叠，从最终笔现算（笔形一变中枢自动跟着变）
+    zconf = dict(ZS_CONF_DEFAULT)
+    if zs_conf:
+        zconf.update({k: v for k, v in zs_conf.items() if k in zconf})
+    zs_raw = build_zs(bi_list, **zconf)
 
     kline, vol = [], []
     for _, r in df.iterrows():
@@ -153,6 +159,27 @@ def _build(df, symbol, name, bi_conf=None):
             e = merged[col].iloc[b['end_idx']]
             bi_line.append({'time': int(df['datetime'].iloc[e].timestamp()),
                             'value': b['end_price']})
+
+    # 中枢时间轴映射：起始笔的起点K线 → 结束笔的终点K线
+    zs = []
+    for z in zs_raw:
+        try:
+            b0, bE = bi_list[z['begin_bi']], bi_list[z['end_bi']]
+            s_col = 'low_idx' if b0['direction'] == 'up' else 'high_idx'
+            s_bar = int(merged[s_col].iloc[b0['start_idx']])
+            e_col = 'high_idx' if bE['direction'] == 'up' else 'low_idx'
+            e_bar = int(merged[e_col].iloc[bE['end_idx']])
+            zs.append({
+                'start_time': int(df['datetime'].iloc[s_bar].timestamp()),
+                'end_time': int(df['datetime'].iloc[e_bar].timestamp()),
+                'high': round(float(z['high']), 1),
+                'low': round(float(z['low']), 1),
+                'begin_bi': z['begin_bi'], 'end_bi': z['end_bi'],
+                'bi_in': z['bi_in'], 'bi_out': z['bi_out'],
+                'merged_count': z['merged_count'],
+            })
+        except Exception:
+            continue
 
     markers, signals = [], []
     for b in bi_list:
@@ -188,7 +215,7 @@ def _build(df, symbol, name, bi_conf=None):
         'updated_at': str(df['datetime'].iloc[-1]),
         'bar_count': len(df), 'bi_count': len(bi_list),
         'last_price': last_price, 'change': change, 'change_pct': change_pct,
-        'kline': kline, 'vol': vol, 'bi': bi_line,
+        'kline': kline, 'vol': vol, 'bi': bi_line, 'zs': zs,
         'markers': markers, 'signals': signals,
         'last_signal': signals[-1] if signals else None,
         'error': None,
@@ -199,6 +226,13 @@ def _build(df, symbol, name, bi_conf=None):
 BI_CONF_DEFAULT = {
     'bi_algo': 'normal', 'is_strict': True, 'bi_fx_check': 'strict',
     'bi_end_is_peak': True, 'bi_allow_sub_peak': True, 'gap_as_kl': False,
+}
+
+# 中枢构建配置默认值（= 最标准缠论），/api/live 可逐项覆盖
+ZS_CONF_DEFAULT = {
+    'zs_extend': True,   # 中枢延伸：后续笔与区间重叠则延长结束笔
+    'zs_merge': False,   # 相邻中枢合并（中枢扩张式，chan.py need_combine 同款）
+    'zs_first_bi': False, # 允许第一笔就是中枢起点（chan.py 默认禁止）
 }
 
 
@@ -570,7 +604,7 @@ def get_quotes():
 # ==================== 看盘模式（多周期，独立于15分钟预警） ====================
 
 
-def get_live(symbol, period='15', bi_conf=None):
+def get_live(symbol, period='15', bi_conf=None, zs_conf=None):
     """看盘模式：拉指定周期K线（天勤数据源），算合并/分型/笔，返回精简快照。
     period: '30','1','3','5','15','30m','60','daily'。全部用天勤原生接口，无需合成。
     bi_conf: 笔构建配置（六开关，见 BI_CONF_DEFAULT），不传=原版默认。
@@ -580,7 +614,7 @@ def get_live(symbol, period='15', bi_conf=None):
     df = tq.fetch_kline(symbol, period_sec, data_length=2000)
     if df is None or len(df) == 0:
         raise RuntimeError(f'empty {period} data')
-    snap = _build(df, symbol, name, bi_conf=bi_conf)
+    snap = _build(df, symbol, name, bi_conf=bi_conf, zs_conf=zs_conf)
     snap['period'] = period
     _p_label = {'30': '30秒', '1': '1分', '3': '3分', '5': '5分', '15': '15分', '30m': '30分', '60': '60分', 'daily': '日线'}
     label = _p_label.get(period, period)
@@ -595,4 +629,5 @@ def get_live(symbol, period='15', bi_conf=None):
         'change': snap['change'], 'change_pct': snap['change_pct'],
         'kline': snap['kline'], 'vol': snap.get('vol', []),
         'bi': snap['bi'], 'markers': snap['markers'],
+        'zs': snap.get('zs', []), 'zs_count': len(snap.get('zs', [])),
     }

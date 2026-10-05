@@ -46,9 +46,9 @@
 </header>
 <main>
   <p class="lead">
-    本页详细说明 PC 端详情页「⚙ 缠论设置」面板里的每一个选项。每个选项都从两个层面解释：
+    本页详细说明 PC 端详情页「⚙ 笔设置」和「▣ 中枢设置」两个面板里的每一个选项。每个选项都从两个层面解释：
     <b>缠论层面</b>（你在图上看到什么）和 <b>代码层面</b>（它映射到哪个参数、算法做了什么）。
-    默认值均对齐参考项目 <code>chan.py</code>（本地副本 <code>chanpy_review</code>）。
+    笔的默认值对齐参考项目 <code>chan.py</code>（本地副本 <code>chanpy_review</code>）；中枢的默认值 = 最标准缠论。
   </p>
   <div class="toc">
     <a href="#bi">一、缠论 · 笔</a>
@@ -58,6 +58,10 @@
     <a href="#endpeak">端点极值</a>
     <a href="#subpeak">次高点</a>
     <a href="#gap">缺口算K</a>
+    <a href="#zs">二、缠论 · 中枢</a>
+    <a href="#zsextend">中枢延伸</a>
+    <a href="#zsmerge">中枢合并</a>
+    <a href="#zsfirst">首笔成枢</a>
     <a href="#future">后续扩展</a>
   </div>
 
@@ -250,10 +254,94 @@
     <b>关于默认值</b>：页面顶部「⚙」按钮右上角出现金色小点时，表示当前至少有一项偏离了上述默认。点击「恢复默认」可一键回到 <code>chan.py</code> 原版配置。
   </div>
 
+  <h2 id="zs">二、缠论 · 中枢</h2>
+  <p class="lead" style="margin-bottom:18px;">
+    "中枢" 是多空反复交战的价格区间：图上以<b>上下两条金色虚线</b>标出区间上沿（ZG）和下沿（ZD），
+    左端就是<b>起始笔</b>的起点，一眼可看出中枢从哪开始。中枢由<b>本级别的笔</b>直接构成（笔中枢），
+    不使用线段、不使用次级别走势类型。以下 3 个开关处理成枢前后的边界情况。
+  </p>
+
+  <div class="note">
+    <b>为什么用笔而不用"次级别走势类型"？</b>
+    原著中枢定义是"至少三个连续<b>次级别走势类型</b>的重叠"，但"本级别的次级别到底对应哪个K线级别"
+    在原著中是模糊的、无法落实的。因此任何用"次级别走势类型"模拟本级别中枢的做法都不可靠，
+    唯一可落地的做法就是用本级别的笔作为构成单元——三笔重叠即成枢。
+  </div>
+
+  <div class="switch-card" id="zsextend">
+    <div class="switch-head">
+      <span class="switch-title">中枢延伸</span>
+      <span class="tag">参数 zs_extend</span>
+      <span class="tag gold">默认：开</span>
+    </div>
+    <div class="default-row">
+      <span>算法位置：<code>chanlun/zs.py → build_zs()</code></span>
+      <span>默认值 = <b>开</b>（缠论中枢延伸）</span>
+    </div>
+    <div class="switch-body">
+      <p>成枢之后，凡是与中枢区间 <code>[ZD, ZG]</code> 有重叠的后续笔，都会延长中枢的<b>结束笔</b>——但中枢区间本身<b>永远不变</b>（对应原著 ZG/ZD 一旦确定、延伸期间围绕区间震荡的定义）。</p>
+      <div class="part"><strong>缠论层面</strong><p>图上看到的：中枢的两条金色虚线越拉越长，价格在里面来回震荡多久，中枢就延伸多久；直到出现一笔完全走出区间，中枢才完结（这一笔即"离开笔"）。</p></div>
+      <div class="part"><strong>代码层面</strong><p><code>zs_extend=True</code> 时，后续笔区间与 <code>[low, high]</code> 有交集 → 只更新 <code>end_bi</code>；关掉后中枢固定为成枢三笔，下一笔即判为离开。</p></div>
+      <div class="part"><strong>为什么默认开</strong><p>中枢延伸是标准缠论概念（第20课），关掉会导致大量本该属于同一中枢的震荡被拆成多个小中枢。</p></div>
+    </div>
+  </div>
+
+  <div class="switch-card" id="zsmerge">
+    <div class="switch-head">
+      <span class="switch-title">中枢合并</span>
+      <span class="tag">参数 zs_merge</span>
+      <span class="tag gold">默认：关</span>
+    </div>
+    <div class="default-row">
+      <span>算法位置：<code>chanlun/zs.py → build_zs()</code> 尾部合并段</span>
+      <span>默认值 = <b>关</b></span>
+      <span>参考 chan.py <code>CZSConfig.need_combine</code> + <code>zs_combine_mode='zs'</code></span>
+    </div>
+    <div class="switch-body">
+      <p>相邻两个中枢的区间有重叠时，把它们<b>并成一个</b>大中枢：区间取并集，结束笔取后者。</p>
+      <div class="part"><strong>缠论层面</strong><p>对应"中枢扩张"式的处理：前后两个中枢价格区域咬合，视为同一个更大的交战区域。</p></div>
+      <div class="part"><strong>代码层面</strong><p>逐个扫描已成的中枢，前一个区间 <code>[p.low, p.high]</code> 与后一个有交集 → 合并（<code>low=min、high=max、end_bi=后者</code>，<code>merged_count</code> 记录合并了几个）。</p></div>
+      <div class="part"><strong>为什么默认关</strong><p>标准 2、3 买卖点的推导都建立在"每个中枢独立"上；合并属于扩张类复杂情况，仅在你想观察大级别交战区域时打开。</p></div>
+    </div>
+  </div>
+
+  <div class="switch-card" id="zsfirst">
+    <div class="switch-head">
+      <span class="switch-title">首笔成枢</span>
+      <span class="tag">参数 zs_first_bi</span>
+      <span class="tag gold">默认：禁止</span>
+    </div>
+    <div class="default-row">
+      <span>算法位置：<code>chanlun/zs.py → build_zs()</code> 成枢守卫</span>
+      <span>默认值 = <b>禁止</b>（与 chan.py <code>禁止 begin_bi.idx==0 成枢</code> 一致）</span>
+    </div>
+    <div class="switch-body">
+      <p>是否允许数据里<b>第一笔</b>就作为中枢的起点（起始笔）。</p>
+      <div class="part"><strong>缠论层面</strong><p>图最左边的前三笔若重叠，默认不算中枢——因为第一笔之前没有"进入笔"，结构不完整。</p></div>
+      <div class="part"><strong>代码层面</strong><p>成枢窗口的第一笔下标为 0 且本开关为"禁止"时，跳过本次成枢，滑动窗口继续往后找。</p></div>
+      <div class="part"><strong>为什么默认禁止</strong><p>数据开头的笔缺少前文语境，极易误判；chan.py 也做了同样处理。</p></div>
+    </div>
+  </div>
+
+  <div class="switch-card" id="zsrules">
+    <div class="switch-head">
+      <span class="switch-title">成枢规则（不可配置，固定为最标准缠论）</span>
+    </div>
+    <div class="switch-body">
+      <ul>
+        <li>相邻<b>三笔</b>端点价格区间有公共重叠（<code>min(高点) &gt; max(低点)</code>）→ 成枢；</li>
+        <li>中枢区间 <code>[ZD, ZG]</code> = 三笔重叠区，<b>成枢后固定</b>，延伸只延长结束笔；</li>
+        <li>进入笔 = 成枢三笔之前那一笔；离开笔 = 第一笔与区间不重叠的笔；</li>
+        <li>中枢每次都从<b>最终笔列表现算</b>：你在 ⚙ 笔设置里改任何开关，笔形一变，中枢立刻跟着变。</li>
+      </ul>
+    </div>
+  </div>
+
   <div class="future" id="future">
     <h3>后续扩展</h3>
     <p class="lead" style="margin:0;">
-      本页面会继续补充「中枢」「线段」「买卖点」「预警条件」等设置项的说明。当前只覆盖了你截图中显示的「缠论 · 笔」面板。
+      本页面会继续补充「买卖点」「预警条件」「背驰判断」等设置项的说明。中枢的完整流程分析见
+      项目文档 <code>docs/中枢流程图分析与K线标注方案.md</code>。
     </p>
   </div>
 </main>

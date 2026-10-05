@@ -52,6 +52,11 @@
   /* ⚙ 笔设置按钮：有非默认设置时右上角金色小点提示 */
   #biConfBtn{position:relative;}
   #biConfBtn.dirty::after{content:'';position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:#f0b90b;}
+  /* ▣ 中枢设置按钮：有非默认设置时右上角金色小点提示 */
+  #zsConfBtn{position:relative;}
+  #zsConfBtn.dirty::after{content:'';position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:#f0b90b;}
+  /* ▣ 中枢下拉设置面板 */
+  #zsConfPanel{position:fixed;z-index:9998;background:#1e222d;border:1px solid #2a2e39;border-radius:12px;padding:12px 14px 10px;width:316px;box-shadow:0 8px 30px rgba(0,0,0,.6);display:none;}
   /* ⚙ 下拉设置面板 */
   #biConfPanel{position:fixed;z-index:9998;background:#1e222d;border:1px solid #2a2e39;border-radius:12px;padding:12px 14px 10px;width:316px;box-shadow:0 8px 30px rgba(0,0,0,.6);display:none;}
   .bc-title{font-size:13px;font-weight:700;color:#d1d4dc;margin-bottom:10px;}
@@ -95,6 +100,7 @@
   main{flex:1;display:flex;gap:14px;padding:14px 20px;overflow:hidden;}
   #chartbox{flex:1;min-width:0;background:#131722;border:1px solid #2a2e39;border-radius:12px;position:relative;}
   #chartbox.measuring{cursor:crosshair;}
+  #zsOverlay{position:absolute;top:0;left:0;pointer-events:none;z-index:10;}
   .side{width:300px;flex:none;display:flex;flex-direction:column;gap:12px;min-height:0;}
   .card{background:#1e222d;border:1px solid #2a2e39;border-radius:12px;padding:14px 16px;}
   .card .t{font-size:12px;color:#787b86;margin-bottom:10px;}
@@ -183,6 +189,7 @@
     <span id="tradeStatus" class="mut"></span>
     <button class="btn icon-btn" onclick="loadPeriod(currentPeriod, true)" title="刷新（保持当前视图不动）">⟳</button>
     <button class="btn icon-btn" id="biConfBtn" onclick="toggleBiConfPanel(event)" title="缠论笔设置：六个开关对应 chan.py CBiConfig，默认=原版默认；有非默认设置时按钮右上角显示金点">⚙</button>
+    <button class="btn icon-btn" id="zsConfBtn" onclick="toggleZsConfPanel(event)" title="中枢设置：三笔重叠成枢；三个开关处理边界情况；有非默认设置时按钮右上角显示金点">▣</button>
     <a href="/pc/help" class="btn icon-btn" title="打开设置说明（缠论·笔参数详解）">?</a>
     <button class="btn icon-btn alert-list-btn" id="alertListBtn" onclick="toggleAlertList()" title="预警列表">🔔<span class="badge" id="alertBadge">0</span></button>
   </div>
@@ -254,6 +261,43 @@
     <div class="bc-foot">
       <span class="bc-hint">实时生效并记忆（localStorage）</span>
       <button class="btn" id="biConfReset">恢复默认</button>
+    </div>
+  </div>
+  <!-- ▣ 中枢设置下拉面板 -->
+  <div id="zsConfPanel">
+    <div class="bc-title">缠论 · 中枢 <span class="mut">三笔重叠 · 默认=最标准</span></div>
+    <div class="bc-row">
+      <span class="bc-label" title="zs_extend：成枢后，后续笔与中枢区间[ZD,ZG]重叠则延长中枢结束笔，区间不变（缠论中枢延伸）。默认开">中枢延伸</span>
+      <div class="seg" data-key="zs_extend">
+        <button data-v="1">开</button>
+        <button data-v="0">关</button>
+      </div>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="zs_merge：相邻两个中枢区间有重叠时合并成一个（中枢扩张式合并）。默认关">中枢合并</span>
+      <div class="seg" data-key="zs_merge">
+        <button data-v="1">开</button>
+        <button data-v="0">关</button>
+      </div>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="zs_first_bi：允许第一笔就作为中枢起点。默认禁止（数据开头的笔不完整，防止误判）">首笔成枢</span>
+      <div class="seg" data-key="zs_first_bi">
+        <button data-v="1">允许</button>
+        <button data-v="0">禁止</button>
+      </div>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="显示或隐藏图上的中枢区间上下沿">显示中枢</span>
+      <label class="bc-toggle" for="zsVisibleToggle" title="切换中枢区间显示">
+        <input type="checkbox" id="zsVisibleToggle">
+        <span class="switch"></span>
+        <span class="txt" id="zsVisibleTxt">开</span>
+      </label>
+    </div>
+    <div class="bc-foot">
+      <span class="bc-hint">实时生效并记忆（localStorage）</span>
+      <button class="btn" id="zsConfReset">恢复默认</button>
     </div>
   </div>
   <!-- 自定义确认弹窗 -->
@@ -370,7 +414,9 @@ let _savedPeriod=null; try{_savedPeriod=localStorage.getItem('cl_chart_period');
 let currentPeriod=params.get('period')||_savedPeriod||'15';
 if(!PERIOD_LABEL[currentPeriod]) currentPeriod='15';
 
-let chart,candle,vol,bi;
+let chart,candle,vol,bi; let zsSeries=[];
+let zsOverlay=null, zsOverlayCtx=null, _lastZsList=[];
+let _overlayRafPending=false;
 let refreshTimer=null;
 let ws;
 const proto=location.protocol==='https:'?'wss':'ws';
@@ -481,8 +527,19 @@ function initChart(){
   vol=chart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'',
     lastValueVisible:false,priceLineVisible:false});
   vol.priceScale().applyOptions({scaleMargins:{top:.82,bottom:0}});
-  bi=chart.addLineSeries({color:'#f0b90b',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
-  new ResizeObserver(()=>chart.applyOptions({width:el.clientWidth,height:el.clientHeight})).observe(el);
+  // 中枢边框：画在独立 canvas 浮层上（脱离图表 series），四条边统一虚线、粗细一致
+  zsOverlay=document.createElement('canvas');
+  zsOverlay.id='zsOverlay';
+  zsOverlay.style.display=zsVisible?'block':'none';
+  el.appendChild(zsOverlay);
+  zsOverlayCtx=zsOverlay.getContext('2d');
+  chart.timeScale().subscribeVisibleTimeRangeChange(scheduleOverlayDraw);
+  try{ candle.priceScale().subscribeVisibleRangeChange(scheduleOverlayDraw); }catch(e){}
+  bi=chart.addLineSeries({color:'#f0b90b',lineWidth:.7,priceLineVisible:false,lastValueVisible:false});
+  new ResizeObserver(()=>{
+    chart.applyOptions({width:el.clientWidth,height:el.clientHeight});
+    scheduleOverlayDraw();
+  }).observe(el);
   chart.timeScale().subscribeVisibleLogicalRangeChange(saveViewSoon);
 }
 
@@ -614,8 +671,130 @@ $('biVisibleToggle').addEventListener('change',ev=>{
 document.addEventListener('click',e=>{
   if(!e.target.closest('#biConfPanel') && !e.target.closest('#biConfBtn'))
     $('biConfPanel').style.display='none';
+  if(!e.target.closest('#zsConfPanel') && !e.target.closest('#zsConfBtn'))
+    $('zsConfPanel').style.display='none';
 });
-document.addEventListener('keydown',e=>{ if(e.key==='Escape') $('biConfPanel').style.display='none'; });
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){ $('biConfPanel').style.display='none'; $('zsConfPanel').style.display='none'; }
+});
+
+// ===== 中枢设置（三笔重叠成枢，三个边界开关 + 显隐） =====
+const ZS_DEFAULTS={zs_extend:'1',zs_merge:'0',zs_first_bi:'0'};
+let zsConf={...ZS_DEFAULTS};
+try{
+  const saved=JSON.parse(localStorage.getItem('cl_zs_conf')||'null');
+  if(saved) Object.keys(ZS_DEFAULTS).forEach(k=>{ if(saved[k]!=null) zsConf[k]=String(saved[k]); });
+}catch(e){}
+let zsVisible=true;
+try{ zsVisible=localStorage.getItem('cl_zs_visible')!=='0'; }catch(e){}
+function zsConfIsDefault(){ return Object.keys(ZS_DEFAULTS).every(k=>zsConf[k]===ZS_DEFAULTS[k]); }
+function saveZsConf(){ try{localStorage.setItem('cl_zs_conf',JSON.stringify(zsConf));}catch(e){} }
+function zsQuery(){
+  return '&zsextend='+zsConf.zs_extend+'&zsmerge='+zsConf.zs_merge+'&zsfirst='+zsConf.zs_first_bi;
+}
+function applyZsConf(reload){
+  saveZsConf();
+  document.querySelectorAll('#zsConfPanel .seg').forEach(seg=>{
+    const key=seg.dataset.key;
+    seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===zsConf[key]));
+  });
+  applyZsVisibility(false);
+  $('zsConfBtn').classList.toggle('dirty', !zsConfIsDefault());
+  if(reload){
+    // 中枢配置变了，缓存作废重拉（中枢从笔现算，笔配置变化同样会带到这里）
+    Object.keys(_klineCache).forEach(k=>delete _klineCache[k]);
+    loadPeriod(currentPeriod, false, true);
+  }
+}
+function applyZsVisibility(save){
+  const cb=$('zsVisibleToggle'), txt=$('zsVisibleTxt');
+  if(cb) cb.checked=zsVisible;
+  if(txt) txt.textContent=zsVisible?'开':'关';
+  if(zsOverlay) zsOverlay.style.display=zsVisible?'block':'none';
+  if(save!==false){ try{ localStorage.setItem('cl_zs_visible', zsVisible?'1':'0'); }catch(e){} }
+  scheduleOverlayDraw();
+}
+// 中枢边框：在独立 canvas 浮层上画虚线长方形（脱离图表 series，四条边统一规格）
+// 相邻中枢奇偶颜色不同，便于观察重叠/扩张
+function setZsData(list){
+  const ZS_COL_A='rgba(0,210,211,.75)', ZS_COL_B='rgba(220,100,220,.75)';
+  _lastZsList=(list||[]).map((z,i)=>({
+    st:+z.start_time+TZ_OFFSET,
+    et:+z.end_time+TZ_OFFSET,
+    high:+z.high, low:+z.low,
+    color:i%2===0?ZS_COL_A:ZS_COL_B,
+  }));
+  scheduleOverlayDraw();
+}
+function scheduleOverlayDraw(){
+  if(_overlayRafPending) return;
+  _overlayRafPending=true;
+  requestAnimationFrame(()=>{ _overlayRafPending=false; drawZsOverlay(); });
+}
+function drawZsOverlay(){
+  if(!zsOverlay||!zsOverlayCtx||!chart||!candle) return;
+  const el=$('chartbox');
+  const dpr=window.devicePixelRatio||1;
+  const w=el.clientWidth, h=el.clientHeight;
+  if(w<=0||h<=0) return;
+  // 高分屏：canvas 像素与 css 像素分离
+  const cw=Math.floor(w*dpr), ch=Math.floor(h*dpr);
+  if(zsOverlay.width!==cw || zsOverlay.height!==ch){
+    zsOverlay.width=cw; zsOverlay.height=ch;
+    zsOverlay.style.width=w+'px'; zsOverlay.style.height=h+'px';
+  }
+  const ctx=zsOverlayCtx;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  if(!zsVisible || !_lastZsList.length) return;
+  const ts=chart.timeScale();
+  ctx.lineWidth=1;
+  ctx.setLineDash([4,4]);
+  ctx.lineCap='butt';
+  for(const z of _lastZsList){
+    const xL=ts.timeToCoordinate(z.st);
+    const xR=ts.timeToCoordinate(z.et);
+    const yH=candle.priceToCoordinate(z.high);
+    const yL=candle.priceToCoordinate(z.low);
+    if(xL==null||xR==null||yH==null||yL==null) continue;
+    ctx.strokeStyle=z.color;
+    ctx.beginPath();
+    // +0.5 让 1px 线对齐像素栅格，避免亚像素模糊
+    ctx.strokeRect(xL+0.5, yH+0.5, xR-xL, yL-yH);
+  }
+}
+function toggleZsConfPanel(e){
+  if(e) e.stopPropagation();
+  const p=$('zsConfPanel');
+  if(p.style.display==='block'){ p.style.display='none'; return; }
+  applyZsConf(false);
+  const btn=$('zsConfBtn'), r=btn.getBoundingClientRect();
+  p.style.display='block';
+  let left=r.right-p.offsetWidth; if(left<8) left=8;
+  p.style.left=left+'px';
+  p.style.top=(r.bottom+6)+'px';
+}
+document.querySelectorAll('#zsConfPanel .seg button').forEach(b=>{
+  b.addEventListener('click',ev=>{
+    ev.stopPropagation();
+    const seg=b.closest('.seg');
+    zsConf[seg.dataset.key]=b.dataset.v;
+    applyZsConf(true);
+  });
+});
+$('zsConfReset').addEventListener('click',ev=>{
+  ev.stopPropagation();
+  zsConf={...ZS_DEFAULTS};
+  zsVisible=true;
+  applyZsConf(true);
+  applyZsVisibility();
+});
+$('zsVisibleToggle').addEventListener('change',ev=>{
+  ev.stopPropagation();
+  zsVisible=ev.target.checked;
+  applyZsVisibility();
+});
+applyZsVisibility(false);
 
 // 右侧信息栏显隐状态（跨会话记忆）
 let sideVisible=true;
@@ -638,10 +817,12 @@ let _errRetryTimer=null;
 async function loadPeriod(period, isRefresh, onlyBi){
   try{
     if(onlyBi){
-      const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery());
+      const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery()+zsQuery());
       const s=await r.json();
       if(s.error){ console.warn('[笔刷新] 后端返回错误:', s.error); return; }
       setBiData(fixTime(s.bi||[]), fixTime(s.markers||[]));
+      if(JSON.stringify(s.zs||[])!==_lastZsStr) setZsData(s.zs||[]);
+      _lastZsStr=JSON.stringify(s.zs||[]);
       const label=PERIOD_LABEL[period]||period;
       const ts=new Date().toTimeString().slice(0,8);
       $('nameUpd').textContent='更新 '+ts;
@@ -657,7 +838,7 @@ async function loadPeriod(period, isRefresh, onlyBi){
       if(_cacheLoading[period]) return;
     }
     _cacheLoading[period]=true;
-    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery());
+    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery()+zsQuery());
     const s=await r.json();
     _cacheLoading[period]=false;
     if(s.error){
@@ -712,7 +893,7 @@ function mergeRefresh(series, fresh){
 }
 
 // bi/markers 内容没变就跳过 setData，避免无效重绘
-let _lastBiStr=null, _lastMarkerStr=null;
+let _lastBiStr=null, _lastMarkerStr=null, _lastZsStr=null;
 
 function renderKlineData(s, period, isRefresh){
   const label=PERIOD_LABEL[period]||period;
@@ -720,27 +901,31 @@ function renderKlineData(s, period, isRefresh){
   $('nm').textContent=s.name;
   SYM_NAME=s.name||SYM;
   $('nameUpd').textContent='更新 '+ts;
-  $('cd').textContent=s.symbol+' · '+label+' · '+s.bar_count+'根/'+s.bi_count+'笔';
+  $('cd').textContent=s.symbol+' · '+label+' · '+s.bar_count+'根/'+s.bi_count+'笔'+((s.zs||[]).length?'/'+s.zs.length+'枢':'');
   $('p').textContent=s.last_price;
   const up=s.change>=0;
   $('chg').innerHTML=`<span class="${up?'red':'green'}">${up?'▲':'▼'} ${Math.abs(s.change)} (${s.change_pct}%)</span>`;
   const biStr=JSON.stringify(s.bi||[]);
   const mkStr=JSON.stringify(s.markers||[]);
+  const zsStr=JSON.stringify(s.zs||[]);
   if(isRefresh && candle.data().length){
     // 定时刷新/⟳按钮：增量合并，视图不动
     mergeRefresh(candle, fixTime(s.kline));
     mergeRefresh(vol, fixTime(s.vol||[]));
     if(biStr!==_lastBiStr){ setBiData(fixTime(s.bi||[]), _biMarkers); }
     if(mkStr!==_lastMarkerStr){ _biMarkers=fixTime(s.markers||[]); if(candle) candle.setMarkers(biVisible?_biMarkers:[]); }
+    if(zsStr!==_lastZsStr){ setZsData(s.zs||[]); }
   }else{
     // 切换级别/首次/缓存显示：全量渲染
     candle.setData(fixTime(s.kline));
     vol.setData(fixTime(s.vol||[]));
     setBiData(fixTime(s.bi||[]), fixTime(s.markers||[]));
+    setZsData(s.zs||[]);
     applyView();
   }
   _lastBiStr=biStr;
   _lastMarkerStr=mkStr;
+  _lastZsStr=zsStr;
 }
 
 function sendChat(){
