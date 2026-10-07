@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>形态监控矩阵</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
+  body{background:#131722;color:#d1d4dc;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+  .red{color:#ef5350;} .green{color:#26a69a;} .gold{color:#f0b90b;} .mut{color:#787b86;}
+  header{display:flex;align-items:center;gap:14px;padding:10px 22px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;}
+  header h1{font-size:17px;font-weight:800;letter-spacing:1px;}
+  header h1 span{color:#f0b90b;}
+  .conn{display:flex;align-items:center;gap:7px;font-size:13px;color:#787b86;}
+  .dot{width:9px;height:9px;border-radius:50%;background:#ef5350;}
+  .dot.on{background:#26a69a;box-shadow:0 0 8px #26a69a;}
+  .sp{flex:1;}
+  .btn{border:1px solid #2a2e39;background:#2a2e39;color:#d1d4dc;border-radius:8px;padding:6px 12px;font-size:12.5px;cursor:pointer;}
+  .btn:hover{filter:brightness(1.2);}
+  .btn.off{color:#787b86;}
+  main{flex:1;display:flex;flex-direction:column;padding:12px 22px;gap:12px;overflow:hidden;}
+  /* ===== 矩阵 ===== */
+  #matrixWrap{flex:none;overflow:auto;background:#1e222d;border:1px solid #2a2e39;border-radius:12px;padding:10px;}
+  table#matrix{border-collapse:separate;border-spacing:5px;width:100%;table-layout:fixed;}
+  #matrix th{color:#787b86;font-weight:700;font-size:12.5px;padding:4px 2px;white-space:nowrap;overflow:hidden;}
+  #matrix th.rowhead{text-align:center;color:#d1d4dc;font-size:13px;width:64px;}
+  #matrix th.colhead{cursor:pointer;}
+  #matrix th.colhead:hover{color:#f0b90b;}
+  td.cell{width:64px;height:44px;text-align:center;background:#262b38;border:1px solid #2a2e39;border-radius:8px;
+          font-size:13px;font-weight:800;cursor:pointer;transition:background .15s,border-color .15s;
+          position:relative;user-select:none;}
+  td.cell:hover{filter:brightness(1.35);}
+  td.cell.empty{color:#4a4f5a;font-weight:400;font-size:11px;}
+  td.cell.watch_a{background:#1e222d;border:1px dashed #56606f;color:#9aa3b2;font-size:12px;}
+  td.cell.cand_a.long{background:#262b38;border:2px solid #ef5350;color:#ef5350;}
+  td.cell.cand_a.short{background:#262b38;border:2px solid #26a69a;color:#26a69a;}
+  td.cell.cand_b.long{background:#262b38;border:2px solid #f0b90b;color:#f0b90b;font-size:11.5px;}
+  td.cell.cand_b.short{background:#262b38;border:2px solid #b388ff;color:#b388ff;font-size:11.5px;}
+  td.cell.conf_a.long{background:rgba(239,83,80,.85);border:2px solid #ffb3ad;color:#fff;}
+  td.cell.conf_a.short{background:rgba(38,166,154,.85);border:2px solid #a8e6e2;color:#fff;}
+  td.cell.trig_b.long{background:rgba(240,185,11,.85);border:2px solid #ffe082;color:#fff;font-size:11.5px;}
+  td.cell.trig_b.short{background:rgba(179,136,255,.85);border:2px solid #d1c4ff;color:#fff;font-size:11.5px;}
+  td.cell.gone_b{border:1px dashed #787b86;color:#787b86;font-size:11px;}
+  .clr{position:absolute;top:1px;right:3px;font-size:11px;color:rgba(255,255,255,.75);cursor:pointer;}
+  td.cell.cand_b .clr,td.cell.gone_b .clr{color:#787b86;}
+  /* ===== 图例 ===== */
+  .legend{display:flex;gap:14px;font-size:11.5px;color:#787b86;flex:none;flex-wrap:wrap;align-items:center;}
+  .lg{display:flex;align-items:center;gap:5px;}
+  .chip{width:15px;height:15px;border-radius:4px;display:inline-block;}
+  /* ===== 事件流（卡片式，一行3-4张） ===== */
+  #streamWrap{flex:1;background:#1e222d;border:1px solid #2a2e39;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;}
+  #streamWrap .ph{padding:8px 16px;border-bottom:1px solid #2a2e39;font-size:13px;font-weight:700;flex:none;}
+  #stream{flex:1;overflow-y:auto;padding:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(235px,1fr));gap:9px;align-content:start;}
+  .evt{border-radius:10px;padding:9px 12px;border:1px solid #2a2e39;border-left:4px solid;display:flex;flex-direction:column;gap:3px;cursor:pointer;}
+  .evt:hover{filter:brightness(1.25);}
+  .evt .r1{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#787b86;}
+  .evt .r1 .kind{font-weight:800;padding:1px 8px;border-radius:9px;font-size:10.5px;}
+  .evt.A.long .kind{background:rgba(239,83,80,.25);color:#ef5350;}
+  .evt.A.short .kind{background:rgba(38,166,154,.25);color:#26a69a;}
+  .evt.B.long .kind{background:rgba(240,185,11,.22);color:#f0b90b;}
+  .evt.B.short .kind{background:rgba(179,136,255,.22);color:#b388ff;}
+  .evt.A.long{background:linear-gradient(135deg,rgba(239,83,80,.20),rgba(239,83,80,.04));border-left-color:#ef5350;}
+  .evt.A.short{background:linear-gradient(135deg,rgba(38,166,154,.20),rgba(38,166,154,.04));border-left-color:#26a69a;}
+  .evt.B.long{background:linear-gradient(135deg,rgba(240,185,11,.16),rgba(240,185,11,.03));border-left-color:#f0b90b;}
+  .evt.B.short{background:linear-gradient(135deg,rgba(179,136,255,.16),rgba(179,136,255,.03));border-left-color:#b388ff;}
+  .evt .r2{font-size:13.5px;font-weight:800;}
+  .evt .r3{font-size:17px;font-weight:800;}
+  .evt .r4{font-size:11px;color:#787b86;}
+  .evt .r4 b{color:#d1d4dc;}
+</style>
+</head>
+<body>
+<header>
+  <h1>形态<span>监控矩阵</span></h1>
+  <div class="conn"><span class="dot" id="dot"></span><span id="connTx">连接中…</span></div>
+  <div class="sp"></div>
+  <button class="btn" id="muteBtn" onclick="toggleMute()">🔊 提示音开</button>
+</header>
+<main>
+  <div id="matrixWrap"><table id="matrix"></table></div>
+  <div class="legend">
+    <span class="lg"><span class="chip" style="border:2px solid #ef5350"></span>A类候选(多)</span>
+    <span class="lg"><span class="chip" style="border:2px solid #26a69a"></span>A类候选(空)</span>
+    <span class="lg"><span class="chip" style="border:2px solid #f0b90b"></span>B类候选(多)=三买</span>
+    <span class="lg"><span class="chip" style="border:2px solid #b388ff"></span>B类候选(空)=三卖</span>
+    <span class="lg"><span class="chip" style="border:1px dashed #56606f"></span>A类观察中</span>
+    <span class="lg"><span class="chip" style="background:rgba(239,83,80,.85)"></span>A类确认(多)=二买</span>
+    <span class="lg"><span class="chip" style="background:rgba(38,166,154,.85)"></span>A类确认(空)=二卖</span>
+    <span class="lg"><span class="chip" style="background:rgba(240,185,11,.85)"></span>B类触发(多)=三买</span>
+    <span class="lg"><span class="chip" style="background:rgba(179,136,255,.85)"></span>B类触发(空)=三卖</span>
+    <span class="lg"><span class="chip" style="background:#262b38"></span>扫描中</span>
+    <span class="mut" style="margin-left:auto;">点击格子进详情页 · 确认/触发 24h 自动淡化</span>
+  </div>
+  <div id="streamWrap">
+    <div class="ph">实时事件流（最近 20 条）</div>
+    <div id="stream"></div>
+  </div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let PERIODS=[],CONTRACTS=[],CELLS={};   // CELLS: 'sym|period' -> cell
+let _muted=localStorage.getItem('cl_matrix_mute')==='1';
+let _titleTimer=null,_baseTitle=document.title;
+
+/* ---------- 矩阵渲染 ---------- */
+function render(){
+  const tb=$('matrix');
+  let h='<tr><th class="rowhead">级别＼品种</th>';
+  for(const c of CONTRACTS) h+=`<th class="colhead" onclick="go('${c.symbol}','15')">${c.name}</th>`;
+  h+='</tr>';
+  for(const p of PERIODS){
+    h+=`<tr><th class="rowhead">${periodLabel(p)}</th>`;
+    for(const c of CONTRACTS){
+      const key=c.symbol+'|'+p;
+      const cell=CELLS[key];
+      h+=`<td class="cell" id="c_${cssKey(key)}" onclick="cellClick('${c.symbol}','${p}')" title="">…</td>`;
+    }
+    h+='</tr>';
+  }
+  tb.innerHTML=h;
+  for(const key in CELLS) paintCell(CELLS[key]);
+  // 尚未有状态的格子标"扫描中"
+  document.querySelectorAll('td.cell').forEach(td=>{
+    if(td.textContent==='…') td.textContent='·';
+  });
+}
+function cssKey(k){return k.replace(/[^a-zA-Z0-9]/g,'_');}
+function periodLabel(p){return ({'30':'30秒','1':'1分','3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分','daily':'日线'})[p]||p;}
+function arrow(side){return side==='long'?'▲':'▼';}
+
+function paintCell(cell){
+  const key=cell.symbol+'|'+cell.period;
+  const td=$('c_'+cssKey(key));
+  if(!td) return;
+  td.className='cell '+cell.state+(cell.side?(' '+cell.side):'');
+  td.title='';
+  let txt='';
+  const side=arrow(cell.side);
+  if(cell.state==='idle'){txt='·';td.classList.add('empty');}
+  else if(cell.state==='watch_a'){txt='A'+side+' 观察';td.title=`背驰结构 ${cell.p1} / ${cell.p2} / ${cell.p3}\n突破 ${cell.p2} 转候选\n(观察中，不推送)`;}
+  else if(cell.state==='cand_a'){txt='A'+side+' 候选';td.title=`背驰V反已突破 ${cell.p2}\n等回调笔确立 → A类确认\n${fmtT(cell.time)}`;}
+  else if(cell.state==='conf_a'){txt='A'+side+' 确认';td.title=`A类确认（二买/二卖进场关注）@${cell.price}\n${fmtT(cell.time)}`;}
+  else if(cell.state==='cand_b'){txt='B'+side+' 候选';td.title=`${cell.pattern} @${cell.price}\n${fmtT(cell.time)}\n结构 ${cell.p1} / ${cell.p2} / ${cell.p3}`;}
+  else if(cell.state==='trig_b'){txt='B'+side+' 触发';td.title=`B类触发（三买/三卖进场关注）@${cell.price}\n${fmtT(cell.time)}`;}
+  else if(cell.state==='gone_b'){txt='B× 作废';}
+  td.innerHTML=txt;
+}
+function fmtT(t){if(!t)return '';return String(t).replace('T',' ').slice(5,16);}
+
+function applyCell(cell){
+  CELLS[cell.symbol+'|'+cell.period]=cell;
+  paintCell(cell);
+}
+
+function go(sym,period){location.href='/pc/detail?sym='+sym+'&period='+period;}
+function cellClick(sym,period){go(sym,period);}
+
+/* ---------- 事件流 ---------- */
+function addEvent(m){
+  const div=document.createElement('div');
+  const bPat=m.pattern||'';
+  const long=(m.side||'long')==='long';
+  const cls=m.kind==='A'?('A '+m.side):('B '+m.side);
+  const kind=m.snapshot
+    ?(m.state==='watch_a'?'A类·观察':m.state==='cand_a'?'A类·候选':m.state==='conf_a'?'A类·确认':m.state==='trig_b'?'B类·触发':'B类·候选')
+    :((m.pattern||'').startsWith('VREV_CONF')?'A类·确认'
+      :(m.pattern||'').startsWith('VREV')?'A类·候选'
+      :(m.pattern||'').includes('TRIG')?'B类·触发':'B类·候选');
+  const sub=m.kind==='A'
+    ?(m.snapshot?'观察中，破位即报警':('3→4跨 <b>'+(m.bi_span??'?')+'</b> 笔'))
+    :('幅度 <b>'+(m.ratio??'?')+'</b>×');
+  div.className='evt '+cls;
+  div.onclick=()=>location.href='/pc/detail?sym='+encodeURIComponent(m.symbol)+'&period='+encodeURIComponent(m.period||'15');
+  div.innerHTML=`<div class="r1"><span class="kind">${kind}</span><span>${m.time_str||fmtT(m.time||m.ts*1000)}</span></div>
+    <div class="r2">${m.name} <span class="mut" style="font-size:11px">${periodLabel(m.period)}</span>
+      <span style="float:right;color:${long?'#ef5350':'#26a69a'}">${long?'▲多':'▼空'}</span></div>
+    <div class="r3">${m.price??''}</div>
+    <div class="r4">${m.brief||sub}</div>`;
+  $('stream').prepend(div);
+  while($('stream').children.length>20)$('stream').lastChild.remove();
+}
+
+/* ---------- 提醒：提示音 + 标题闪烁 + 系统通知 ---------- */
+function beep(){
+  if(_muted)return;
+  try{
+    const ctx=window.__audio||(window.__audio=new (window.AudioContext||window.webkitAudioContext)());
+    const o=ctx.createOscillator(),g=ctx.createGain();
+    o.connect(g);g.connect(ctx.destination);
+    o.type='sine';o.frequency.value=880;
+    g.gain.setValueAtTime(.25,ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.35);
+    o.start();o.stop(ctx.currentTime+.4);
+  }catch(e){}
+}
+function flashTitle(txt){
+  if(_titleTimer)clearInterval(_titleTimer);
+  let on=true;
+  _titleTimer=setInterval(()=>{
+    document.title=(on?'🔴 '+txt:_baseTitle);on=!on;
+  },700);
+  setTimeout(()=>{clearInterval(_titleTimer);document.title=_baseTitle;_titleTimer=null;},10000);
+}
+function notify(m){
+  if(_muted||!('Notification' in window)||Notification.permission!=='granted')return;
+  try{new Notification('形态预警',{body:m.text});}catch(e){}
+}
+function toggleMute(){
+  _muted=!_muted;
+  try{localStorage.setItem('cl_matrix_mute',_muted?'1':'0');}catch(e){}
+  paintMute();
+  if(!_muted&&'Notification' in window&&Notification.permission==='default')Notification.requestPermission();
+}
+function paintMute(){
+  $('muteBtn').textContent=_muted?'🔇 提示音关':'🔊 提示音开';
+  $('muteBtn').classList.toggle('off',_muted);
+}
+
+/* ---------- WS ---------- */
+let ws=null;
+function connect(){
+  const proto=location.protocol==='https:'?'wss':'ws';
+  ws=new WebSocket(`${proto}://${location.host}/ws?role=pc`);
+  ws.onopen=()=>{$('dot').classList.add('on');$('connTx').textContent='已连接';};
+  ws.onclose=()=>{$('dot').classList.remove('on');$('connTx').textContent='断线重连中…';setTimeout(connect,3000);};
+  ws.onmessage=e=>{
+    let m;try{m=JSON.parse(e.data);}catch(_){return;}
+    if(m.type==='init'){
+      (m.history||[]).forEach(x=>{if(x.type==='pattern_alert')addEvent(x);});
+    }else if(m.type==='pattern_alert'){
+      addEvent(m);beep();
+      flashTitle(m.text);
+      notify(m);
+    }else if(m.type==='pattern_state'){
+      applyCell(m.cell);
+    }
+  };
+}
+
+/* ---------- 笔参数同步：进页面即把详情页⚙面板的笔配置同步给监控（变更则服务端静默重扫） ---------- */
+function syncBiConf(){
+  try{
+    const conf=localStorage.getItem('cl_bi_conf');
+    if(!conf)return;
+    fetch('/api/pattern_bi_conf',{method:'POST',headers:{'Content-Type':'application/json'},body:conf}).catch(()=>{});
+  }catch(e){}
+}
+
+/* ---------- 启动 ---------- */
+(async function(){
+  paintMute();
+  syncBiConf();
+  const r=await fetch('/api/pattern_matrix');
+  const d=await r.json();
+  PERIODS=d.periods||[];CONTRACTS=d.contracts||[];
+  (d.cells||[]).forEach(c=>{CELLS[c.symbol+'|'+c.period]=c;});
+  render();
+  (d.events||[]).forEach(addEvent);   // 列表本身旧→新，逐条 prepend 后即新在上
+  connect();
+  // 从详情页返回（bfcache）或切回标签页时，重新同步笔配置（有变化服务端会静默重扫+刷新矩阵）
+  window.addEventListener('pageshow',syncBiConf);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)syncBiConf();});
+  window.__matrixReady=true;
+})();
+</script>
+</body>
+</html>

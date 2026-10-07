@@ -36,6 +36,14 @@ CONTRACTS = [
 # 方便按代码索引
 CONTRACT_MAP = {c["symbol"]: c for c in CONTRACTS}
 
+# ===== 背驰-V反 形态预警系统（docs/背驰反转形态预警系统设计.md）=====
+# 监视级别（17品种×5级别=85序列）；扫描节奏按级别分钟数对齐挂钟时间（见 server.pattern_loop）
+PATTERN_PERIODS = ['3', '5', '15', '30m', '60']
+# 形态C 幅度过滤：6→7 幅度 > 2 × 5→6 幅度 才报三买候选（控制报警频率）
+PATTERN_RATIO = 2.0
+# 矩阵页 fired/conf 状态保留时长（秒），到期自动淡化回 idle（也可手动点格子清除）
+PATTERN_CELL_TTL = 24 * 3600
+
 # 手续费缓存文件与有效期（天）
 FEES_CACHE_FILE = os.path.join("data", "fees_cache.json")
 FEES_REFRESH_DAYS = 30

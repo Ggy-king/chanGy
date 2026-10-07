@@ -161,7 +161,7 @@
 <body>
 <header>
   <div class="head-group left">
-    <a href="/pc">‹ 返回总览</a>
+    <a href="javascript:history.back()">‹ 返回</a>
     <div class="name-block">
       <div class="nm"><span id="nm">加载中</span><span class="upd" id="nameUpd"></span></div>
       <div class="cd" id="cd"></div>
@@ -949,6 +949,9 @@ function connect(){
           delete alertDirections[m.id];
         }
         try{ showAlertPopup(m); }catch(e){ console.error('[alert popup]', e); }
+      }else if(m.type==='pattern_alert'){
+        // 形态预警（背驰V反/三买卖点）：弹窗提示，点击跳矩阵页
+        try{ showPatternPopup(m); }catch(e){ console.error('[pattern popup]', e); }
       }else if(m.type==='devices'){
         window._devices=m.devices||[];
       }
@@ -1254,6 +1257,23 @@ function showAlertPopup(alert){
     '<div class="info">'+alert.name+'（'+alert.symbol+'）<br>'+
     '预警价：'+alert.price+'　触发价：'+alert.triggered_price+'<br>'+
     '时间：'+alert.triggered_at+'</div>';
+  document.body.appendChild(div);
+  playAlertSound();
+  setTimeout(()=>{if(div.parentElement)div.remove();},15000);
+}
+
+function showPatternPopup(m){
+  const long=(m.side||'long')==='long';
+  const div=document.createElement('div');
+  div.className='alert-popup '+(long?'up':'down');
+  div.style.cursor='pointer';
+  div.onclick=()=>location.href='/pc/matrix';
+  const kindTxt=m.kind==='A'?'🔺 A类·背驰V反'+(long?'(多)':'(空)'):'🟡 B类·三买卖点';
+  div.innerHTML='<span class="close" onclick="event.stopPropagation();this.parentElement.remove()">×</span>'+
+    '<div class="title '+(long?'up':'down')+'">'+kindTxt+'</div>'+
+    '<div class="info">'+(m.text||'')+'<br>'+
+    '结构：'+m.p1+' / '+m.p2+' / '+m.p3+'<br>'+
+    '时间：'+(m.time||'')+'</div>';
   document.body.appendChild(div);
   playAlertSound();
   setTimeout(()=>{if(div.parentElement)div.remove();},15000);

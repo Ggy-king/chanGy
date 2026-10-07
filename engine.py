@@ -17,6 +17,7 @@ sys.path.insert(0, _HERE)
 
 import akshare as ak
 from chanlun import merge_klines, find_fenxing, build_bi, build_zs
+from chanlun.pattern import evaluate as pattern_evaluate
 import config, fees
 import tqsdk_data as tq
 
@@ -631,3 +632,33 @@ def get_live(symbol, period='15', bi_conf=None, zs_conf=None):
         'bi': snap['bi'], 'markers': snap['markers'],
         'zs': snap.get('zs', []), 'zs_count': len(snap.get('zs', [])),
     }
+
+
+# ==================== 背驰-V反 形态预警（docs/背驰反转形态预警系统设计.md） ====================
+
+
+def pattern_snapshot(symbol, period, reported_keys=None, bi_conf=None):
+    """形态预警单单元评估：拉数 + 算笔 + 形态评估（server.pattern_loop 调度调用）。
+
+    symbol 必须是 CONTRACT_MAP 里的具体合约；period 见 _TQ_PERIOD。
+    reported_keys: 该 (symbol,period) 的已报指纹集合，由调用方持有（评估器原地追加）。
+    bi_conf: 笔六开关（详情页⚙面板同步来的配置），None=原版默认。
+    数据拉不到（掐线重连窗口）抛异常，调用方跳过该单元本轮。
+    返回 {'name', 'bi_count', 'result'}；result = chanlun.pattern.evaluate 输出。"""
+    name = config.CONTRACT_MAP[symbol]['name']
+    period_sec = _TQ_PERIOD.get(period, 900)
+    df = tq.fetch_kline(symbol, period_sec, data_length=2000)
+    if df is None or len(df) == 0:
+        raise RuntimeError(f'empty {period} data for {symbol}')
+    df = df.reset_index(drop=True)
+    if df['datetime'].dt.tz is None:
+        df['datetime'] = __import__('pandas').to_datetime(df['datetime'])
+    df = df.dropna(subset=['open', 'high', 'low', 'close'])   # 数据源偶发 NaN K线，会污染笔端点（信号流出现 nan）
+    merged = merge_klines(df)
+    top_fx, bottom_fx = find_fenxing(merged)
+    conf = dict(BI_CONF_DEFAULT)
+    if bi_conf:
+        conf.update({k: v for k, v in bi_conf.items() if k in conf})
+    bi_list = build_bi(top_fx, bottom_fx, merged, **conf)
+    result = pattern_evaluate(bi_list, merged, reported_keys)
+    return {'name': name, 'bi_count': len(bi_list), 'result': result}
