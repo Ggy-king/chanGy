@@ -70,10 +70,10 @@ with sync_playwright() as p:
     pg.goto(f'{BASE}/pc/matrix', wait_until='domcontentloaded')
     pg.wait_for_function('document.getElementById("connTx").textContent==="已连接"', timeout=8000)
     pg.wait_for_timeout(800)                    # 等 WS init 历史重放完毕
-    pg.evaluate('''() => upsertEvent({kind:'A', side:'long', pattern:'VREV_LONG', fingerprint:'f1',
+    pg.evaluate('''() => upsertEvent({ trigger_time:new Date().toISOString(), kind:'A', side:'long', pattern:'VREV_LONG', fingerprint:'f1',
         symbol:'MA2611', name:'甲醇', period:'15', price:2500.0, time:'2026-10-06 14:35',
         p1:2450, p2:2490, p3:2440, bi_span:2, ts:Date.now()/1000, text:'甲醇 15分 背驰V反(多)：突破2490'});
-        upsertEvent({kind:'B', side:'short', pattern:'3SELL_CAND', fingerprint:'f2',
+        upsertEvent({ trigger_time:new Date().toISOString(), kind:'B', side:'short', pattern:'3SELL_CAND', fingerprint:'f2',
         symbol:'RB2701', name:'螺纹钢', period:'30m', price:310.0, time:'2026-10-06 14:20',
         p1:320, p2:315, p3:309, ratio:2.3, ts:Date.now()/1000, text:'螺纹钢 30分 三卖候选 310（幅度2.3×）'});
         renderStream() ''')
@@ -83,7 +83,7 @@ with sync_playwright() as p:
     # 同指纹再推（延续触发，端点变化）→ 原卡片原位更新，不新增；重触后置顶
     # （单次 evaluate 原子执行，避免 WS 消息插队影响断言）
     res = pg.evaluate('''() => {
-        upsertEvent({kind:'A', side:'long', pattern:'VREV_LONG', fingerprint:'f1',
+        upsertEvent({ trigger_time:new Date().toISOString(), kind:'A', side:'long', pattern:'VREV_LONG', fingerprint:'f1',
             symbol:'MA2611', name:'甲醇', period:'15', price:2510.0, time:'2026-10-06 14:40',
             p1:2450, p2:2490, p3:2440, bi_span:2, ts:Date.now()/1000, text:'甲醇 15分 背驰V反(多)：突破2490',
             first_time:'2026-10-06 14:35'});
@@ -119,7 +119,7 @@ with sync_playwright() as p:
                    pattern:'3SELL_CAND', price:310, time:'2026-10-06 14:20', p1:320, p2:315, p3:309, ts:1});
         applyCell({symbol:'SR2701', name:'白糖', period:'60', state:'watch_a', side:'long',
                    price:5612, time:'2026-10-06 13:58', p1:5580, p2:5630, p3:5560, ts:1});
-        upsertEvent({kind:'A', side:'long', fingerprint:'f_snap', symbol:'MA2611', name:'甲醇', period:'15', price:2500,
+        upsertEvent({ trigger_time:new Date().toISOString(), kind:'A', side:'long', fingerprint:'f_snap', symbol:'MA2611', name:'甲醇', period:'15', price:2500,
                   time:'2026-10-06 14:35', bi_span:2, ts:Date.now()/1000, text:'甲醇 15分 背驰V反(多)：突破2490',
                   brief:'突破 <b>2490</b> · A类候选（等回调确认二买）', state:'cand_a'});
     }''')

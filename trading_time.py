@@ -189,3 +189,60 @@ if __name__ == '__main__':
     ]
     for t in tests:
         print(f'  {t.strftime("%Y-%m-%d %H:%M %a")} -> trading={is_trading_time(t)}')
+
+
+# ==================== 品种级交易时段（trading_sessions.json，2026-10-08） ====================
+# 全局 SESSIONS 是所有品种的并集，无法回答"某一个品种此刻有没有行情"。
+# 无夜盘品种在夜盘时段里 15s 收不到数据是正常的，按连接死亡判定会引发无谓重建、
+# 拖垮整个扫描。品种级时间表由 trading_sessions.json 维护（品种代码，不含合约月份）。
+
+_PRODUCT_SESSIONS = None   # {品种代码: [(start_min, end_min)...]}，end 可 >1440（跨午夜夜盘）
+
+
+def _load_product_sessions():
+    """加载 trading_sessions.json（项目根目录）。加载失败返回空表=未收录（保守全时段）。"""
+    global _PRODUCT_SESSIONS
+    if _PRODUCT_SESSIONS is not None:
+        return _PRODUCT_SESSIONS
+    out = {}
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'trading_sessions.json')
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
+
+        def _m(x):
+            h, mi = str(x).split(':')
+            return int(h) * 60 + int(mi)
+
+        day = [(_m(a), _m(b)) for a, b in data.get('day', [])]
+        for prod, cfg in data.get('products', {}).items():
+            out[prod.upper()] = day + [(_m(a), _m(b)) for a, b in cfg.get('night', [])]
+    except Exception as e:
+        print(f'[trading_time] 品种交易时间表加载失败（所有品种按全时段处理）: {e}')
+    _PRODUCT_SESSIONS = out
+    return out
+
+
+def product_in_session(product, now=None):
+    """品种此刻是否正处于自己的交易时段。未收录品种保守返回 True（视为交易中）。"""
+    now = now or dt.datetime.now()
+    t = now.hour * 60 + now.minute
+    table = _load_product_sessions()
+    ivs = table.get(str(product).upper())
+    if ivs is None:
+        return True
+    for s, e in ivs:
+        if e > 1440:            # 跨午夜夜盘（如 21:00-25:00）
+            if t >= s or t < e - 1440:
+                return True
+        elif s <= t < e:
+            return True
+    return False
+
+
+def any_product_in_session(now=None):
+    """任一已收录品种仍在交易（用于连接重建判定的精准窗口）。表为空=保守 True。"""
+    table = _load_product_sessions()
+    if not table:
+        return True
+    return any(product_in_session(p, now) for p in table)

@@ -654,6 +654,16 @@ def pattern_snapshot(symbol, period, reported_keys=None, bi_conf=None):
     if df['datetime'].dt.tz is None:
         df['datetime'] = __import__('pandas').to_datetime(df['datetime'])
     df = df.dropna(subset=['open', 'high', 'low', 'close'])   # 数据源偶发 NaN K线，会污染笔端点（信号流出现 nan）
+    # 剔除未完结的最后一根K线（forming bar）：形态评估以"已完结K线"为准（用户定稿
+    # "K线结束的时候算它的高点是否突破关键价格"）。若不剔除，forming bar 会与前面的
+    # 完结K线合并成同一根合并K线，导致该合并K线永远处于"最后一根被排除"的状态，
+    # 本轮突破永远不会被评估（2026-10-08 液化气夜盘突破 09:00 卡片不更新事故）。
+    if len(df) > 1:
+        _pd = __import__('pandas')
+        _last = df['datetime'].iloc[-1]
+        _now = _pd.Timestamp.now(tz=_last.tz) if _last.tzinfo else _pd.Timestamp.now()
+        if (_now - _last).total_seconds() < period_sec:
+            df = df.iloc[:-1]
     merged = merge_klines(df)
     top_fx, bottom_fx = find_fenxing(merged)
     conf = dict(BI_CONF_DEFAULT)

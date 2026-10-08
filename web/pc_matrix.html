@@ -204,11 +204,12 @@ function cardEl(m){
   const sub=m.kind==='A'
     ?(m.snapshot?'观察中，破位即报警':('3→4跨 <b>'+(m.bi_span??'?')+'</b> 笔'))
     :('幅度 <b>'+(m.ratio??'?')+'</b>×');
-  const first=(m.first_time&&m.first_time!==m.time)?` <span class="mut" style="font-size:10px">首${fmtT(m.first_time)}</span>`:'';
+  // 主时间=触发时刻（端点K线完结）；延续更新的卡片额外显示首次成立时间
+  const first=(m.first_time&&m.first_time!==trigT(m))&&` <span class="mut" style="font-size:10px">首${fmtT(m.first_time)}</span>`||'';
   div.className='evt '+cls;
   div.dataset.fp=evKey(m);
   div.onclick=()=>location.href='/pc/detail?sym='+encodeURIComponent(m.symbol)+'&period='+encodeURIComponent(m.period||'15');
-  div.innerHTML=`<div class="r1"><span class="kind">${kind}</span><span>${m.time_str||fmtT(m.time||m.ts*1000)}${first}</span></div>
+  div.innerHTML=`<div class="r1"><span class="kind">${kind}</span><span>${fmtT(trigT(m))}${first}</span></div>
     <div class="r2">${m.name} <span class="mut" style="font-size:11px">${periodLabel(m.period)}</span>
       <span style="float:right;color:${long?'#ef5350':'#26a69a'}">${long?'▲多':'▼空'}</span></div>
     <div class="r3">${m.price??''}</div>
@@ -216,9 +217,12 @@ function cardEl(m){
   return div;
 }
 
+const trigT=m=>m.trigger_time||m.time||'';
+
 function renderStream(){
-  const list=TAB==='conf'?EVTS.filter(isConf):EVTS;
-  const view=list.slice(-CAP[TAB]).reverse();    // 最新在上
+  const list=(TAB==='conf'?EVTS.filter(isConf):EVTS)
+    .slice().sort((a,b)=>(trigT(b)>trigT(a)?1:trigT(b)<trigT(a)?-1:0));   // 按触发时刻降序
+  const view=list.slice(0,CAP[TAB]);
   const st=$('stream');st.innerHTML='';
   view.forEach(m=>st.appendChild(cardEl(m)));
   $('streamCap').textContent=`（${TAB==='all'?'候选+确认':'仅确认/触发'} ${view.length}/${CAP[TAB]} 条）`;

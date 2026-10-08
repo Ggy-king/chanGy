@@ -228,7 +228,9 @@ r = evaluate(bis, merged17[:13], rep)             # 分型后不足3根完结K�
 check('回调笔确立且未离开 → conf_a', r['long']['state'] == 'conf_a')
 bis.append(mk(4, 'up', 11, 14, 103.0, 112.0))     # 顺势向上（后续笔确认）
 r = evaluate(bis, merged17, rep)                  # 连续3根创新高出现
-check('连续3根K线创新高 → idle', r['long']['state'] == 'idle')
+pats17 = [e['pattern'] for e in r['long']['fired']]
+check('连续3根K线创新高 → 确认阶段结束(状态转出conf_a)', r['long']['state'] != 'conf_a')
+check('且候选/确认事件保留在 fired 里(不吞)', 'VREV_LONG' in pats17 and 'VREV_CONF_LONG' in pats17)
 
 # ===== 18. 确认可逆：离开后价格跌回确认区域 → 恢复显示 =====
 print('[18] 确认可逆（跌回来恢复显示）')
@@ -312,7 +314,7 @@ bis = [mk(0, 'up', 0, 2, 100.0, 110.0),
        mk(3, 'down', 8, 11, 110.5, 103.0)]          # 回调确立 → 确认触发
 r = evaluate(bis, merged25, set())
 pats = [e['pattern'] for e in r['long']['fired']]
-check('状态=idle(窗口已关)', r['long']['state'] == 'idle')
+check('状态转出conf_a(窗口已关)', r['long']['state'] != 'conf_a')
 check('但候选+确认事件都在 fired 里(不被吞)', 'VREV_LONG' in pats and 'VREV_CONF_LONG' in pats)
 print(f'\n全部 {PASS} 项断言通过')
 

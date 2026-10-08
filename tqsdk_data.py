@@ -210,7 +210,7 @@ class TqData:
         断线韧性（free-api 会周期性掐连接，~120s 一次）：
           - TqSdk 自带重连但退避越来越长（10s→20s→…→640s），被动等可能卡几分钟；
           - 所以交易时段内若等 15s 收不到任何数据（8个品种的订阅正常时秒级来数据），
-            判定连接死亡，主动 close+new 重建（新连接立即连上），限频 3 分钟一次。
+            判定连接死亡，主动 close+new 重建（新连接立即连上），限频 45s 一次。
         连续4次尝试失败则抛错，由前端5秒后自动重试。
 
         致命认证错误（TqAuthError）不重试，直接抛给上层。
@@ -230,13 +230,18 @@ class TqData:
                         self._klines[key] = api.get_kline_serial(tq_sym, period_sec, data_length=data_length)
                         api.wait_update(deadline=10)
                     else:
-                        # 已订阅：把网络里积累的更新收进来
+                        # 已订阅：该品种已收市（不在自己的交易时段）→ 直接回缓存
+                        # （不等待、不误判连接死亡、不触发重建）
+                        if self._market_idle(symbol):
+                            df = self._klines[key].copy()
+                            return self._to_df(df)
+                        # 把网络里积累的更新收进来
                         if not api.wait_update(deadline=3):
                             # 3秒没等到任何数据 → 可能处于断线窗口，再等15s骑过重连
                             if not api.wait_update(deadline=15) and self._can_recreate():
                                 # 交易时段内15s收不到任何数据：连接大概率已死（重连退避可达640s），
                                 # 主动重建连接立即恢复。close+new 会清空 _klines，下面重新订阅。
-                                print('[TqData] 连接疑似死亡（15s无任何数据），主动重建连接')
+                                print(f"[TqData] {time.strftime('%m-%d %H:%M:%S')} 连接疑似死亡（15s无任何数据），主动重建连接")
                                 self._create_api()
                                 api = self._api
                                 self._klines[key] = api.get_kline_serial(tq_sym, period_sec, data_length=data_length)
@@ -253,14 +258,36 @@ class TqData:
                     time.sleep(1 + attempt * 2)   # 1s/3s/5s
         raise RuntimeError(f'拉数据失败，已重试4次: {last_err}')
 
+    def _market_idle(self, symbol):
+        """该品种当前不在自己的交易时段（trading_sessions.json 品种级时间表）
+        → 此刻不可能有新数据，直接回缓存。未收录品种保守返回 False（维持原行为）。"""
+        try:
+            import trading_time
+            import re
+            prod = re.sub(r'[0-9]+', '', symbol).upper()
+            return not trading_time.product_in_session(prod)
+        except Exception:
+            return False
+
     def _can_recreate(self):
-        """交易时段内且距上次重建超过3分钟才允许重建（防止反复close+new抖动）。"""
+        """交易时段内且距上次重建超过45s才允许重建（防止反复close+new抖动）。
+
+        额外窗口限制（2026-10-08 夜盘首跑发现）：01:00-08:55 禁止重建——
+        我方 17 个品种里夜盘最晚的（沪镍）01:00 收市，此后所有订阅都无行情，
+        15s 无数据是**正常**的而非连接死亡（全局 SESSIONS 却到 02:35 才结束，
+        是所有品种的并集）；此时重建纯属误伤，还会引发 free-api 对频繁重连的
+        反向限流，形成死亡↔重建的恶性循环。"""
         try:
             import trading_time
             if not trading_time.is_trading_time():
                 return False
         except Exception:
             pass   # 判断失败时保守允许重建（限频仍生效）
+        try:
+            if not trading_time.any_product_in_session():
+                return False   # 所有已收录品种均已收市（全局时段表是并集，含空窗）
+        except Exception:
+            pass
         # 限频45s：实盘时段free-api约每2分钟掐一次线，tqsdk自身重连失败时
         # 靠主动重建兜底，最坏冻结=检测13s+限频等待+重建3s ≈ 1分钟内
         return time.time() - self._last_recreate > 45

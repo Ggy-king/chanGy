@@ -388,15 +388,22 @@ async def _apply_pattern(sym, name, period, result, push):
     now = time.time()
 
     # —— 1) fired 事件 → pattern_alert 消息（§5.3）——
+    _psec = engine._TQ_PERIOD.get(period, 900)
     for side in ('long', 'short'):
         for ev in result[side]['fired']:
             if _is_stale_structure(ev.get('time')):
                 continue   # 超过24h交易时长的历史事件不进推送区
+            # 触发时刻 = 端点K线的完结时刻（开始时刻+周期）——用户定稿：排序/展示
+            # 都用触发时刻，不用K线开始时刻（60分K线21:00开始→22:00才触发→标22:00）
+            try:
+                _trig = str(dt.datetime.fromisoformat(str(ev['time'])) + dt.timedelta(seconds=_psec))
+            except Exception:
+                _trig = str(ev.get('time') or '')
             msg = {'type': 'pattern_alert', 'pattern': ev['pattern'],
                    'kind': 'A' if ev['pattern'].startswith('VREV') else 'B',
                    'side': 'long' if 'LONG' in ev['pattern'] or 'BUY' in ev['pattern'] else 'short',
                    'symbol': sym, 'name': name, 'period': period,
-                   'price': ev['price'], 'time': ev['time'],
+                   'price': ev['price'], 'time': ev['time'], 'trigger_time': _trig,
                    'time_str': _fmt_time_str(ev['time']),
                    'p1': ev['p1'], 'p2': ev['p2'], 'p3': ev['p3'],
                    'bi_span': ev.get('bi_span'), 'ratio': ev.get('ratio'),
@@ -449,7 +456,8 @@ async def _push_startup_snapshot():
     if _snapshot_done:
         return
     _snapshot_done = True
-    _snapshot_msgs.sort(key=lambda m: str(m.get('time') or ''))   # 时间升序（前端新事件置顶）
+    # 按触发时刻升序（前端再按触发时刻排序展示，新事件置顶）
+    _snapshot_msgs.sort(key=lambda m: str(m.get('trigger_time') or m.get('time') or ''))
     for msg in _snapshot_msgs:
         _pattern_events.append(msg)
         manager.remember(msg)

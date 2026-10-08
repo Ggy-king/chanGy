@@ -386,15 +386,17 @@ def _effective_bis(bi_list, merged):
        （=用户说的"5根K线成笔的那一瞬间"，哪怕之后继续延伸 6、7、8 根）。
     都不满足 → 原列表原样返回。
 
-    极值只取【已完结K线】（最后一根是天勤返回的进行中K线，排除）——用户定稿：
-    "K线结束的时候，再去算这根K线的高点是否有突破关键价格"。K线走完的下一轮
-    扫描（≤30s）自然计入，既不失时也不吃盘中毛刺。"""
+    极值只取【已完结K线】——forming bar（未完结的原始K线）已在数据源头
+    （engine.pattern_snapshot）剔除，这里不再排除最后一根合并K线（它可能同时
+    包含完结与未完结的原始K线，整根排除会漏掉已完结部分的突破）。
+    用户定稿："K线结束的时候，再去算这根K线的高点是否有突破关键价格"。
+    K线走完的下一轮扫描（≤30s）自然计入，既不失时也不吃盘中毛刺。"""
     from chanlun.bi import MIN_BI_SPAN
     if not bi_list or len(merged) == 0:
         return bi_list
     last = bi_list[-1]
     si, sp = int(last['end_idx']), float(last['end_price'])
-    seg = merged.iloc[si + 1: len(merged) - 1]   # 排除进行中K线（最后一根）
+    seg = merged.iloc[si + 1:]
     if seg.empty:
         return bi_list
     base = si + 1
