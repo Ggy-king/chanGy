@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 缠论多品种预警 · 本地双向服务
 - 一个端口(8000)：
@@ -75,6 +75,15 @@ class Manager:
         self.history.append(msg)
         if len(self.history) > HISTORY_KEEP:
             self.history = self.history[-HISTORY_KEEP:]
+
+    def remember_replace(self, msg):
+        """同指纹的历史卡片原位更新（事件流延续触发时，保持首次推送时间不变）。"""
+        fp = msg.get('fingerprint')
+        for i, old in enumerate(self.history):
+            if old.get('fingerprint') == fp:
+                self.history[i] = msg
+                return
+        self.remember(msg)
 
     async def connect(self, ws, role):
         await ws.accept()
@@ -174,7 +183,7 @@ _PATTERN_LABEL = {'30': '30秒', '1': '1分', '3': '3分', '5': '5分', '15': '1
 _CELL_RANK = {'conf_a': 5, 'trig_b': 4, 'cand_a': 3, 'cand_b': 2, 'watch_a': 1, 'gone_b': 0, 'idle': 0}
 _pattern_cells = {}      # (symbol, period) -> cell dict（矩阵页全量状态）
 _pattern_reported = {}   # (symbol, period) -> set(结构指纹)，进程内去重
-_pattern_events = deque(maxlen=20)  # 矩阵页底部实时事件流（卡片式，20条）
+_pattern_events = deque(maxlen=100)  # 事件流全部历史（客户端按页签裁：全部30/确认20）
 _pattern_ready = False   # 首轮静默：只建基线不推送（§5.2）
 _snapshot_done = False   # 启动机会快照只推一次
 _snapshot_msgs = []      # 静默基线扫描期间收集的新鲜事件（快照用）
@@ -320,8 +329,9 @@ def _is_stale_structure(time_str):
 
 def _pick_active(result):
     """从多空两侧评估结果里挑矩阵格子该显示的状态（优先级 > 时间新）。
-    格子=实时状态：观察/候选/确认（A）与候选/触发（B）都是真实阶段。
-    确认/触发的效力只有 24h 交易时长（_is_stale_structure），过期的历史确认不上格子。"""
+    格子=实时状态：观察/候选/确认（A）与候选/触发（B）都是真实阶段，无任何时间过滤
+    （阶段终止只由状态机规则决定：破背驰点作废/离开确认分型区域/结构重建）。
+    _is_stale_structure 仅用于推送区/事件流（§5.5），不要在这里调用。"""
     best = None
     for side in ('long', 'short'):
         st = result[side]
@@ -351,6 +361,27 @@ def _pick_active(result):
     return best[1] if best else None
 
 
+async def _upsert_event_card(msg):
+    """事件卡片：同指纹已存在 → 原位更新（保留首次时间，时间线刷新，广播 update 类型）；
+    不存在 → 新建。端点没变化不广播（进行中笔每轮重评会重复产出同一事件）。
+    用户定稿 2026-10-08：候选/确认无优先级、纯时间序；延续触发只更新卡片不另开新卡。"""
+    fp = msg.get('fingerprint')
+    for i, old in enumerate(_pattern_events):
+        if old.get('fingerprint') == fp:
+            if old.get('time') == msg.get('time') and old.get('price') == msg.get('price'):
+                return                     # 端点没变，无需更新
+            msg['first_time'] = old.get('first_time') or old.get('time')
+            msg['type'] = 'pattern_alert_update'
+            _pattern_events[i] = msg
+            manager.remember_replace(msg)
+            await manager.broadcast(msg)
+            return
+    msg['first_time'] = msg.get('time')
+    _pattern_events.append(msg)
+    manager.remember(msg)
+    await manager.broadcast(msg)
+
+
 async def _apply_pattern(sym, name, period, result, push):
     key = (sym, period)
     old = _pattern_cells.get(key)
@@ -363,18 +394,17 @@ async def _apply_pattern(sym, name, period, result, push):
                 continue   # 超过24h交易时长的历史事件不进推送区
             msg = {'type': 'pattern_alert', 'pattern': ev['pattern'],
                    'kind': 'A' if ev['pattern'].startswith('VREV') else 'B',
-                   'side': 'long' if ev['pattern'].endswith('_LONG') or ev['pattern'].endswith('BUY') else 'short',
+                   'side': 'long' if 'LONG' in ev['pattern'] or 'BUY' in ev['pattern'] else 'short',
                    'symbol': sym, 'name': name, 'period': period,
                    'price': ev['price'], 'time': ev['time'],
                    'time_str': _fmt_time_str(ev['time']),
                    'p1': ev['p1'], 'p2': ev['p2'], 'p3': ev['p3'],
                    'bi_span': ev.get('bi_span'), 'ratio': ev.get('ratio'),
                    'brief': _pattern_brief(ev['pattern'], ev),
+                   'fingerprint': ev['fingerprint'],
                    'text': _pattern_text(name, period, ev), 'ts': time.time()}
             if push:
-                _pattern_events.append(msg)
-                manager.remember(msg)
-                await manager.broadcast(msg)
+                await _upsert_event_card(msg)
             else:
                 _snapshot_msgs.append(msg)   # 基线期收集，首轮扫描完成后由快照统一推送
 
@@ -413,16 +443,13 @@ def _fade_pattern_cells():
 
 
 async def _push_startup_snapshot():
-    """静默基线扫描收集到的新鲜事件（候选+确认，均已在24h交易时长内）统一推送到事件流。
-    确认类优先、类内时间升序——保证确认不被候选挤出 20 条窗口。"""
+    """静默基线扫描收集到的新鲜事件（候选+确认，均已在24h交易时长内）按时间升序统一推送。
+    不做候选/确认取舍——事件流全量入 deque(100)，矩阵页按页签裁剪（全部30/确认20）。"""
     global _snapshot_done, _snapshot_msgs
     if _snapshot_done:
         return
     _snapshot_done = True
-    _snapshot_msgs.sort(key=lambda m: (0 if 'CONF' in m['pattern'] or m['pattern'].endswith('TRIG') else 1,
-                                       str(m.get('time') or '')))
-    # 确认类优先入选 20 条窗口（假期积压确认过多时，最新的确认保留、候选让位）
-    _snapshot_msgs = _snapshot_msgs[-_pattern_events.maxlen:]
+    _snapshot_msgs.sort(key=lambda m: str(m.get('time') or ''))   # 时间升序（前端新事件置顶）
     for msg in _snapshot_msgs:
         _pattern_events.append(msg)
         manager.remember(msg)
@@ -447,6 +474,13 @@ async def pattern_loop():
     while True:
         try:
             if trading_time.is_trading_time():
+                if not _pattern_ready:
+                    # 启动基线：全级别立即扫一遍（否则 60 分级别要等下一个整点，矩阵空窗太长），
+                    # 之后进入挂钟对齐节奏；基线静默不推送
+                    await _pattern_scan_once(False)
+                    _pattern_ready = True
+                    await _push_startup_snapshot()
+                    print(f'[pattern_loop] {dt.datetime.now():%H:%M} 启动基线扫描完成，进入挂钟对齐节奏')
                 now = dt.datetime.now()
                 mod = now.hour * 60 + now.minute
                 due = []
@@ -456,10 +490,7 @@ async def pattern_loop():
                         _last_scan_minute[period] = mod
                         due.append(period)
                 if due:
-                    push = _pattern_ready
-                    await _pattern_scan_once(push, periods=due)
-                    _pattern_ready = True   # 首轮成功后才开始推送（启动静默建基线）
-                    await _push_startup_snapshot()
+                    await _pattern_scan_once(True, periods=due)
                 await asyncio.sleep(30)
             else:
                 # 节假日/非交易时段：启动后只拉一遍基线（矩阵有数据可看），之后零拉取
@@ -532,12 +563,14 @@ async def page_pc_matrix():
 
 @app.get('/api/pattern_matrix')
 async def api_pattern_matrix():
-    """矩阵页全量状态：cells + 事件流 + 行列定义（行列由 config 驱动，改 config 页面零改动）。"""
+    """矩阵页全量状态：cells + 事件流 + 行列定义（行列由 config 驱动，改 config 页面零改动）。
+    ready=启动基线+快照推送是否已完成（测试/前端可据此等待流稳定）。"""
     return JSONResponse({
         'cells': list(_pattern_cells.values()),
         'events': list(_pattern_events),
         'periods': list(reversed(config.PATTERN_PERIODS)),   # 倒序：日线在最上（加上后）
         'contracts': config.CONTRACTS,
+        'ready': _snapshot_done,
         'ts': time.time(),
     })
 

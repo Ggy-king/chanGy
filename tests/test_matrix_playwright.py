@@ -62,19 +62,40 @@ with sync_playwright() as p:
     assert 'trig_b' in cls and '触发' in txt, (cls, txt)
     print('ok - mock B类触发格子(实时状态)')
 
-    # ===== 3. mock pattern_alert → 事件流插入 =====
-    before = pg.evaluate('document.querySelectorAll("#stream .evt").length')
-    pg.evaluate('''() => addEvent({kind:'A', side:'long', pattern:'VREV_LONG',
+    # ===== 3. mock pattern_alert → 事件流插入（页签/卡片更新制） =====
+    # 先等服务端基线+快照推送完成（ready 标志），再重载页面拿到稳定的事件流
+    pg.wait_for_function('''async () => {
+        const r = await fetch('/api/pattern_matrix'); return (await r.json()).ready === true;
+    }''', timeout=300000)
+    pg.goto(f'{BASE}/pc/matrix', wait_until='domcontentloaded')
+    pg.wait_for_function('document.getElementById("connTx").textContent==="已连接"', timeout=8000)
+    pg.wait_for_timeout(800)                    # 等 WS init 历史重放完毕
+    pg.evaluate('''() => upsertEvent({kind:'A', side:'long', pattern:'VREV_LONG', fingerprint:'f1',
         symbol:'MA2611', name:'甲醇', period:'15', price:2500.0, time:'2026-10-06 14:35',
-        p1:2450, p2:2490, p3:2440, bi_span:2, ts:Date.now()/1000, text:'甲醇 15分 背驰V反(多)：突破2490'}) ''')
-    pg.evaluate('''() => addEvent({kind:'B', side:'short', pattern:'3SELL_CAND',
+        p1:2450, p2:2490, p3:2440, bi_span:2, ts:Date.now()/1000, text:'甲醇 15分 背驰V反(多)：突破2490'});
+        upsertEvent({kind:'B', side:'short', pattern:'3SELL_CAND', fingerprint:'f2',
         symbol:'RB2701', name:'螺纹钢', period:'30m', price:310.0, time:'2026-10-06 14:20',
-        p1:320, p2:315, p3:309, ratio:2.3, ts:Date.now()/1000, text:'螺纹钢 30分 三卖候选 310（幅度2.3×）'}) ''')
-    after = pg.evaluate('document.querySelectorAll("#stream .evt").length')
-    assert after <= 50, f'事件流超过50条: {after}'
-    first_txt = pg.evaluate('document.querySelector("#stream .evt").textContent')
-    assert 'B类' in first_txt and '螺纹钢' in first_txt, first_txt   # 后插入的新事件在上
-    print('ok - 事件流插入且新事件置顶(总量封顶20):', first_txt[:60])
+        p1:320, p2:315, p3:309, ratio:2.3, ts:Date.now()/1000, text:'螺纹钢 30分 三卖候选 310（幅度2.3×）'});
+        renderStream() ''')
+    pg.wait_for_timeout(1200)                   # 让在途的快照推送先落地
+    n_all = pg.evaluate('document.querySelectorAll("#stream .evt").length')
+    assert n_all <= 30, f'默认页签超过30条: {n_all}'
+    # 同指纹再推（延续触发，端点变化）→ 原卡片原位更新，不新增；重触后置顶
+    # （单次 evaluate 原子执行，避免 WS 消息插队影响断言）
+    res = pg.evaluate('''() => {
+        upsertEvent({kind:'A', side:'long', pattern:'VREV_LONG', fingerprint:'f1',
+            symbol:'MA2611', name:'甲醇', period:'15', price:2510.0, time:'2026-10-06 14:40',
+            p1:2450, p2:2490, p3:2440, bi_span:2, ts:Date.now()/1000, text:'甲醇 15分 背驰V反(多)：突破2490',
+            first_time:'2026-10-06 14:35'});
+        renderStream();
+        const fps=[...document.querySelectorAll('#stream .evt')].map(e=>e.dataset.fp);
+        return {f1:fps.filter(x=>x==='f1').length, first:fps[0],
+                firstTxt:document.querySelector('#stream .evt').textContent};
+    }''')
+    assert res['f1'] == 1, f'同指纹卡片应只有1张: {res}'
+    assert res['first'] == 'f1', f'更新后的卡片应置顶: {res}'
+    assert '甲醇' in res['firstTxt'] and '2510' in res['firstTxt'], res['firstTxt']
+    print('ok - 事件流插入+同指纹原卡片更新置顶(不另开新卡):', res['firstTxt'][:40])
 
     # ===== 4. 格子点击跳详情页 =====
     href = pg.evaluate('''() => { const a = '/pc/detail?sym=MA2611&period=15';
@@ -98,7 +119,7 @@ with sync_playwright() as p:
                    pattern:'3SELL_CAND', price:310, time:'2026-10-06 14:20', p1:320, p2:315, p3:309, ts:1});
         applyCell({symbol:'SR2701', name:'白糖', period:'60', state:'watch_a', side:'long',
                    price:5612, time:'2026-10-06 13:58', p1:5580, p2:5630, p3:5560, ts:1});
-        addEvent({kind:'A', side:'long', symbol:'MA2611', name:'甲醇', period:'15', price:2500,
+        upsertEvent({kind:'A', side:'long', fingerprint:'f_snap', symbol:'MA2611', name:'甲醇', period:'15', price:2500,
                   time:'2026-10-06 14:35', bi_span:2, ts:Date.now()/1000, text:'甲醇 15分 背驰V反(多)：突破2490',
                   brief:'突破 <b>2490</b> · A类候选（等回调确认二买）', state:'cand_a'});
     }''')

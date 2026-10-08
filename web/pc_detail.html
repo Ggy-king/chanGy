@@ -161,7 +161,7 @@
 <body>
 <header>
   <div class="head-group left">
-    <a href="javascript:history.back()">‹ 返回</a>
+    <a href="javascript:goBack()">‹ 返回</a>
     <div class="name-block">
       <div class="nm"><span id="nm">加载中</span><span class="upd" id="nameUpd"></span></div>
       <div class="cd" id="cd"></div>
@@ -408,6 +408,19 @@
 const $=id=>document.getElementById(id);
 const params=new URLSearchParams(location.search);
 const SYM=params.get('sym')||'MA2610';
+// 返回目标：进入详情页时若来源不是详情页（=从列表/监控页进来），记住入口；
+// 之后上下箭头切品种产生的详情页历史全部跳过，返回一键直达入口页
+(function(){
+  const ref=document.referrer||'';
+  if(!ref.includes('/pc/detail')){
+    try{ sessionStorage.setItem('detail_exit', ref.startsWith(location.origin)?ref:'/pc'); }catch(e){}
+  }
+})();
+function goBack(){
+  let exit='/pc';
+  try{ exit=sessionStorage.getItem('detail_exit')||'/pc'; }catch(e){}
+  location.href=exit;
+}
 let SYM_NAME=SYM; // 数据加载完成后会更新为真实品种名（右键加预警时用作 alert.name）
 const PERIOD_LABEL={'30':'30秒','1':'1分','3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分','daily':'日线'};
 let _savedPeriod=null; try{_savedPeriod=localStorage.getItem('cl_chart_period');}catch(e){}

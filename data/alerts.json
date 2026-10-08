@@ -1,1 +1,13 @@
-[]
+[
+  {
+    "id": "1791427541601",
+    "symbol": "SP2611",
+    "name": "纸浆",
+    "price": 4798.0,
+    "direction": "down",
+    "created_at": "2026-10-08 10:45:41",
+    "triggered": true,
+    "triggered_at": "2026-10-08 11:02:27",
+    "triggered_price": 4798.0
+  }
+]

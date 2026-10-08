@@ -120,9 +120,10 @@ function addSignal(s){
   d.onclick=()=>location.href='/m/detail'+q;
   $('feed').prepend(d);
 }
+let _booted=false;   // init 历史重放期间不响铃，只有实时消息才响
 function addPatternAlert(m){
   if(!m.symbol)return;
-  clearFirst();alertBeep();
+  clearFirst();if(_booted)alertBeep();
   const long=(m.side||'long')==='long';
   const pLabel=({daily:'日线','30':'30秒','30m':'30分'})[m.period]||m.period+'分';
   const d=document.createElement('div');
@@ -152,7 +153,7 @@ function alertBeep(){
   }catch(e){}
 }
 function addPriceAlert(a){
-  clearFirst();alertBeep();
+  clearFirst();if(_booted)alertBeep();
   const isUp=a.direction==='up';
   const d=document.createElement('div');
   d.className='sig alert '+(isUp?'up':'down');
@@ -182,7 +183,7 @@ function connect(){
   ws.onmessage=e=>{
     const m=JSON.parse(e.data);
     if(m.type==='init'){renderDevices(m.devices);(m.history||[]).forEach(x=>{
-        if(x.type==='signal')addSignal(x);else if(x.type==='price_alert')addPriceAlert(x);else if(x.type==='chat')addChat(x);else if(x.type==='pattern_alert')addPatternAlert(x);});}
+        if(x.type==='signal')addSignal(x);else if(x.type==='price_alert')addPriceAlert(x);else if(x.type==='chat')addChat(x);else if(x.type==='pattern_alert')addPatternAlert(x);});_booted=true;}
     else if(m.type==='devices'){renderDevices(m.devices);}
     else if(m.type==='signal'){addSignal(m);}
     else if(m.type==='pattern_alert'){addPatternAlert(m);}

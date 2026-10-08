@@ -18,6 +18,8 @@
   .btn{border:1px solid #2a2e39;background:#2a2e39;color:#d1d4dc;border-radius:8px;padding:6px 12px;font-size:12.5px;cursor:pointer;}
   .btn:hover{filter:brightness(1.2);}
   .btn.off{color:#787b86;}
+  .btn.tab{padding:2px 10px;font-size:11.5px;margin-left:8px;border-radius:6px;}
+  .btn.tab.on{background:#f0b90b;color:#131722;border-color:#f0b90b;font-weight:700;}
   main{flex:1;display:flex;flex-direction:column;padding:12px 22px;gap:12px;overflow:hidden;}
   /* ===== 矩阵 ===== */
   #matrixWrap{flex:none;overflow:auto;background:#1e222d;border:1px solid #2a2e39;border-radius:12px;padding:10px;}
@@ -71,6 +73,7 @@
 </head>
 <body>
 <header>
+  <a href="/pc" class="btn" style="text-decoration:none;">‹ 返回</a>
   <h1>形态<span>监控矩阵</span></h1>
   <div class="conn"><span class="dot" id="dot"></span><span id="connTx">连接中…</span></div>
   <div class="sp"></div>
@@ -92,7 +95,11 @@
     <span class="mut" style="margin-left:auto;">点击格子进详情页 · 确认/触发 24h 自动淡化</span>
   </div>
   <div id="streamWrap">
-    <div class="ph">实时事件流（最近 20 条）</div>
+    <div class="ph">实时事件流
+      <button class="btn tab on" id="tabAll" onclick="setTab('all')">全部</button>
+      <button class="btn tab" id="tabConf" onclick="setTab('conf')">确认</button>
+      <span class="mut" style="font-weight:400;font-size:11px;margin-left:6px" id="streamCap"></span>
+    </div>
     <div id="stream"></div>
   </div>
 </main>
@@ -155,10 +162,38 @@ function applyCell(cell){
 function go(sym,period){location.href='/pc/detail?sym='+sym+'&period='+period;}
 function cellClick(sym,period){go(sym,period);}
 
-/* ---------- 事件流 ---------- */
-function addEvent(m){
+/* ---------- 事件流（用户定稿 2026-10-08：候选/确认无优先级纯时间序；
+   「全部」30 条、「确认」20 条两个页签；延续触发原卡片更新，保留首次时间） ---------- */
+let EVTS=[];          // 事件仓库（旧→新）
+let TAB='all';
+const CAP={all:30,conf:20};
+const isConf=m=>(m.pattern||'').includes('CONF')||(m.pattern||'').includes('TRIG');
+const evKey=m=>m.fingerprint||('k_'+m.pattern+m.symbol+m.period+m.time);
+
+function setTab(t){
+  TAB=t;
+  $('tabAll').classList.toggle('on',t==='all');
+  $('tabConf').classList.toggle('on',t==='conf');
+  renderStream();
+}
+
+function upsertEvent(m){
+  const k=evKey(m);
+  const i=EVTS.findIndex(x=>evKey(x)===k);
+  if(i>=0){
+    m.first_time=(EVTS[i].first_time||EVTS[i].time);   // 保留首次时间
+    if(EVTS[i].time===m.time&&EVTS[i].price===m.price){EVTS[i]=m;return false;}  // 无变化
+    EVTS[i]=m;
+  }else{
+    m.first_time=m.first_time||m.time;
+    EVTS.push(m);
+    if(EVTS.length>200)EVTS=EVTS.slice(-200);
+  }
+  return true;
+}
+
+function cardEl(m){
   const div=document.createElement('div');
-  const bPat=m.pattern||'';
   const long=(m.side||'long')==='long';
   const cls=m.kind==='A'?('A '+m.side):('B '+m.side);
   const kind=m.snapshot
@@ -169,15 +204,24 @@ function addEvent(m){
   const sub=m.kind==='A'
     ?(m.snapshot?'观察中，破位即报警':('3→4跨 <b>'+(m.bi_span??'?')+'</b> 笔'))
     :('幅度 <b>'+(m.ratio??'?')+'</b>×');
+  const first=(m.first_time&&m.first_time!==m.time)?` <span class="mut" style="font-size:10px">首${fmtT(m.first_time)}</span>`:'';
   div.className='evt '+cls;
+  div.dataset.fp=evKey(m);
   div.onclick=()=>location.href='/pc/detail?sym='+encodeURIComponent(m.symbol)+'&period='+encodeURIComponent(m.period||'15');
-  div.innerHTML=`<div class="r1"><span class="kind">${kind}</span><span>${m.time_str||fmtT(m.time||m.ts*1000)}</span></div>
+  div.innerHTML=`<div class="r1"><span class="kind">${kind}</span><span>${m.time_str||fmtT(m.time||m.ts*1000)}${first}</span></div>
     <div class="r2">${m.name} <span class="mut" style="font-size:11px">${periodLabel(m.period)}</span>
       <span style="float:right;color:${long?'#ef5350':'#26a69a'}">${long?'▲多':'▼空'}</span></div>
     <div class="r3">${m.price??''}</div>
     <div class="r4">${m.brief||sub}</div>`;
-  $('stream').prepend(div);
-  while($('stream').children.length>20)$('stream').lastChild.remove();
+  return div;
+}
+
+function renderStream(){
+  const list=TAB==='conf'?EVTS.filter(isConf):EVTS;
+  const view=list.slice(-CAP[TAB]).reverse();    // 最新在上
+  const st=$('stream');st.innerHTML='';
+  view.forEach(m=>st.appendChild(cardEl(m)));
+  $('streamCap').textContent=`（${TAB==='all'?'候选+确认':'仅确认/触发'} ${view.length}/${CAP[TAB]} 条）`;
 }
 
 /* ---------- 提醒：提示音 + 标题闪烁 + 系统通知 ---------- */
@@ -226,11 +270,13 @@ function connect(){
   ws.onmessage=e=>{
     let m;try{m=JSON.parse(e.data);}catch(_){return;}
     if(m.type==='init'){
-      (m.history||[]).forEach(x=>{if(x.type==='pattern_alert')addEvent(x);});
+      (m.history||[]).forEach(x=>{if(x.type==='pattern_alert')upsertEvent(x);});
+      renderStream();
     }else if(m.type==='pattern_alert'){
-      addEvent(m);beep();
-      flashTitle(m.text);
-      notify(m);
+      const changed=upsertEvent(m);renderStream();
+      if(changed&&m.first!==false){beep();flashTitle(m.text);notify(m);}   // 延续更新不响铃
+    }else if(m.type==='pattern_alert_update'){
+      upsertEvent(m);renderStream();     // 延续触发：原卡片刷新，不响铃
     }else if(m.type==='pattern_state'){
       applyCell(m.cell);
     }
@@ -255,7 +301,8 @@ function syncBiConf(){
   PERIODS=d.periods||[];CONTRACTS=d.contracts||[];
   (d.cells||[]).forEach(c=>{CELLS[c.symbol+'|'+c.period]=c;});
   render();
-  (d.events||[]).forEach(addEvent);   // 列表本身旧→新，逐条 prepend 后即新在上
+  (d.events||[]).forEach(upsertEvent);   // 旧→新入库，renderStream 新在上
+  renderStream();
   connect();
   // 从详情页返回（bfcache）或切回标签页时，重新同步笔配置（有变化服务端会静默重扫+刷新矩阵）
   window.addEventListener('pageshow',syncBiConf);
