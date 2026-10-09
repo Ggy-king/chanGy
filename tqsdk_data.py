@@ -151,6 +151,7 @@ class TqData:
                     inst._klines = {}
                     inst._auth_failed = False   # 一旦认证失败置位，所有路径停止重试
                     inst._last_recreate = 0.0    # 上次主动重建连接的时间（限频用）
+                    inst._hist_ok = {}           # (symbol,period) -> 订阅历史块是否完整
                     cls._instance = inst
         return cls._instance
 
@@ -204,7 +205,7 @@ class TqData:
         assert self._api is not None, '_create_api 后 _api 必非 None'
         return self._api
 
-    def get_kline(self, symbol, period_sec, data_length=2000):
+    def get_kline(self, symbol, period_sec, data_length=2000, force=False):
         """获取K线。
 
         断线韧性（free-api 会周期性掐连接，~120s 一次）：
@@ -226,9 +227,10 @@ class TqData:
                 api = self._ensure_api()
                 with self._api_lock:
                     if key not in self._klines:
-                        # 新订阅：等首推
+                        # 新订阅：循环等历史块真正落地（单次固定 deadline 会被其他
+                        # 订阅的 tick 抢先唤醒，历史大包没到就返回 → 图表只剩几根）
                         self._klines[key] = api.get_kline_serial(tq_sym, period_sec, data_length=data_length)
-                        api.wait_update(deadline=10)
+                        self._hist_ok[key] = self._wait_history(api, key, tq_sym, period_sec, data_length)
                     else:
                         # 已订阅：该品种已收市（不在自己的交易时段）→ 直接回缓存
                         # （不等待、不误判连接死亡、不触发重建）
@@ -245,7 +247,26 @@ class TqData:
                                 self._create_api()
                                 api = self._api
                                 self._klines[key] = api.get_kline_serial(tq_sym, period_sec, data_length=data_length)
-                                api.wait_update(deadline=10)
+                                self._hist_ok[key] = self._wait_history(api, key, tq_sym, period_sec, data_length)
+                    # 历史完整性校验：free-api 长连接上订阅时历史块偶发丢失（丢了不补），
+                    # serial 里只剩 live/forming 几根，_to_df 滤掉 NaN 后图表只剩一根
+                    # （30秒级每次打开页面都是新订阅，最容易中招，2026-10-09）。
+                    # 探测到缺失 → 重建连接重订（受 45s 限频；本轮探测失败先回旧数据，
+                    # 下轮拉取自动再试，自愈）。
+                    _filled = int(self._klines[key]['open'].notna().sum())
+                    _suspect = not self._hist_ok.get(key, True)
+                    if (_filled < 50 or _suspect) and data_length >= 200 and self._can_recreate(force):
+                        # 同一轮内最多重试 2 次重建（连接刚重建时历史块下载容易再失败，
+                        # 多试一次显著提高落地率——2026-10-09 白糖30秒实测）
+                        for _try in range(2):
+                            print(f"[TqData] {time.strftime('%m-%d %H:%M:%S')} {tq_sym} {period_sec}s 历史块缺失（仅{_filled}根，force={force}，第{_try+1}次重建）")
+                            self._create_api()
+                            api = self._api
+                            self._klines[key] = api.get_kline_serial(tq_sym, period_sec, data_length=data_length)
+                            self._hist_ok[key] = self._wait_history(api, key, tq_sym, period_sec, data_length)
+                            _filled = int(self._klines[key]['open'].notna().sum())
+                            if _filled >= target_ok(data_length):
+                                break
                     df = self._klines[key].copy()
                 return self._to_df(df)
             except TqAuthError:
@@ -269,8 +290,30 @@ class TqData:
         except Exception:
             return False
 
-    def _can_recreate(self):
-        """交易时段内且距上次重建超过45s才允许重建（防止反复close+new抖动）。
+    def _wait_history(self, api, key, tq_sym, period_sec, data_length, max_wait=15):
+        """订阅后循环等历史块真正落地，返回 True=历史完整 / False=可疑（不完整）。\n\n        长连接上其他订阅的 tick 会持续唤醒 wait_update——固定 deadline 的单次等待\n        会在历史大包到达前就返回，serial 里只剩 live 几根（30秒级新订阅只剩1-2根\n        的根因）。循环处理事件直到：有效根数过半（正常）、或连续多次无增长\n        （品种历史本来就短，次新合约等）。"""
+        deadline = time.time() + max_wait
+        target = _target_ok(data_length)
+        last, stable = -1, 0
+        while time.time() < deadline:
+            api.wait_update(deadline=1)
+            serial = self._klines.get(key)
+            filled = int(serial['open'].notna().sum()) if serial is not None else 0
+            if filled >= target:
+                return True
+            if filled == last:
+                stable += 1
+                if stable >= 3 and filled > 0:
+                    return filled >= target   # 已稳定：历史就这么多（次新合约等）
+            else:
+                stable = 0
+            last = filled
+        serial = self._klines.get(key)
+        filled = int(serial['open'].notna().sum()) if serial is not None else 0
+        return filled >= target
+
+    def _can_recreate(self, force=False):
+        """交易时段内且距上次重建超过45s才允许重建（防止反复close+new抖动）。\n        force=True（用户手动 ⟳ 强制刷新）跳过 45s 限频，时段校验保留。
 
         额外窗口限制（2026-10-08 夜盘首跑发现）：01:00-08:55 禁止重建——
         我方 17 个品种里夜盘最晚的（沪镍）01:00 收市，此后所有订阅都无行情，
@@ -290,6 +333,8 @@ class TqData:
             pass
         # 限频45s：实盘时段free-api约每2分钟掐一次线，tqsdk自身重连失败时
         # 靠主动重建兜底，最坏冻结=检测13s+限频等待+重建3s ≈ 1分钟内
+        if force:
+            return True
         return time.time() - self._last_recreate > 45
 
     @staticmethod
@@ -312,8 +357,12 @@ class TqData:
 
 
 # 便捷函数
-def fetch_kline(symbol, period_sec, data_length=2000):
-    return TqData().get_kline(symbol, period_sec, data_length)
+def _target_ok(data_length):
+    return max(data_length // 2, 100)
+
+
+def fetch_kline(symbol, period_sec, data_length=2000, force=False):
+    return TqData().get_kline(symbol, period_sec, data_length, force=force)
 
 
 if __name__ == '__main__':

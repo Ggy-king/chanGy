@@ -851,7 +851,7 @@ async function loadPeriod(period, isRefresh, onlyBi){
       if(_cacheLoading[period]) return;
     }
     _cacheLoading[period]=true;
-    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery()+zsQuery());
+    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery()+zsQuery()+(isRefresh?'&force=1':''));
     const s=await r.json();
     _cacheLoading[period]=false;
     if(s.error){

@@ -642,7 +642,8 @@ async def api_backtest(sym: str = 'ALL', months: int = 1):
 async def api_live(sym: str, period: str = '15', subpeak: str = '1',
                    algo: str = 'normal', strict: str = '1', fxcheck: str = 'strict',
                    endpeak: str = '1', gap: str = '0',
-                   zsextend: str = '1', zsmerge: str = '0', zsfirst: str = '0'):
+                   zsextend: str = '1', zsmerge: str = '0', zsfirst: str = '0',
+                   force: str = '0'):
     """看盘模式：指定周期K线+笔，独立于15分钟预警缓存。
     六个笔开关对应 chan.py CBiConfig，默认值=原版默认：
     algo(normal/fx) strict(1/0) fxcheck(loss/half/strict/totally)
@@ -669,7 +670,7 @@ async def api_live(sym: str, period: str = '15', subpeak: str = '1',
         'zs_first_bi': zsfirst == '1',
     }
     try:
-        return JSONResponse(engine.get_live(sym, period, bi_conf=bi_conf, zs_conf=zs_conf))
+        return JSONResponse(engine.get_live(sym, period, bi_conf=bi_conf, zs_conf=zs_conf, force=force == '1'))
     except Exception as e:
         return JSONResponse({'symbol': sym, 'error': str(e)[:120]}, status_code=200)
 @app.get('/api/trading_status')

@@ -605,14 +605,14 @@ def get_quotes():
 # ==================== 看盘模式（多周期，独立于15分钟预警） ====================
 
 
-def get_live(symbol, period='15', bi_conf=None, zs_conf=None):
+def get_live(symbol, period='15', bi_conf=None, zs_conf=None, force=False):
     """看盘模式：拉指定周期K线（天勤数据源），算合并/分型/笔，返回精简快照。
     period: '30','1','3','5','15','30m','60','daily'。全部用天勤原生接口，无需合成。
     bi_conf: 笔构建配置（六开关，见 BI_CONF_DEFAULT），不传=原版默认。
     完全独立，不写入 _cache_detail，不影响15分钟预警与回测。"""
     name = config.CONTRACT_MAP[symbol]['name']
     period_sec = _TQ_PERIOD.get(period, 900)
-    df = tq.fetch_kline(symbol, period_sec, data_length=2000)
+    df = tq.fetch_kline(symbol, period_sec, data_length=2000, force=force)
     if df is None or len(df) == 0:
         raise RuntimeError(f'empty {period} data')
     snap = _build(df, symbol, name, bi_conf=bi_conf, zs_conf=zs_conf)
