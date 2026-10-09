@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>缠论预警</title>
+<style>
+  :root{
+    --app:#0E1219; --card:#161C26; --card2:#1A212D;
+    --line:rgba(255,255,255,.07); --line2:rgba(255,255,255,.04);
+    --t1:#E9EEF5; --t2:#8B95A7; --t3:#5C6675;
+    --long:#FF5C5C; --short:#2DD4A8; --gold:#F5B83D;
+    --mono:"SF Mono","Roboto Mono",Menlo,Consolas,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;overflow:hidden;}
+  body{background:var(--app);color:var(--t1);font-family:-apple-system,"PingFang SC","Noto Sans CJK SC",sans-serif;}
+  #app{height:100dvh;display:flex;flex-direction:column;max-width:480px;margin:0 auto;position:relative;overflow:hidden;}
+  .app-header{flex-shrink:0;padding:calc(8px + env(safe-area-inset-top)) 18px 12px;}
+  .h-row1{display:flex;align-items:center;justify-content:space-between;}
+  .h-title{font-size:22px;font-weight:700;letter-spacing:.5px;}
+  .ph-l{display:flex;align-items:baseline;gap:10px;}
+  .ph-count{font-family:var(--mono);font-size:14px;font-weight:700;color:var(--gold);
+    background:rgba(245,184,61,.12);border:1px solid rgba(245,184,61,.25);padding:3px 10px;border-radius:9px;}
+  .icon-btn{height:38px;padding:0 13px;border-radius:19px;background:var(--card);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;color:var(--t2);cursor:pointer;flex-shrink:0;font-size:14px;}
+  .btn-add{height:38px;padding:0 18px;border-radius:19px;background:var(--gold);color:#241A05;
+    font-size:14px;font-weight:700;display:flex;align-items:center;gap:5px;border:none;cursor:pointer;}
+  .conn{display:flex;align-items:center;gap:8px;height:34px;padding:0 11px;
+    background:var(--card);border:1px solid var(--line);border-radius:17px;width:fit-content;max-width:100%;margin-top:11px;}
+  .conn .cdot{width:8px;height:8px;border-radius:50%;background:#FF5C5C;flex-shrink:0;}
+  .conn .ctxt{font-size:12.5px;font-weight:600;color:var(--t3);white-space:nowrap;}
+  .content{flex:1;overflow-y:auto;padding:4px 16px 12px;min-height:0;}
+  .empty{color:var(--t3);font-size:13px;text-align:center;margin-top:48px;line-height:1.9;}
+  #views{flex:1;display:flex;width:300%;transition:transform .28s ease;min-height:0;}
+  #views .view{width:33.3334%;height:100%;display:flex;flex-direction:column;min-width:0;overflow:hidden;}
+  .tabbar{flex-shrink:0;height:63px;background:rgba(12,15,21,.98);border-top:1px solid var(--line);
+    display:flex;padding-bottom:env(safe-area-inset-bottom);}
+  .tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    color:var(--t3);position:relative;cursor:pointer;background:none;border:none;font-family:inherit;}
+  .tab svg{width:22px;height:22px;display:block;}
+  .tab span.lb{font-size:11px;font-weight:600;line-height:1;}
+  .tab.on{color:var(--gold);}
+  .tab .badge{position:absolute;top:4px;left:calc(50% + 8px);min-width:17px;height:17px;padding:0 4px;
+    background:var(--long);color:#fff;border-radius:9px;font-size:10.5px;font-weight:700;
+    display:none;align-items:center;justify-content:center;z-index:2;border:1.5px solid #0c0f15;}
+  .tab .badge.show{display:flex;}
+  /* 持仓卡（金色信息带） */
+  .pos{position:relative;background:var(--card);border:1px solid var(--line);border-radius:15px;
+    margin-bottom:10px;overflow:hidden;min-height:178px;display:flex;}
+  .pos-bar{width:5px;flex-shrink:0;}
+  .pos.long .pos-bar{background:var(--long);} .pos.short .pos-bar{background:var(--short);}
+  .pos-bd{flex:1;min-width:0;padding:11px 13px 10px 15px;display:flex;flex-direction:column;}
+  .pos-r1{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  .pos-name{display:flex;align-items:baseline;gap:8px;min-width:0;}
+  .pos-sym{font-size:19px;font-weight:800;letter-spacing:.5px;}
+  .pos-code{font-family:var(--mono);font-size:11px;color:var(--t3);}
+  .dir{font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:8px;display:flex;align-items:center;gap:3px;flex-shrink:0;}
+  .dir.long{color:var(--long);background:rgba(255,92,92,.1);border:1px solid rgba(255,92,92,.35);}
+  .dir.short{color:var(--short);background:rgba(45,212,168,.1);border:1px solid rgba(45,212,168,.35);}
+  .pos-hero{margin-top:9px;background:linear-gradient(135deg,rgba(245,184,61,.14),rgba(245,184,61,.04));
+    border:1px solid rgba(245,184,61,.22);border-radius:11px;display:flex;align-items:stretch;}
+  .hero-cell{padding:8px 0 8px 14px;display:flex;flex-direction:column;justify-content:center;min-width:0;}
+  .hero-lvl{flex:0 0 33%;}
+  .hero-lvl .lv-num{font-size:23px;font-weight:800;color:var(--gold);line-height:1.05;}
+  .hero-lvl .lv-num small{font-size:12px;font-weight:700;margin-left:1px;}
+  .hero-lvl .lv-lab,.hero-time .tl{font-size:9.5px;color:var(--t2);margin-top:2px;letter-spacing:1px;white-space:nowrap;}
+  .hero-div{width:1px;background:rgba(245,184,61,.22);margin:8px 0;}
+  .hero-time{flex:1;}
+  .hero-time .tv{font-family:var(--mono);font-size:15.5px;font-weight:700;color:var(--t1);letter-spacing:-.3px;line-height:1.1;white-space:nowrap;}
+  .ep-row{margin-top:8px;display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;}
+  .ep-lab{color:var(--t3);font-size:11px;}
+  .ep-name{font-weight:700;font-size:12px;}
+  .ep-name.long{color:var(--long);} .ep-name.short{color:var(--short);}
+  .ep-arrow{color:var(--t3);font-size:12px;}
+  .pos-foot{margin-top:auto;padding-top:9px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  .dur{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;
+    padding:4px 9px;border-radius:15px;white-space:nowrap;flex-shrink:0;}
+  .dur .dd{width:6px;height:6px;border-radius:50%;}
+  .dur.today{color:var(--short);background:rgba(45,212,168,.09);}
+  .dur.today .dd{background:var(--short);}
+  .dur.over{color:#FFB454;background:rgba(255,180,84,.13);}
+  .dur.over .dd{background:#FFB454;}
+  .pos-actions{display:flex;gap:8px;flex-shrink:0;}
+  .pa{height:31px;padding:0 16px;border-radius:16px;font-size:12.5px;font-weight:600;display:flex;align-items:center;cursor:pointer;}
+  .pa.edit{color:var(--t2);background:transparent;border:1px solid var(--line);}
+  .pa.close{color:var(--long);background:rgba(255,92,92,.08);border:1px solid rgba(255,92,92,.4);}
+  .pos-add{height:46px;border:1.5px dashed var(--line);border-radius:14px;display:flex;cursor:pointer;
+    align-items:center;justify-content:center;gap:8px;color:var(--t2);font-size:13.5px;font-weight:600;margin-bottom:10px;}
+  .pos-add b{color:var(--gold);font-size:18px;font-weight:400;line-height:1;}
+  .pos-add .mut{color:var(--t3);font-weight:400;font-size:12px;}
+  /* 留言（离线只读） */
+  .bubble{max-width:78%;padding:10px 13px;border-radius:15px;font-size:13.5px;line-height:1.5;margin-bottom:9px;word-break:break-all;}
+  .bubble .who{font-size:10px;color:var(--t3);margin-bottom:3px;display:block;}
+  .bubble.pc{align-self:flex-start;background:var(--card2);border:1px solid var(--line);border-bottom-left-radius:5px;}
+  .bubble.me{align-self:flex-end;background:rgba(245,184,61,.15);border:1px solid rgba(245,184,61,.28);border-bottom-right-radius:5px;color:#F2E3B8;}
+  .msg-inputbar{flex-shrink:0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--line);
+    display:flex;gap:10px;align-items:center;background:rgba(14,18,25,.98);}
+  .msg-inputbar input{flex:1;height:44px;background:var(--card);border:1px solid var(--line);border-radius:22px;
+    color:var(--t1);padding:0 16px;font-size:13.5px;outline:none;}
+  .ms{width:44px;height:44px;border-radius:50%;background:var(--card2);border:none;flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;color:var(--t3);}
+  /* 弹层 */
+  .sheet-mask{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:70;
+    align-items:flex-end;justify-content:center;}
+  .sheet{width:100%;max-width:480px;background:#161C26;border-radius:16px 16px 0 0;
+    padding:18px 18px calc(24px + env(safe-area-inset-bottom));box-sizing:border-box;}
+  .sheet .row{display:flex;align-items:center;gap:10px;margin-bottom:11px;font-size:13.5px;}
+  .sheet .lab{width:64px;color:var(--t3);font-size:12.5px;flex-shrink:0;}
+  .sheet input,.sheet select{flex:1;background:var(--app);border:1px solid var(--line);color:var(--t1);
+    border-radius:9px;padding:9px 11px;font-size:13.5px;outline:none;}
+  .sheet .btns{display:flex;gap:10px;margin-top:18px;}
+  .sheet .btns button{flex:1;border:none;border-radius:10px;padding:11px 0;font-size:14px;cursor:pointer;}
+  .btn-cancel{background:var(--card2);color:var(--t1);}
+  .btn-ok{background:var(--gold);color:#241A05;font-weight:700;}
+  #toast{position:fixed;left:50%;bottom:100px;transform:translateX(-50%);background:#1A212D;color:var(--t1);
+    border:1px solid rgba(245,184,61,.4);border-radius:10px;padding:9px 16px;font-size:12.5px;z-index:300;
+    opacity:0;transition:opacity .25s;pointer-events:none;max-width:82%;text-align:center;}
+  #toast.show{opacity:1;}
+</style></head>
+<body>
+<!-- 离线兜底页（APK 连不上电脑时自动加载）：纯本地渲染秒开，三 tab 结构与主页面一致。
+     持仓走 Gitee 直连全功能；预警/留言依赖电脑 WS，离线为只读空态，重连后回主界面。 -->
+<div id="app">
+  <div id="views">
+    <section class="view">
+      <div class="app-header">
+        <div class="h-row1"><div class="h-title">缠论预警</div></div>
+        <div class="conn"><span class="cdot"></span><span class="ctxt">离线模式 · 未连电脑</span></div>
+      </div>
+      <div class="content">
+        <div class="empty">离线模式<br>预警信号由电脑实时推送，离线时暂无数据<br>持仓、留言结构不受影响<br><br>
+          <span style="color:var(--t2);">App 正在后台自动寻找电脑，连上后自动恢复</span></div>
+      </div>
+    </section>
+    <section class="view">
+      <div class="app-header">
+        <div class="h-row1">
+          <div class="ph-l"><div class="h-title">持仓</div><div class="ph-count" id="posCnt">0 / 4</div></div>
+          <div class="h-row1">
+            <div class="icon-btn" onclick="posLoad()" style="margin-right:9px;">⟳</div>
+            <button class="btn-add" onclick="posFormOpen()">＋ 添加</button>
+          </div>
+        </div>
+      </div>
+      <div class="content" id="posList"></div>
+    </section>
+    <section class="view">
+      <div class="app-header">
+        <div class="h-row1"><div class="h-title">留言</div></div>
+        <div class="conn"><span class="cdot"></span><span class="ctxt">离线模式 · 无法收发</span></div>
+      </div>
+      <div class="content" id="chatList" style="display:flex;flex-direction:column;">
+        <div id="chatFlow" style="display:flex;flex-direction:column;"></div>
+        <div class="empty" style="margin-top:auto;margin-bottom:auto;">离线模式<br>留言依赖电脑连接，重连后可收发</div>
+      </div>
+      <div class="msg-inputbar">
+        <input id="msg" placeholder="离线中 · 重连电脑后可留言" disabled>
+        <button class="ms" onclick="toast('离线中，重连电脑后可留言')">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
+        </button>
+      </div>
+    </section>
+  </div>
+  <nav class="tabbar">
+    <button class="tab on" id="ntab0" onclick="switchTab(0)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 7 4-14 3 7h4"/></svg><span class="lb">预警</span></button>
+    <button class="tab" id="ntab1" onclick="switchTab(1)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="5" width="18" height="13" rx="2.5"/><path d="M3 9h18"/></svg>
+      <span class="badge" id="posTabN"></span><span class="lb">持仓</span></button>
+    <button class="tab" id="ntab2" onclick="switchTab(2)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 5h16v11H9l-4 3v-3H4z"/></svg><span class="lb">留言</span></button>
+  </nav>
+</div>
+<div id="toast"></div>
+
+<div id="posFormOv" class="sheet-mask">
+  <div class="sheet">
+    <b id="pfTitle" style="font-size:15px;">添加持仓</b>
+    <div style="display:flex;flex-direction:column;gap:11px;margin-top:14px;font-size:13.5px;">
+      <div class="row"><span class="lab">品种</span>
+        <select id="mpfSymbol"></select></div>
+      <div class="row"><span class="lab">级别</span>
+        <select id="mpfPeriod">
+          <option value="3">3分</option><option value="5" selected>5分</option><option value="15">15分</option>
+          <option value="30m">30分</option><option value="60">60分</option><option value="daily">日线</option></select></div>
+      <div class="row"><span class="lab">进场</span>
+        <select id="mpfEntry" onchange="mpfDerive()">
+          <option value="二买">A类二买</option><option value="二卖">A类二卖</option>
+          <option value="三买">B类三买</option><option value="三卖">B类三卖</option></select></div>
+      <div class="row"><span class="lab">离场</span>
+        <select id="mpfExit">
+          <option value="二卖">A类二卖</option><option value="二买">A类二买</option>
+          <option value="三卖">B类三卖</option><option value="三买">B类三买</option></select></div>
+      <div class="row"><span class="lab">备注</span>
+        <input id="mpfNote" placeholder="选填"></div>
+    </div>
+    <div class="btns">
+      <button class="btn-cancel" onclick="posFormClose()">取消</button>
+      <button id="mpfSubmit" class="btn-ok" onclick="posFormSubmit()">确认</button>
+    </div>
+  </div>
+</div>
+
+<div id="posCloseOv" class="sheet-mask">
+  <div class="sheet">
+    <b style="font-size:15px;">平仓 · 交易简报</b>
+    <p id="mpcInfo" style="margin:12px 0;font-size:12.5px;line-height:1.9;color:var(--t2);"></p>
+    <div id="mpcResults" style="display:flex;gap:9px;margin-bottom:12px;">
+      <button data-v="止盈" onclick="mpcSel(this)" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--line);background:var(--app);color:var(--t1);cursor:pointer;font-size:13.5px;">止盈</button>
+      <button data-v="止损" onclick="mpcSel(this)" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--line);background:var(--app);color:var(--t1);cursor:pointer;font-size:13.5px;">止损</button>
+      <button data-v="保本" onclick="mpcSel(this)" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--line);background:var(--app);color:var(--t1);cursor:pointer;font-size:13.5px;">保本</button>
+    </div>
+    <input id="mpcPnl" placeholder="盈亏金额，如 +800 或 -300（选填）" style="width:100%;background:var(--app);border:1px solid var(--line);color:var(--t1);border-radius:9px;padding:10px 12px;font-size:13.5px;">
+    <div class="btns">
+      <button class="btn-cancel" onclick="document.getElementById('posCloseOv').style.display='none'">取消</button>
+      <button class="btn-ok" onclick="posDelConfirm()">确认平仓</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const GH={owner:'ggy-king',repo:'chan-gy-data',branch:'master',token:'你的Gitee私人令牌'};
+const POS_EXIT={'二买':'二卖','二卖':'二买','三买':'三卖','三卖':'三买'};
+const POS_LIMIT=4;
+const POS_SYMS=[["jd2611", "鸡蛋"], ["UR2701", "尿素"], ["MA2611", "甲醇"], ["jm2701", "焦煤"], ["CF2701", "棉花"], ["SA2701", "纯碱"], ["SR2701", "白糖"], ["v2701", "PVC"], ["CJ2701", "红枣"], ["SP2611", "纸浆"], ["RU2701", "橡胶"], ["lh2611", "生猪"], ["AP2701", "苹果"], ["pg2611", "液化气"], ["RB2701", "螺纹钢"], ["NI2611", "沪镍"], ["PK2611", "花生"]];
+const POS_PNAME={'30':'30秒','3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分','daily':'日线'};
+let POSITIONS=[], posEditId=null, posDelId=null, _toastTimer=null, _curTab=0;
+function posLabel(v){ v=v||''; return v.startsWith('二')?('A类'+v):v.startsWith('三')?('B类'+v):v; }
+function periodLabel(p){ return POS_PNAME[p]||p+'分'; }
+function b64enc(str){ return btoa(unescape(encodeURIComponent(str))); }
+function b64dec(b){ return new TextDecoder().decode(Uint8Array.from(atob(b),c=>c.charCodeAt(0))); }
+function ghApi(path){ return `https://gitee.com/api/v5/repos/${GH.owner}/${GH.repo}/contents/${path}`; }
+async function ghGet(path){
+  const r=await fetch(ghApi(path)+'?access_token='+GH.token+'&_='+Date.now());
+  if(!r.ok) throw 'GET '+path+' '+r.status;
+  const d=await r.json();
+  if(!d.sha) throw '远端不存在';
+  return {sha:d.sha, data:JSON.parse(b64dec(d.content))};
+}
+async function ghPut(path, data, msg){
+  let sha=null;
+  try{ const d=await ghGet(path); sha=d.sha; }catch(e){}
+  const body={access_token:GH.token, content:b64enc(JSON.stringify(data,null,1)), message:msg||'手机端持仓同步', branch:GH.branch};
+  if(sha) body.sha=sha;
+  const r=await fetch(ghApi(path),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok) throw 'PUT '+path+' '+r.status+': '+(await r.text()).slice(0,100);
+}
+function toast(t){
+  const el=document.getElementById('toast');
+  el.textContent=t; el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer=setTimeout(()=>el.classList.remove('show'),2600);
+}
+function switchTab(i){
+  _curTab=i;
+  document.getElementById('views').style.transform='translateX(-'+(i*100/3)+'%)';
+  for(let k=0;k<3;k++) document.getElementById('ntab'+k).classList.toggle('on',k===i);
+  if(i===1) posLoad();
+}
+(function(){
+  let sx=0,sy=0,st=0;
+  const v=document.getElementById('views');
+  v.addEventListener('touchstart',e=>{ const t=e.touches[0]; sx=t.clientX; sy=t.clientY; st=Date.now(); },{passive:true});
+  v.addEventListener('touchend',e=>{
+    const t=e.changedTouches[0];
+    const dx=t.clientX-sx, dy=t.clientY-sy;
+    if(Date.now()-st>800) return;
+    if(Math.abs(dx)>60 && Math.abs(dx)>1.6*Math.abs(dy)){
+      const nt=_curTab+(dx<0?1:-1);
+      if(nt>=0&&nt<=2&&nt!==_curTab) switchTab(nt);
+    }
+  },{passive:true});
+})();
+function posLocalSave(){ try{localStorage.setItem('cl_pos_cache',JSON.stringify(POSITIONS));}catch(e){} }
+function posRenderCache(){
+  try{
+    const c=JSON.parse(localStorage.getItem('cl_pos_cache')||'null');
+    if(c&&c.length){ POSITIONS=c; posRender(POSITIONS); }
+  }catch(e){}
+}
+function _bgJob(job,label){
+  const run=n=>job().catch(e=>{
+    if(n>=5){ toast(label+'失败，请检查网络后刷新'); return; }
+    setTimeout(()=>run(n+1), 3000+5000*n);
+  });
+  run(1);
+}
+function posRender(list){
+  const box=document.getElementById('posList');
+  box.innerHTML='';
+  document.getElementById('posCnt').textContent=`${list.length} / ${POS_LIMIT}`;
+  const bn=document.getElementById('posTabN');
+  bn.textContent=list.length;
+  bn.classList.toggle('show',!!list.length);
+  if(!list.length){
+    box.innerHTML='<div class="empty">暂无持仓</div>';
+  }
+  const now=new Date();
+  list.forEach(p=>{
+    const isBuy=(p.entry||'').includes('买');
+    const long=isBuy;
+    let durHtml='';
+    if(p.open_iso){
+      const opened=new Date(p.open_iso);
+      const days=Math.floor((now-opened)/86400000);
+      const hrs=Math.floor((now-opened)/3600000);
+      durHtml = days>=1
+        ? `<div class="dur over"><span class="dd"></span>第 ${days+1} 天 · 按 ${periodLabel(p.period)} 处理</div>`
+        : `<div class="dur today"><span class="dd"></span>已持 ${hrs} 小时</div>`;
+    }
+    const lv=periodLabel(p.period), unit=lv.slice(-1), num=lv.slice(0,-1);
+    const d=document.createElement('div');
+    d.className='pos '+(long?'long':'short');
+    d.innerHTML=`<div class="pos-bar"></div><div class="pos-bd">
+      <div class="pos-r1">
+        <div class="pos-name"><span class="pos-sym">${p.name}</span><span class="pos-code">${p.symbol}</span></div>
+        <div class="dir ${long?'long':'short'}">${long?'▲ 多单':'▼ 空单'}</div>
+      </div>
+      <div class="pos-hero">
+        <div class="hero-cell hero-lvl"><div class="lv-num">${num}<small>${unit}</small></div><div class="lv-lab">交易级别</div></div>
+        <div class="hero-div"></div>
+        <div class="hero-cell hero-time"><div class="tv">${p.open_time}</div><div class="tl">${p.weekday} · 进场时间</div></div>
+      </div>
+      <div class="ep-row">
+        <span class="ep-lab">进场</span><span class="ep-name ${long?'long':'short'}">${posLabel(p.entry)}</span>
+        <span class="ep-arrow">→</span>
+        <span class="ep-lab">离场</span><span class="ep-name ${long?'short':'long'}">${posLabel(p.exit)}</span>
+      </div>
+      <div class="pos-foot">${durHtml}
+        <div class="pos-actions"><div class="pa edit">编辑</div><div class="pa close">平仓</div></div></div></div>`;
+    d.querySelector('.edit').onclick=()=>posEdit(p.id);
+    d.querySelector('.close').onclick=()=>posDel(p.id);
+    box.appendChild(d);
+  });
+  const remain=POS_LIMIT-list.length;
+  const add=document.createElement('div');
+  add.className='pos-add';
+  add.innerHTML=remain>0
+    ?`<b>＋</b> 添加持仓<span class="mut">（还可加 ${remain} 个 · 上限 ${POS_LIMIT}）</span>`
+    :`<span class="mut">已达上限 ${POS_LIMIT} 个 · 平仓后可再加</span>`;
+  if(remain>0) add.onclick=()=>posFormOpen();
+  box.appendChild(add);
+}
+async function posLoad(){
+  posRenderCache();
+  if(!POSITIONS.length) document.getElementById('posList').innerHTML='<div class="empty">加载中…</div>';
+  try{
+    const d=await ghGet('positions.json');
+    const remote=d.data.positions||[];
+    POSITIONS.forEach(p=>{   // 合并未推完的本地变更，已删除的不拉回
+      if(!p._dirty) return;
+      const i=remote.findIndex(r=>r.id===p.id);
+      if(i>=0) remote[i]=p; else remote.push(p);
+    });
+    POSITIONS=remote.filter(p=>!_delPend.has(p.id));
+    posRender(POSITIONS); posLocalSave();
+    return;
+  }catch(e){}
+  if(!POSITIONS.length)
+    document.getElementById('posList').innerHTML='<div class="empty">拉取失败<br>请检查手机网络后点 ⟳ 重试</div>';
+}
+function posFormOpen(editId){
+  if(POSITIONS.length>=POS_LIMIT && !editId){
+    toast('已达持仓上限（'+POS_LIMIT+'个），先平仓删除再添加');
+    return;
+  }
+  posEditId=editId||null;
+  const sel=document.getElementById('mpfSymbol');
+  sel.innerHTML=POS_SYMS.map(x=>`<option value="${x[0]}">${x[1]} ${x[0]}</option>`).join('');
+  const rec=editId?POSITIONS.find(x=>x.id===editId):null;
+  if(rec){
+    document.getElementById('pfTitle').textContent='编辑持仓';
+    sel.value=rec.symbol; sel.disabled=true;
+    document.getElementById('mpfPeriod').value=rec.period;
+    document.getElementById('mpfEntry').value=rec.entry;
+    mpfDerive();
+    document.getElementById('mpfExit').value=rec.exit;
+    document.getElementById('mpfNote').value=rec.note||'';
+    document.getElementById('mpfSubmit').textContent='保存修改';
+  }else{
+    document.getElementById('pfTitle').textContent='添加持仓';
+    sel.disabled=false;
+    document.getElementById('mpfPeriod').value='5';
+    document.getElementById('mpfEntry').value='二买';
+    mpfDerive();
+    document.getElementById('mpfNote').value='';
+    document.getElementById('mpfSubmit').textContent='确认添加';
+  }
+  document.getElementById('posFormOv').style.display='flex';
+}
+function posFormClose(){ document.getElementById('posFormOv').style.display='none'; posEditId=null; }
+function mpfDerive(){ document.getElementById('mpfExit').value=POS_EXIT[document.getElementById('mpfEntry').value]||''; }
+function mpfCollect(){
+  return {symbol:document.getElementById('mpfSymbol').value, period:document.getElementById('mpfPeriod').value,
+          entry:document.getElementById('mpfEntry').value, exit:document.getElementById('mpfExit').value,
+          note:document.getElementById('mpfNote').value.trim()};
+}
+async function posFormSubmit(){
+  const c=mpfCollect();
+  const now=new Date();
+  const wk='周'+'日一二三四五六'[now.getDay()];
+  const t=`${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  if(posEditId){
+    const eid=posEditId; posEditId=null;
+    const rec=POSITIONS.find(x=>x.id===eid);
+    if(rec){ Object.assign(rec,{entry:c.entry,exit:c.exit,note:c.note}); rec._dirty=true; posRender(POSITIONS); posLocalSave(); }
+    posFormClose(); toast('已保存');
+    _bgJob(async()=>{
+      const d=await ghGet('positions.json');
+      const list=d.data.positions||[];
+      const r=list.find(x=>x.id===eid);
+      if(r) Object.assign(r,{entry:c.entry,exit:c.exit,note:c.note});
+      await ghPut('positions.json',{positions:list},'持仓修改 '+t);
+      if(rec) rec._dirty=false;
+    },'保存');
+  }else{
+    if(POSITIONS.length>=POS_LIMIT){ toast('已达持仓上限（'+POS_LIMIT+'个）'); return; }
+    const rec={id:String(now.getTime()), symbol:c.symbol,
+      name:(POS_SYMS.find(x=>x[0]===c.symbol)||['',''])[1], period:c.period,
+      entry:c.entry, exit:c.exit, open_time:t, weekday:wk,
+      open_iso:now.toISOString?now.toISOString():String(now), note:c.note, result:'', pnl:''};
+    rec._dirty=true;
+    POSITIONS.push(rec); posRender(POSITIONS); posLocalSave(); posFormClose(); toast('已添加');
+    _bgJob(async()=>{
+      const d=await ghGet('positions.json');
+      const list=d.data.positions||[];
+      if(list.length>=POS_LIMIT) throw '已达持仓上限';
+      if(!list.some(x=>x.id===rec.id)) list.push(rec);
+      await ghPut('positions.json',{positions:list},'持仓添加 '+t);
+      rec._dirty=false;
+    },'添加');
+  }
+}
+function posEdit(id){ posFormOpen(id); }
+function posDel(id){
+  const rec=POSITIONS.find(x=>x.id===id); if(!rec) return;
+  const now=new Date();
+  const opened=rec.open_iso?new Date(rec.open_iso):now;
+  const hold=Math.max(0,Math.round((now-opened)/60000));
+  const hm=hold>=60?`${Math.floor(hold/60)}小时${hold%60}分`:`${hold}分钟`;
+  document.getElementById('mpcInfo').innerHTML=`<b style="color:var(--t1);">${rec.name}（${rec.symbol}）</b> ${periodLabel(rec.period)}<br>
+    进场 <b style="color:var(--t1);">${posLabel(rec.entry)}</b> → 离场 <b style="color:var(--t1);">${posLabel(rec.exit)}</b><br>
+    开仓 ${rec.open_time} ${rec.weekday} · 持仓 <b style="color:var(--gold);">${hm}</b><br>
+    <span style="font-size:11px;">简报全部选填，直接确认就是平仓删除</span>`;
+  document.querySelectorAll('#mpcResults button').forEach(x=>x.classList.remove('sel'));
+  document.getElementById('mpcPnl').value='';
+  posDelId=id;
+  document.getElementById('posCloseOv').style.display='flex';
+}
+function mpcSel(b){
+  document.querySelectorAll('#mpcResults button').forEach(x=>x.classList.remove('sel'));
+  b.classList.add('sel');
+}
+const _delPend=new Set();
+async function posDelConfirm(){
+  if(!posDelId) return;
+  const selB=document.querySelector('#mpcResults button.sel');
+  const result=selB?selB.dataset.v:'';
+  const pnl=document.getElementById('mpcPnl').value.trim();
+  const id=posDelId; posDelId=null;
+  const rec=POSITIONS.find(x=>x.id===id);
+  _delPend.add(id);
+  POSITIONS=POSITIONS.filter(x=>x.id!==id);
+  posRender(POSITIONS); posLocalSave();
+  document.getElementById('posCloseOv').style.display='none';
+  toast('已平仓');
+  const now=new Date();
+  const t=`${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  _bgJob(async()=>{
+    const d=await ghGet('positions.json');
+    const list=d.data.positions||[];
+    const r=list.find(x=>x.id===id);
+    if(result||pnl){   // 空简报=试验单，纯删除不进 history
+      const src=r||rec;
+      const opened=src&&src.open_iso?new Date(src.open_iso):now;
+      const hold=Math.max(0,Math.round((now-opened)/60000));
+      let hist=[];
+      try{ const h=await ghGet('history.json'); hist=h.data.history||[]; }catch(e){}
+      hist.unshift({...src, close_result:result, close_pnl:pnl,
+        close_time:t, close_iso:now.toISOString?now.toISOString():String(now),
+        weekday_close:'周'+'日一二三四五六'[now.getDay()], hold_min:hold});
+      await ghPut('history.json', {history:hist}, '平仓简报 '+(src?src.name:'')+' '+t);
+    }
+    const left=list.filter(x=>x.id!==id);
+    await ghPut('positions.json', {positions:left}, '平仓删除 '+(r?r.name:'')+' '+t);
+    _delPend.delete(id);
+  },'平仓');
+}
+/* 秒开：先渲染本地缓存，再静默拉远端；预警/留言为离线空态不请求任何远端 */
+posRenderCache();
+posLoad();
+</script>
+
+</body></html>

@@ -48,3 +48,6 @@ mobile-app/app/build/
 mobile-app/local.properties
 mobile-app/.idea/
 mobile-app/*.iml
+
+# ===== Gitee 凭据（切勿入库）=====
+data/gitee_conf.json

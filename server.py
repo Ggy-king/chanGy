@@ -10,7 +10,8 @@
 - 后台每 15 分钟刷新全部品种，任一品种出现新分型买卖点即推送给所有在线设备
 运行：py server.py   （或双击 启动预警服务.bat）
 """
-import sys, os, time, asyncio, datetime as dt, socket, json
+import sys, os, time, asyncio, datetime as dt, socket, json, base64, threading
+import requests
 from collections import deque
 from contextlib import asynccontextmanager
 
@@ -366,16 +367,20 @@ async def _upsert_event_card(msg):
     不存在 → 新建。端点没变化不广播（进行中笔每轮重评会重复产出同一事件）。
     用户定稿 2026-10-08：候选/确认无优先级、纯时间序；延续触发只更新卡片不另开新卡。"""
     fp = msg.get('fingerprint')
-    for i, old in enumerate(_pattern_events):
-        if old.get('fingerprint') == fp:
-            if old.get('time') == msg.get('time') and old.get('price') == msg.get('price'):
-                return                     # 端点没变，无需更新
-            msg['first_time'] = old.get('first_time') or old.get('time')
-            msg['type'] = 'pattern_alert_update'
-            _pattern_events[i] = msg
-            manager.remember_replace(msg)
-            await manager.broadcast(msg)
-            return
+    dup_idx = [i for i, old in enumerate(_pattern_events) if old.get('fingerprint') == fp]
+    if dup_idx:
+        # 历史遗留：多级别单元同指纹曾各自入队（快照收集期不去重所致），清掉多余条目只留第一个
+        for j in sorted(dup_idx[1:], reverse=True):
+            del _pattern_events[j]
+        old = _pattern_events[dup_idx[0]]
+        if old.get('time') == msg.get('time') and old.get('price') == msg.get('price'):
+            return                     # 端点没变，无需更新
+        msg['first_time'] = old.get('first_time') or old.get('time')
+        msg['type'] = 'pattern_alert_update'
+        _pattern_events[dup_idx[0]] = msg
+        manager.remember_replace(msg)
+        await manager.broadcast(msg)
+        return
     msg['first_time'] = msg.get('time')
     _pattern_events.append(msg)
     manager.remember(msg)
@@ -458,7 +463,16 @@ async def _push_startup_snapshot():
     _snapshot_done = True
     # 按触发时刻升序（前端再按触发时刻排序展示，新事件置顶）
     _snapshot_msgs.sort(key=lambda m: str(m.get('trigger_time') or m.get('time') or ''))
+    seen = {}
     for msg in _snapshot_msgs:
+        # 同指纹去重：指纹=pattern|p1|p2 不含级别，同一结构在多个级别单元都会 fire，只留触发时刻最新的
+        fp = msg.get('fingerprint')
+        old = seen.get(fp)
+        if old is None or str(msg.get('trigger_time') or msg.get('time') or '') > str(old.get('trigger_time') or old.get('time') or ''):
+            seen[fp] = msg
+    for msg in seen.values():
+        if any(m.get('fingerprint') == msg.get('fingerprint') for m in _pattern_events):
+            continue   # 事件流已有同指纹卡片，不重复入队
         _pattern_events.append(msg)
         manager.remember(msg)
         await manager.broadcast(msg)
@@ -528,6 +542,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
+def _page(name):
+    """HTML 页面统一禁缓存：改版后浏览器普通刷新即拿到新版（用户曾因缓存看到旧页面）。"""
+    return FileResponse(os.path.join(WEB_DIR, name), headers={'Cache-Control': 'no-cache'})
+
+
 @app.get('/')
 async def index():
     return RedirectResponse('/pc')
@@ -535,38 +554,38 @@ async def index():
 
 @app.get('/pc')
 async def page_pc_overview():
-    return FileResponse(os.path.join(WEB_DIR, 'pc_overview.html'))
+    return _page('pc_overview.html')
 
 
 @app.get('/pc/detail')
 async def page_pc_detail():
-    return FileResponse(os.path.join(WEB_DIR, 'pc_detail.html'))
+    return _page('pc_detail.html')
 
 
 @app.get('/m')
 async def page_m_list():
-    return FileResponse(os.path.join(WEB_DIR, 'm_list.html'))
+    return _page('m_list.html')
 
 
 @app.get('/m/detail')
 async def page_m_detail():
-    return FileResponse(os.path.join(WEB_DIR, 'm_detail.html'))
+    return _page('m_detail.html')
 
 
 @app.get('/pc/backtest')
 async def page_backtest():
-    return FileResponse(os.path.join(WEB_DIR, 'pc_backtest.html'))
+    return _page('pc_backtest.html')
 
 
 @app.get('/pc/help')
 async def page_pc_help():
-    return FileResponse(os.path.join(WEB_DIR, 'pc_help.html'))
+    return _page('pc_help.html')
 
 
 @app.get('/pc/matrix')
 async def page_pc_matrix():
     """全级别并行监控矩阵（设计文档 §9，用户主力常驻页面）。"""
-    return FileResponse(os.path.join(WEB_DIR, 'pc_matrix.html'))
+    return _page('pc_matrix.html')
 
 
 @app.get('/api/pattern_matrix')
@@ -602,6 +621,250 @@ async def api_pattern_bi_conf(request: Request):
     _pattern_reported.clear()
     _push_rescan_task()
     return JSONResponse({'ok': True, 'changed': True, 'conf': new_conf})
+
+
+# ==================== 持仓状态（监控页/详情页/手机端，2026-10-09） ====================
+# 架构：Gitee 私有仓库 = 唯一权威数据源（positions.json=当前持仓, history.json=平仓简报）。
+# 电脑端：本地 data/*.json 为缓存，写=本地立即生效+后台线程推 Gitee（失败重试）；
+#         读=本地 + 限频拉取远端（手机端改了电脑能看到）。
+# 手机端：直连 Gitee API 读写（CORS 已实测全放行），不依赖局域网。
+
+_POSITIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'positions.json')
+_HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'history.json')
+_POS_EXIT_MAP = {'二买': '二卖', '二卖': '二买', '三买': '三卖', '三卖': '三买'}
+_POS_WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+_POS_LIMIT = 4
+_POS_LOCK = threading.Lock()
+_GITEE_SHA = {}                                          # remote_path -> 上次已同步 sha
+_POS_DIRTY = {'positions.json': False, 'history.json': False}
+_POS_LAST_ERR = ['']
+_LAST_PULL = [0.0]
+_SYNC_LOCK = threading.Lock()                            # 推送串行化（并发线程会互相用旧sha覆盖）
+
+
+def _positions_load():
+    try:
+        with open(_POSITIONS_FILE, encoding='utf-8') as f:
+            return json.load(f).get('positions', [])
+    except Exception:
+        return []
+
+
+def _positions_save(positions):
+    with open(_POSITIONS_FILE, 'w', encoding='utf-8') as f:
+        json.dump({'positions': positions}, f, ensure_ascii=False, indent=1)
+
+
+def _history_load():
+    try:
+        with open(_HISTORY_FILE, encoding='utf-8') as f:
+            return json.load(f).get('history', [])
+    except Exception:
+        return []
+
+
+def _history_save(hist):
+    with open(_HISTORY_FILE, 'w', encoding='utf-8') as f:
+        json.dump({'history': hist}, f, ensure_ascii=False, indent=1)
+
+
+def _gitee_conf():
+    try:
+        with open(os.path.join(os.path.dirname(_POSITIONS_FILE), 'gitee_conf.json'), encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _gitee_api(remote):
+    conf = _gitee_conf()
+    api = f"https://gitee.com/api/v5/repos/{conf.get('owner')}/{conf.get('repo')}/contents/{remote}"
+    return api, conf
+
+
+def _gitee_push_file(remote, local):
+    """推单个文件（GET sha → PUT 内容）。返回 ''=成功，否则错误串。"""
+    api, conf = _gitee_api(remote)
+    token, branch = conf.get('token'), conf.get('branch', 'master')
+    sha = _GITEE_SHA.get(remote)
+    if sha is None:
+        try:
+            r = requests.get(api, params={'access_token': token, 'ref': branch}, timeout=10)
+            if r.status_code == 200:
+                d = r.json()
+                sha = d.get('sha') if isinstance(d, dict) else None   # Gitee 对不存在文件偶发返回 []（视为新建）
+            elif r.status_code != 404:
+                return f'GET {r.status_code}'
+        except Exception as e:
+            return str(e)[:120]
+    with open(local, 'rb') as f:
+        content = base64.b64encode(f.read()).decode()
+    body = {'access_token': token, 'content': content,
+            'message': f'持仓同步 {dt.datetime.now().strftime("%m-%d %H:%M:%S")}', 'branch': branch}
+    if sha:
+        body['sha'] = sha
+    try:
+        r = requests.put(api, json=body, timeout=15)
+        if r.status_code in (200, 201):
+            _GITEE_SHA[remote] = (r.json().get('content') or {}).get('sha') or sha
+            return ''
+        if sha:
+            _GITEE_SHA[remote] = None   # sha 冲突等：作废缓存，下轮重取再推
+        return f'PUT {r.status_code}: {r.text[:150]}'
+    except Exception as e:
+        return str(e)[:120]
+
+
+def _bg_sync():
+    """后台推送线程：把脏文件推到 Gitee，整体重试 2 轮；仍失败保留脏标记，
+    下次任意持仓 API 调用时再触发（自愈）。"""
+    def run():
+        with _SYNC_LOCK:                 # 串行：并发推送会互相用旧 sha 覆盖（实测教训）
+            for _ in range(3):
+                errs = []
+                for remote, dirty in list(_POS_DIRTY.items()):
+                    if not dirty:
+                        continue
+                    err = _gitee_push_file(remote, _POSITIONS_FILE if remote == 'positions.json' else _HISTORY_FILE)
+                    if err:
+                        errs.append(f'{remote}: {err}')
+                    else:
+                        _POS_DIRTY[remote] = False
+                if not errs:
+                    _POS_LAST_ERR[0] = ''
+                    if not any(_POS_DIRTY.values()):
+                        return           # 收尾复查：期间若有新变更则再跑一轮
+                    continue
+                err = '; '.join(errs)
+                _POS_LAST_ERR[0] = err
+                time.sleep(2)
+            print(f'[持仓] Gitee 同步失败（将于下次操作时重试）: {err}')
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _gitee_pull_if_stale():
+    """限频拉取远端 positions（手机端改动回灌电脑端）；本地有未推变更时跳过。"""
+    if _POS_DIRTY['positions.json'] or time.time() - _LAST_PULL[0] < 8:
+        return
+    _LAST_PULL[0] = time.time()
+    conf = _gitee_conf()
+    if not (conf.get('token') and conf.get('owner')):
+        return
+    remote = conf.get('remote_path', 'positions.json')
+    api, _c = _gitee_api(remote)
+    try:
+        r = requests.get(api, params={'access_token': conf['token'], 'ref': conf.get('branch', 'master')}, timeout=8)
+        if r.status_code != 200:
+            return
+        d = r.json()
+        sha = d.get('sha')
+        if not sha or sha == _GITEE_SHA.get(remote):
+            return
+        data = json.loads(base64.b64decode(d['content']).decode())
+        with _POS_LOCK:
+            _positions_save(data.get('positions', []))
+        _GITEE_SHA[remote] = sha
+    except Exception:
+        pass
+
+
+@app.get('/api/positions')
+async def api_positions():
+    _gitee_pull_if_stale()
+    if any(_POS_DIRTY.values()):
+        _bg_sync()   # 有未推成功的变更（上轮失败/被互斥跳过）→ 补推
+    return JSONResponse({'positions': _positions_load(), 'limit': _POS_LIMIT,
+                         'gitee_err': _POS_LAST_ERR[0], 'ts': time.time()})
+
+
+@app.post('/api/positions/add')
+async def api_positions_add(request: Request):
+    p = await request.json()
+    sym, period = str(p.get('symbol', '')), str(p.get('period', ''))
+    entry = str(p.get('entry', ''))
+    if sym not in config.CONTRACT_MAP:
+        return JSONResponse({'error': f'未知品种 {sym}'}, status_code=400)
+    if entry not in _POS_EXIT_MAP:
+        return JSONResponse({'error': f'买卖点须为 {"、".join(_POS_EXIT_MAP)}'}, status_code=400)
+    with _POS_LOCK:
+        positions = _positions_load()
+        if len(positions) >= _POS_LIMIT:
+            return JSONResponse({'error': f'持仓已达上限（{_POS_LIMIT}个）'}, status_code=400)
+        now = dt.datetime.now()
+        rec = {'id': str(int(now.timestamp() * 1000)), 'symbol': sym,
+               'name': config.CONTRACT_MAP[sym]['name'], 'period': period,
+               'entry': entry, 'exit': str(p.get('exit') or _POS_EXIT_MAP[entry]),
+               'open_time': now.strftime('%m-%d %H:%M'), 'weekday': _POS_WEEKDAYS[now.weekday()],
+               'open_iso': now.isoformat(timespec='seconds'), 'note': str(p.get('note', '') or '')[:200],
+               'result': '', 'pnl': ''}
+        positions.append(rec)
+        _positions_save(positions)
+    _POS_DIRTY['positions.json'] = True
+    _bg_sync()
+    return JSONResponse({'ok': True, 'positions': positions})
+
+
+@app.post('/api/positions/update')
+async def api_positions_update(request: Request):
+    p = await request.json()
+    pid = str(p.get('id', ''))
+    with _POS_LOCK:
+        positions = _positions_load()
+        rec = next((x for x in positions if x['id'] == pid), None)
+        if rec is None:
+            return JSONResponse({'error': '未找到该持仓'}, status_code=404)
+        for k in ('entry', 'exit', 'note', 'result', 'pnl'):
+            if k in p:
+                rec[k] = str(p[k])[:200]
+        if 'entry' in p:
+            rec['exit'] = str(p.get('exit') or _POS_EXIT_MAP.get(rec['entry'], rec['entry']))
+        _positions_save(positions)
+    _POS_DIRTY['positions.json'] = True
+    _bg_sync()
+    return JSONResponse({'ok': True, 'positions': positions})
+
+
+@app.post('/api/positions/delete')
+async def api_positions_delete(request: Request):
+    """平仓删除：记录移入 history.json（简报：止盈/止损/保本 + 盈亏，选填；
+    自动补持仓时长/平仓时间/星期），positions 与 history 一起推 Gitee。"""
+    p = await request.json()
+    pid = str(p.get('id', ''))
+    result = str(p.get('close_result', '') or '')
+    pnl = str(p.get('close_pnl', '') or '')
+    with _POS_LOCK:
+        positions = _positions_load()
+        rec = next((x for x in positions if x['id'] == pid), None)
+        if rec is None:
+            return JSONResponse({'error': '未找到该持仓'}, status_code=404)
+        now = dt.datetime.now()
+        try:
+            opened = dt.datetime.fromisoformat(rec.get('open_iso') or now.isoformat())
+        except Exception:
+            opened = now
+        # 空简报（结果和盈亏都空）= 试验单，纯删除不进 history
+        hist_rec = None
+        if result or pnl:
+            hist_rec = {**rec, 'close_result': result, 'close_pnl': pnl,
+                        'close_time': now.strftime('%m-%d %H:%M'),
+                        'close_iso': now.isoformat(timespec='seconds'),
+                        'weekday_close': _POS_WEEKDAYS[now.weekday()],
+                        'hold_min': max(0, int((now - opened).total_seconds() // 60))}
+            hist = _history_load()
+            hist.insert(0, hist_rec)
+            _history_save(hist)
+        left = [x for x in positions if x['id'] != pid]
+        _positions_save(left)
+    if hist_rec:
+        _POS_DIRTY['history.json'] = True
+    _POS_DIRTY['positions.json'] = True
+    _bg_sync()
+    return JSONResponse({'ok': True, 'positions': left, 'closed': hist_rec})
+
+
+@app.get('/api/positions/history')
+async def api_positions_history():
+    return JSONResponse({'history': _history_load()})
 
 
 @app.get('/api/overview')

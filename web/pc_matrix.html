@@ -69,6 +69,76 @@
   .evt .r3{font-size:17px;font-weight:800;}
   .evt .r4{font-size:11px;color:#787b86;}
   .evt .r4 b{color:#d1d4dc;}
+
+/* ---------- 持仓面板 ---------- */
+#posPanel{position:fixed;width:372px;max-height:88vh;background:#1b1f2a;border:1px solid #f0b90b66;
+  border-radius:12px;z-index:99;display:none;flex-direction:column;box-shadow:0 14px 44px #000d;overflow:hidden;}
+#posPanelHead{display:flex;align-items:center;gap:8px;padding:9px 13px;border-bottom:1px solid #2a2e39;
+  cursor:move;font-weight:700;font-size:13.5px;user-select:none;}
+#posCards{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:9px;}
+#posCards .empty{color:#787b86;font-size:12.5px;text-align:center;padding:26px 0;}
+/* 持仓卡（与移动端同款：金色信息带，交易级别+进场时间双主角） */
+.posCard{position:relative;background:#161C26;border:1px solid #2a2e39;border-radius:14px;overflow:hidden;display:flex;}
+.posCard .pbar{width:5px;flex-shrink:0;background:#f0b90b;}
+.posCard.long .pbar{background:#ef5350;}
+.posCard.short .pbar{background:#26a69a;}
+.posCard .bd{flex:1;min-width:0;padding:11px 12px 10px 14px;display:flex;flex-direction:column;}
+.posCard .r1{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.posCard .pname{font-size:18px;font-weight:800;letter-spacing:.5px;color:#fff;}
+.posCard .psym{font-family:'SF Mono',Menlo,Consolas,monospace;font-size:11px;color:#9aa0b0;margin-left:6px;}
+.posCard .dir{font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:8px;flex-shrink:0;}
+.posCard.long .dir{color:#ff7b7b;background:rgba(255,92,92,.1);border:1px solid rgba(255,92,92,.35);}
+.posCard.short .dir{color:#2fbfae;background:rgba(38,166,154,.1);border:1px solid rgba(38,166,154,.35);}
+.posCard .hero{margin-top:9px;background:linear-gradient(135deg,rgba(240,185,11,.16),rgba(240,185,11,.04));
+  border:1px solid rgba(240,185,11,.25);border-radius:10px;display:flex;align-items:stretch;}
+.posCard .hl{padding:7px 0 7px 12px;display:flex;flex-direction:column;justify-content:center;min-width:0;}
+.posCard .hl.lvl{flex:0 0 32%;}
+.posCard .lv-num{font-size:21px;font-weight:800;color:#f0b90b;line-height:1.05;}
+.posCard .lv-num small{font-size:11.5px;font-weight:700;margin-left:1px;}
+.posCard .lv-lab,.posCard .tl{font-size:9px;color:#9aa0b0;margin-top:2px;letter-spacing:1.5px;white-space:nowrap;}
+.posCard .hdiv{width:1px;background:rgba(240,185,11,.25);margin:7px 0;}
+.posCard .hl.time{flex:1;}
+.posCard .tv{font-family:'SF Mono',Menlo,Consolas,monospace;font-size:14.5px;font-weight:700;color:#e9eef5;line-height:1.1;white-space:nowrap;}
+.posCard .r2{margin-top:8px;display:flex;align-items:center;gap:6px;font-size:11px;color:#787b86;white-space:nowrap;overflow:hidden;}
+.posCard .sig{font-weight:700;font-size:12px;}
+.posCard .sig.buy{color:#ff7b7b;} .posCard .sig.sell{color:#2fbfae;}
+.posCard .arr{color:#565a66;}
+.posCard .xtra{margin-top:5px;font-size:11px;color:#9aa0b0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.posCard .foot{margin-top:auto;padding-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.posCard .dur{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;padding:3px 8px;border-radius:12px;white-space:nowrap;flex-shrink:0;}
+.posCard .dur i{width:5px;height:5px;border-radius:50%;font-style:normal;}
+.posCard .dur.today{color:#2fbfae;background:rgba(38,166,154,.1);} .posCard .dur.today i{background:#2fbfae;}
+.posCard .dur.over{color:#FFB454;background:rgba(255,180,84,.13);} .posCard .dur.over i{background:#FFB454;}
+.posCard .ops{display:flex;gap:7px;flex-shrink:0;}
+.posCard .ops button{height:29px;padding:0 15px;border-radius:15px;font-size:12px;font-weight:600;cursor:pointer;background:transparent;border:1px solid #2a2e39;color:#d1d4dc;}
+.posCard .ops button:hover{border-color:#f0b90b;color:#f0b90b;}
+.posCard .ops button.pc{color:#ff7b7b;background:rgba(255,92,92,.08);border-color:rgba(255,92,92,.4);}
+.posCard .ops button.pc:hover{border-color:#ff7b7b;color:#ff7b7b;}
+#pcResults button.sel{border-color:#f0b90b !important;color:#f0b90b !important;font-weight:700;background:#f0b90b14 !important;}
+#posForm{border-top:1px solid #2a2e39;padding:10px 13px;display:flex;flex-direction:column;gap:7px;}
+#posForm .pf-row{display:flex;align-items:center;gap:9px;font-size:12.5px;}
+/* 下拉箭头：固定在右侧 10px 处，不再贴边 */
+select{appearance:none;-webkit-appearance:none;
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238B95A7' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center;padding-right:28px;}
+#posForm .pf-row label{width:34px;color:#787b86;flex:none;}
+#posForm select,#posForm input{flex:1;background-color:#131722;border:1px solid #2a2e39;color:#d1d4dc;
+  border-radius:7px;padding:5px 9px;font-size:12.5px;}
+#posForm select{padding-right:26px;background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238B95A7' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 9px center;}
+/* 右上角预警弹卡：页面内 DOM 弹窗，不依赖浏览器通知授权（Notification 授权丢了也能弹） */
+#popStack{position:fixed;top:20px;right:20px;z-index:150;display:flex;flex-direction:column;gap:10px;
+  pointer-events:none;max-width:340px;}
+.alert-pop{pointer-events:auto;position:relative;background:#1e222d;border:2px solid #ef5350;border-radius:12px;
+  padding:11px 30px 11px 16px;box-shadow:0 8px 30px #000a;cursor:pointer;font-size:12.5px;
+  animation:popSlide .25s ease;}
+.alert-pop.down{border-color:#26a69a;}
+.alert-pop .t{font-size:14px;font-weight:700;margin-bottom:4px;}
+.alert-pop .t.up{color:#ef5350;} .alert-pop .t.down{color:#26a69a;}
+.alert-pop .i{color:#9aa0b0;line-height:1.65;}
+.alert-pop .x{position:absolute;top:5px;right:10px;color:#787b86;cursor:pointer;font-size:16px;}
+@keyframes popSlide{from{transform:translateX(110%);opacity:0;}to{transform:translateX(0);opacity:1;}}
+
 </style>
 </head>
 <body>
@@ -78,7 +148,77 @@
   <div class="conn"><span class="dot" id="dot"></span><span id="connTx">连接中…</span></div>
   <div class="sp"></div>
   <button class="btn" id="muteBtn" onclick="toggleMute()">🔊 提示音开</button>
+  <button class="btn" onclick="sndPanelToggle()" title="声音分类设置：确认/触发与候选分开调音">♪ 设置</button>
+  <button class="btn" id="posBtn" onclick="togglePosPanel()">持仓 <span id="posCountHdr" class="mut" style="font-size:11px"></span></button>
 </header>
+
+<!-- 声音分类设置面板 -->
+<!-- 右上角预警弹卡容器 + 声音分类设置面板 -->
+<div id="popStack"></div>
+<div id="sndPanel" style="display:none;position:fixed;top:52px;right:16px;z-index:130;background:#1e222d;
+     border:1px solid #f0b90b66;border-radius:12px;padding:13px 15px;width:260px;box-shadow:0 12px 36px #000d;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+    <b style="font-size:13px;">声音设置</b>
+    <span style="cursor:pointer;color:#787b86;" onclick="sndPanelToggle()">×</span>
+  </div>
+  <div style="font-size:11.5px;color:#f0b90b;margin-bottom:5px;">确认 / 触发类（上行双音）</div>
+  <div style="display:flex;gap:7px;align-items:center;">
+    <input type="range" id="sndConf" min="400" max="1600" step="20" style="flex:1;" oninput="sndChange('conf',this.value)">
+    <button class="btn" onclick="sndTest(true)" style="padding:3px 9px;font-size:11.5px;flex:none;">试听</button>
+  </div>
+  <div style="font-size:11.5px;color:#26a69a;margin:11px 0 5px;">候选 / 观察类（单长音）</div>
+  <div style="display:flex;gap:7px;align-items:center;">
+    <input type="range" id="sndCand" min="400" max="1600" step="20" style="flex:1;" oninput="sndChange('cand',this.value)">
+    <button class="btn" onclick="sndTest(false)" style="padding:3px 9px;font-size:11.5px;flex:none;">试听</button>
+  </div>
+  <div style="font-size:10.5px;color:#565a66;margin-top:10px;line-height:1.6;">延续触发（同一信号再次确认）也会响铃，自动按类别选音色；设置自动保存在本机。</div>
+</div>
+
+<!-- 持仓面板（可拖动竖条，位置记忆） -->
+<div id="posPanel">
+  <div id="posPanelHead">
+    <span>持仓状态</span><span class="mut" id="posCount" style="font-weight:400;font-size:11.5px"></span>
+    <span style="flex:1"></span>
+    <button class="btn" style="padding:2px 9px" onclick="posFormOpen()">+ 添加</button>
+    <button class="btn" style="padding:2px 9px" onclick="togglePosPanel()">×</button>
+  </div>
+  <div id="posCards"></div>
+  <div id="pcModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;align-items:center;justify-content:center;">
+    <div style="background:#1e222d;border:1px solid #2a2e39;border-radius:12px;padding:20px 22px;min-width:380px;">
+      <h3 style="margin:0 0 12px;font-size:15px;">平仓 · 交易简报</h3>
+      <p id="pcInfo" style="margin:0 0 14px;font-size:12.5px;line-height:1.9;color:#9aa0b0;"></p>
+      <div id="pcResults" style="display:flex;gap:9px;margin-bottom:12px;">
+        <button data-v="止盈" onclick="pcSel(this)" style="flex:1;padding:8px 0;border-radius:8px;border:1px solid #2a2e39;background:#131722;color:#d1d4dc;cursor:pointer;font-size:13px;">止盈</button>
+        <button data-v="止损" onclick="pcSel(this)" style="flex:1;padding:8px 0;border-radius:8px;border:1px solid #2a2e39;background:#131722;color:#d1d4dc;cursor:pointer;font-size:13px;">止损</button>
+        <button data-v="保本" onclick="pcSel(this)" style="flex:1;padding:8px 0;border-radius:8px;border:1px solid #2a2e39;background:#131722;color:#d1d4dc;cursor:pointer;font-size:13px;">保本</button>
+      </div>
+      <input id="pcPnl" placeholder="盈亏金额，如 +800 或 -300（选填）" style="width:100%;box-sizing:border-box;background:#131722;border:1px solid #2a2e39;color:#d1d4dc;border-radius:8px;padding:8px 11px;font-size:13px;">
+      <div style="display:flex;gap:9px;margin-top:16px;justify-content:flex-end;">
+        <button class="btn" onclick="document.getElementById('pcModal').style.display='none'">取消</button>
+        <button class="btn" style="background:#f0b90b;color:#131722;font-weight:700;" onclick="posDelConfirm()">确认平仓</button>
+      </div>
+      <input type="hidden" id="pcDelId">
+    </div>
+  </div>
+  <div id="posForm" style="display:none">
+    <div class="pf-row"><label>品种</label><select id="pfSymbol"></select></div>
+    <div class="pf-row"><label>级别</label><select id="pfPeriod">
+      <option value="3">3分</option><option value="5" selected>5分</option>
+      <option value="15">15分</option><option value="30m">30分</option>
+      <option value="60">60分</option><option value="daily">日线</option></select></div>
+    <div class="pf-row"><label>进场</label><select id="pfEntry" onchange="pfDeriveExit()">
+      <option value="二买">A类二买点</option><option value="二卖">A类二卖点</option>
+      <option value="三买">B类三买点</option><option value="三卖">B类三卖点</option></select></div>
+    <div class="pf-row"><label>离场</label><select id="pfExit">
+      <option value="二卖">A类二卖点</option><option value="二买">A类二买点</option>
+      <option value="三卖">B类三卖点</option><option value="三买">B类三买点</option></select></div>
+    <div class="pf-row"><label>备注</label><input id="pfNote" placeholder="选填" /></div>
+    <div class="pf-row" style="gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="posFormClose()">取消</button>
+      <button class="btn" id="pfSubmit" style="background:#f0b90b;color:#131722;font-weight:700" onclick="posSubmit()">确认</button>
+    </div>
+  </div>
+</div>
 <main>
   <div id="matrixWrap"><table id="matrix"></table></div>
   <div class="legend">
@@ -228,18 +368,35 @@ function renderStream(){
   $('streamCap').textContent=`（${TAB==='all'?'候选+确认':'仅确认/触发'} ${view.length}/${CAP[TAB]} 条）`;
 }
 
-/* ---------- 提醒：提示音 + 标题闪烁 + 系统通知 ---------- */
-function beep(){
+/* ---------- 提醒：分类提示音（确认/触发 vs 候选，音调可调） + 标题闪烁 + 系统通知 ---------- */
+let _snd={conf:1200,cand:700};   // 确认/触发类与候选类的基准频率
+try{const s=JSON.parse(localStorage.getItem('cl_matrix_snd')||'null');if(s&&s.conf&&s.cand)_snd=s;}catch(e){}
+function evIsConf(m){
+  if(m.snapshot||m.state)return m.state==='conf_a'||m.state==='trig_b';
+  const p=(m.pattern||'');
+  return p.indexOf('CONF')>=0||p.indexOf('TRIG')>=0;
+}
+function beepTone(freq,conf){
   if(_muted)return;
   try{
     const ctx=window.__audio||(window.__audio=new (window.AudioContext||window.webkitAudioContext)());
-    const o=ctx.createOscillator(),g=ctx.createGain();
-    o.connect(g);g.connect(ctx.destination);
-    o.type='sine';o.frequency.value=880;
-    g.gain.setValueAtTime(.25,ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.35);
-    o.start();o.stop(ctx.currentTime+.4);
+    const seq=conf?[[0,freq],[0.16,freq*1.3]]:[[0,freq]];   // 确认=上行双音更急促；候选=单长音
+    seq.forEach(([dt,fr])=>{
+      const o=ctx.createOscillator(),g=ctx.createGain();
+      o.connect(g);g.connect(ctx.destination);
+      o.type=conf?'square':'sine';o.frequency.value=fr;
+      const t0=ctx.currentTime+dt;
+      g.gain.setValueAtTime(.001,t0);
+      g.gain.exponentialRampToValueAtTime(.25,t0+.02);
+      g.gain.exponentialRampToValueAtTime(.001,t0+(conf?.14:.3));
+      o.start(t0);o.stop(t0+(conf?.16:.32));
+    });
   }catch(e){}
+}
+function beepFor(m){
+  if(_muted)return;
+  const conf=evIsConf(m);
+  beepTone(conf?_snd.conf:_snd.cand,conf);
 }
 function flashTitle(txt){
   if(_titleTimer)clearInterval(_titleTimer);
@@ -253,11 +410,59 @@ function notify(m){
   if(_muted||!('Notification' in window)||Notification.permission!=='granted')return;
   try{new Notification('形态预警',{body:m.text});}catch(e){}
 }
+/* 右上角弹卡（页面内，不依赖通知授权）：同屏只保留一张，新事件立即顶替（谁出现就提示谁），
+   同一事件延续触发时原位刷新内容；12 秒无新事件自动消失；点卡片跳对应品种详情页 */
+let _pops={};   // fingerprint -> {el, timer}：叠叠乐多卡，各自 12 秒倒计时依次消失
+function showPatternPopup(m,isUpdate){
+  const long=(m.side||'long')==='long';
+  let rec=_pops[m.fingerprint];
+  if(rec)clearTimeout(rec.timer);   // 延续触发：原卡刷新、重新计时，不另开新卡
+  else{
+    const el=document.createElement('div');
+    el.className='alert-pop '+(long?'up':'down');
+    el.onclick=()=>{location.href='/pc/detail?sym='+encodeURIComponent(m.symbol);};
+    el.innerHTML='<span class="x" onclick="event.stopPropagation();this.parentElement.remove()">×</span>'+
+      '<div class="t '+(long?'up':'down')+'"></div><div class="i"></div>';
+    $('popStack').appendChild(el);   // 叠叠乐：新卡排在下面，先来先走
+    rec=_pops[m.fingerprint]={el};
+  }
+  rec.el.querySelector('.t').textContent=(isUpdate?'🔔 延续触发 · ':'')+
+    (m.kind==='A'?'A类·背驰V反':'B类·三买卖点')+(long?'（多）':'（空）');
+  rec.el.querySelector('.i').innerHTML=(m.text||'')+'<br>'+
+    '价 <b>'+m.price+'</b>　触发 '+(m.trigger_time||'').replace('T',' ');
+  rec.timer=setTimeout(()=>{rec.el.remove();delete _pops[m.fingerprint];},12000);
+}
+/* 时效闸门：事件触发时刻距今超过 3 分钟 = 天勤断线窗口错过扫描后恢复的补发，
+   只进事件流，不弹卡/响铃/闪标题（否则恢复瞬间"新事件+一串旧闻"齐弹齐响） */
+function evIsFresh(m){
+  try{
+    const t=String(m.trigger_time||m.time||'').replace(' ','T');
+    if(!t)return true;
+    return (Date.now()-new Date(t).getTime())/1000 <= 180;
+  }catch(e){return true;}
+}
 function toggleMute(){
   _muted=!_muted;
   try{localStorage.setItem('cl_matrix_mute',_muted?'1':'0');}catch(e){}
   paintMute();
   if(!_muted&&'Notification' in window&&Notification.permission==='default')Notification.requestPermission();
+}
+/* ---------- 声音分类设置面板 ---------- */
+function sndPanelToggle(){
+  const p=$('sndPanel');
+  const show=p.style.display!=='block';
+  p.style.display=show?'block':'none';
+  if(show){$('sndConf').value=_snd.conf;$('sndCand').value=_snd.cand;}
+}
+function sndChange(kind,val){
+  _snd[kind]=+val;
+  try{localStorage.setItem('cl_matrix_snd',JSON.stringify(_snd));}catch(e){}
+}
+function sndTest(conf){
+  const f=conf?+$('sndConf').value:+$('sndCand').value;
+  const keep=_muted;_muted=false;
+  beepTone(f,conf);
+  _muted=keep;
 }
 function paintMute(){
   $('muteBtn').textContent=_muted?'🔇 提示音关':'🔊 提示音开';
@@ -278,9 +483,12 @@ function connect(){
       renderStream();
     }else if(m.type==='pattern_alert'){
       const changed=upsertEvent(m);renderStream();
-      if(changed&&m.first!==false){beep();flashTitle(m.text);notify(m);}   // 延续更新不响铃
+      if(changed&&m.first!==false&&evIsFresh(m)){beepFor(m);flashTitle(m.text);notify(m);showPatternPopup(m,false);}
     }else if(m.type==='pattern_alert_update'){
-      upsertEvent(m);renderStream();     // 延续触发：原卡片刷新，不响铃
+      const changed=upsertEvent(m);renderStream();
+      // 延续触发：内容有实质变化（触发时刻/价格变了）也响铃+弹卡；同刻重复推送不重复吵；
+      // 补发的陈旧事件只进流不提醒（evIsFresh）
+      if(changed&&evIsFresh(m)){beepFor(m);flashTitle(m.text);notify(m);showPatternPopup(m,true);}
     }else if(m.type==='pattern_state'){
       applyCell(m.cell);
     }
@@ -311,6 +519,185 @@ function syncBiConf(){
   // 从详情页返回（bfcache）或切回标签页时，重新同步笔配置（有变化服务端会静默重扫+刷新矩阵）
   window.addEventListener('pageshow',syncBiConf);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)syncBiConf();});
+
+/* ---------- 持仓面板（品种×级别×买卖点，Gitee 同步到手机端） ---------- */
+let POSITIONS=[];
+const POS_EXIT={'二买':'二卖','二卖':'二买','三买':'三卖','三卖':'三买'};
+let posEditId=null;
+
+function togglePosPanel(){
+  const p=$('posPanel');
+  const show=p.style.display!=='flex';
+  if(show){ posRestorePos(); loadPositions(); }
+  p.style.display=show?'flex':'none';
+}
+function posSavePos(){
+  const p=$('posPanel');
+  try{ localStorage.setItem('cl_pos_panel',JSON.stringify({l:parseInt(p.style.left),t:parseInt(p.style.top)})); }catch(e){}
+}
+function posRestorePos(){
+  const p=$('posPanel');
+  let pos=null; try{ pos=JSON.parse(localStorage.getItem('cl_pos_panel')||'null'); }catch(e){}
+  if(pos && !isNaN(pos.l)){ p.style.left=pos.l+'px'; p.style.top=pos.t+'px'; }
+  else { p.style.left=(window.innerWidth-392)+'px'; p.style.top='64px'; }
+  p.style.right='auto';
+}
+function posCountText(){
+  const t=`${POSITIONS.length}/4`;
+  $('posCountHdr').textContent=t;
+  $('posCount').textContent=t;
+}
+async function loadPositions(){
+  try{
+    const r=await fetch('/api/positions');
+    const d=await r.json();
+    POSITIONS=d.positions||[];
+    renderPos(); posCountText();
+  }catch(e){}
+}
+function renderPos(){
+  const st=$('posCards');
+  if(!POSITIONS.length){ st.innerHTML='<div class="empty">暂无持仓<br>点上方「+ 添加」录入</div>'; return; }
+  st.innerHTML='';
+  POSITIONS.forEach(p=>{
+    const div=document.createElement('div');
+    const isBuy=(p.entry||'').includes('买');
+    const long=isBuy;
+    const lv=periodLabel(p.period), unit=lv.slice(-1), num=lv.slice(0,-1);
+    let durHtml='';
+    if(p.open_iso){
+      const opened=new Date(p.open_iso);
+      const days=Math.floor((Date.now()-opened)/86400000);
+      const hrs=Math.floor((Date.now()-opened)/3600000);
+      durHtml = days>=1
+        ? `<span class="dur over"><i></i>第 ${days+1} 天 · 按 ${lv} 处理</span>`
+        : `<span class="dur today"><i></i>已持 ${hrs} 小时</span>`;
+    }
+    const xtra=[p.result,p.pnl,p.note].filter(Boolean).join('　');
+    div.className='posCard '+(long?'long':'short');
+    div.innerHTML=`<div class="pbar"></div><div class="bd">
+      <div class="r1"><div><span class="pname">${p.name}</span><span class="psym">${p.symbol}</span></div>
+        <span class="dir">${long?'▲ 多单':'▼ 空单'}</span></div>
+      <div class="hero">
+        <div class="hl lvl"><div class="lv-num">${num}<small>${unit}</small></div><div class="lv-lab">交易级别</div></div>
+        <div class="hdiv"></div>
+        <div class="hl time"><div class="tv">${p.open_time}</div><div class="tl">${p.weekday} · 进场时间</div></div>
+      </div>
+      <div class="r2"><span>进场</span><b class="sig ${long?'buy':'sell'}">${posLabel(p.entry)}</b>
+        <span class="arr">→</span><span>离场</span><b class="sig ${long?'sell':'buy'}">${posLabel(p.exit)}</b></div>
+      ${xtra?`<div class="xtra">${xtra}</div>`:''}
+      <div class="foot">${durHtml}
+        <div class="ops"><button onclick="posEdit('${p.id}')">编辑</button><button class="pc" onclick="posDel('${p.id}')">平仓</button></div></div></div>`;
+    st.appendChild(div);
+  });
+}
+function posFormOpen(editId){
+  const f=$('posForm');
+  posEditId=editId||null;
+  // 品种下拉（基线数据未到时兜底拉一次）
+  const sel=$('pfSymbol');
+  const src=CONTRACTS.length?CONTRACTS:null;
+  if(src){
+    sel.innerHTML=src.map(c=>`<option value="${c.symbol}">${c.name} ${c.symbol}</option>`).join('');
+  }
+  const rec=editId?POSITIONS.find(x=>x.id===editId):null;
+  if(rec){
+    sel.value=rec.symbol;
+    $('pfPeriod').value=rec.period;
+    $('pfEntry').value=rec.entry;
+    $('pfExit').value=rec.exit;
+    $('pfNote').value=rec.note||'';
+    sel.disabled=true;                    // 已有持仓不换品种
+    $('pfSubmit').textContent='保存修改';
+  }else{
+    if(POSITIONS.length>=4){              // 硬限制
+      $('pfSubmit').disabled=true;
+      $('pfSubmit').textContent='已达上限 4 个';
+    }else{
+      $('pfSubmit').disabled=false;
+      $('pfSubmit').textContent='确认添加';
+    }
+    sel.disabled=false;
+    $('pfPeriod').value='5';
+    $('pfEntry').value='二买';
+    pfDeriveExit();
+    $('pfNote').value='';
+  }
+  f.style.display='flex';
+}
+function posFormClose(){ $('posForm').style.display='none'; posEditId=null; }
+function pfDeriveExit(){ $('pfExit').value=POS_EXIT[$('pfEntry').value]||$('pfEntry').value; }
+async function posSubmit(){
+  const body={symbol:$('pfSymbol').value, period:$('pfPeriod').value,
+              entry:$('pfEntry').value, exit:$('pfExit').value, note:$('pfNote').value.trim()};
+  const url=posEditId?'/api/positions/update':'/api/positions/add';
+  if(posEditId) body.id=posEditId;
+  $('pfSubmit').disabled=true;
+  try{
+    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(d.error){ alert(d.error); return; }
+    POSITIONS=d.positions||[];
+    renderPos(); posCountText(); posFormClose();
+    $('posCountHdr').title=(d.sync&&d.sync.ok)?'已同步 Gitee':'⚠ Gitee 同步失败: '+((d.sync||{}).err||'');
+  }catch(e){ alert('提交失败: '+e); }
+  finally{ $('pfSubmit').disabled=($('pfSubmit').textContent.indexOf('上限')>=0); }
+}
+function posLabel(v){ v=v||''; return v.startsWith('二')?('A类'+v+'点'):v.startsWith('三')?('B类'+v+'点'):v; }
+function posEdit(id){ posFormOpen(id); }
+function posDel(id){
+  const rec=POSITIONS.find(x=>x.id===id); if(!rec) return;
+  const now=new Date();
+  const opened=rec.open_iso?new Date(rec.open_iso):now;
+  const hold=Math.max(0,Math.round((now-opened)/60000));
+  const hm=hold>=60?`${Math.floor(hold/60)}小时${hold%60}分`:`${hold}分钟`;
+  $('pcInfo').innerHTML=`<b style="color:#d1d4dc">${rec.name}（${rec.symbol}）</b> ${periodLabel(rec.period)}<br>
+    进场 <b style="color:#d1d4dc">${posLabel(rec.entry)}</b> → 离场 <b style="color:#d1d4dc">${posLabel(rec.exit)}</b><br>
+    开仓 ${rec.open_time} ${rec.weekday} · 持仓 <b style="color:#e8d44d">${hm}</b><br>
+    <span style="font-size:11px;">简报全部选填，直接确认就是平仓删除</span>`;
+  $('pcDelId').value=id;
+  document.querySelectorAll('#pcResults button').forEach(x=>x.classList.remove('sel'));
+  $('pcPnl').value='';
+  $('pcModal').style.display='flex';
+}
+async function posDelConfirm(){
+  const id=$('pcDelId').value;
+  const selB=document.querySelector('#pcResults button.sel');
+  const r=await fetch('/api/positions/delete',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id, close_result:selB?selB.dataset.v:'', close_pnl:$('pcPnl').value.trim()})});
+  const d=await r.json();
+  if(d.error){ alert(d.error); return; }
+  POSITIONS=d.positions||[]; renderPos(); posCountText();
+  $('pcModal').style.display='none';
+}
+function pcSel(b){
+  document.querySelectorAll('#pcResults button').forEach(x=>x.classList.remove('sel'));
+  b.classList.add('sel');
+}
+/* 面板拖动（标题栏手柄，位置记忆） */
+(function(){
+  const head=document.getElementById('posPanelHead');
+  let sx=0,sy=0,ol=0,ot=0,dragging=false;
+  head.addEventListener('mousedown',e=>{
+    if(e.target.tagName==='BUTTON')return;
+    const p=$('posPanel');
+    dragging=true; sx=e.clientX; sy=e.clientY;
+    ol=parseInt(p.style.left||'0'); ot=parseInt(p.style.top||'0');
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove',e=>{
+    if(!dragging)return;
+    const p=$('posPanel');
+    let nl=ol+e.clientX-sx, nt=ot+e.clientY-sy;
+    nl=Math.max(0,Math.min(window.innerWidth-120,nl));
+    nt=Math.max(0,Math.min(window.innerHeight-60,nt));
+    p.style.left=nl+'px'; p.style.top=nt+'px';
+  });
+  document.addEventListener('mouseup',()=>{ if(dragging){ dragging=false; posSavePos(); } });
+})();
+
+  // 暴露给 inline onclick（本块在 IIFE 内，函数默认局部）
+  Object.assign(window,{togglePosPanel,loadPositions,renderPos,posFormOpen,posFormClose,pfDeriveExit,posSubmit,posDel,posDelConfirm,pcSel,posSavePos,posEdit});
   window.__matrixReady=true;
 })();
 </script>

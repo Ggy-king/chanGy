@@ -9,10 +9,11 @@
   *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
   body{background:#131722;color:#d1d4dc;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
   .red{color:#ef5350;} .green{color:#26a69a;} .gold{color:#f0b90b;} .mut{color:#787b86;}
-  header{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding:10px 16px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;}
+  header{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;padding:10px 16px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;}
   header a{color:#f0b90b;text-decoration:none;font-size:14px;flex:none;white-space:nowrap;}
   .head-group{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;min-width:0;}
-  .head-group.left{flex:0 0 auto;align-items:center;gap:8px;}
+  .head-group.left{flex:0 0 auto;align-items:center;gap:6px;}
+  .head-group.right{margin-left:auto;}
   .head-group.left > a{flex:none;width:76px;font-size:14px;white-space:nowrap;}
   .head-group.mid{flex:1 1 0;display:flex;justify-content:center;flex-wrap:wrap;gap:8px 16px;font-size:12.5px;color:#f0b90b;min-width:0;}
   .head-group.mid b{color:#d1d4dc;font-weight:700;}
@@ -149,7 +150,7 @@
   .confirm-box{background:#1e222d;border:1px solid #2a2e39;border-radius:14px;padding:24px 28px;min-width:320px;box-shadow:0 20px 60px rgba(0,0,0,.5);animation:popIn .2s ease;}
   @keyframes popIn{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}
   .confirm-box h3{font-size:16px;font-weight:700;color:#d1d4dc;margin-bottom:10px;}
-  .confirm-box p{font-size:13px;color:#787b86;margin-bottom:20px;line-height:1.6;}
+  .confirm-box p{font-size:13px;color:#787b86;margin-bottom:20px;line-height:1.6;white-space:pre-line;}
   .confirm-box .btns{display:flex;gap:10px;justify-content:flex-end;}
   .confirm-box .btn{padding:8px 20px;border-radius:8px;font-size:13px;cursor:pointer;border:none;font-weight:600;transition:all .15s;}
   .confirm-box .btn.cancel{background:#2a2e39;color:#787b86;}
@@ -188,6 +189,7 @@
     <div class="price"><div class="p" id="p">–</div><div id="chg" class="mut"></div></div>
     <span id="tradeStatus" class="mut"></span>
     <button class="btn icon-btn" onclick="loadPeriod(currentPeriod, true)" title="刷新（保持当前视图不动）">⟳</button>
+    <button class="btn icon-btn" onclick="posAddOpen()" title="一键转为持仓状态（品种/级别/时间自动带入，二买→二卖默认推导；要改细节回监控页编辑）">＋</button>
     <button class="btn icon-btn" id="biConfBtn" onclick="toggleBiConfPanel(event)" title="缠论笔设置：六个开关对应 chan.py CBiConfig，默认=原版默认；有非默认设置时按钮右上角显示金点">⚙</button>
     <button class="btn icon-btn" id="zsConfBtn" onclick="toggleZsConfPanel(event)" title="中枢设置：三笔重叠成枢；三个开关处理边界情况；有非默认设置时按钮右上角显示金点">▣</button>
     <a href="/pc/help" class="btn icon-btn" title="打开设置说明（缠论·笔参数详解）">?</a>
@@ -575,11 +577,12 @@ async function loadStats(){
     const r=await fetch('/api/detail?sym='+encodeURIComponent(SYM));
     const s=await r.json();
     const f=s.fee||{};
+    // akshare 数据源对按比例收费品种（鸡蛋/螺纹等）的"费用/手"列给占位值 0.01，非真实金额 → 显示"按比例"
+    const feeTxt=v=>(v!=null&&Number(v)>0.011)?Number(v)+' 元':'按比例';
     $('hmid').innerHTML=
-      `<span>保证金 <b>${s.margin_per_lot??'–'}</b> 元</span>`+
-      `<span>开 <b>${f.open_cost??'–'}</b></span>`+
-      `<span>平 <b>${f.close_cost??'–'}</b></span>`+
-      `<span>乘数 <b>${f.multiplier??'–'}</b></span>`;
+      `<span>保 <b>${s.margin_per_lot??'–'}</b></span>`+
+      `<span>费 <b>${feeTxt(f.open_cost)}</b>/${feeTxt(f.close_cost)}</span>`+
+      `<span>乘 <b>${f.multiplier??'–'}</b></span>`;
     // 保存乘数和最小跳动给止损计算器用
     calc.multiplier = (f.multiplier!=null && !isNaN(f.multiplier)) ? Number(f.multiplier) : 10;
     calc.tick = (f.min_tick!=null && !isNaN(f.min_tick) && Number(f.min_tick)>0) ? Number(f.min_tick) : 1;
@@ -1554,6 +1557,28 @@ document.getElementById('confirmOkBtn').onclick=()=>{
 document.getElementById('confirmMask').addEventListener('click', e=>{
   if(e.target.id==='confirmMask')closeConfirm();
 });
+</script>
+
+<!-- 添加持仓：一键确认直加（无表单；要改买卖点回监控页编辑） -->
+<script>
+const POS_WEEK=['周日','周一','周二','周三','周四','周五','周六'];
+function posAddOpen(){
+  const inList=['3','5','15','30m','60','daily'].includes(currentPeriod);
+  const period=inList?currentPeriod:'5';
+  const now=new Date();
+  const t=`${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  showConfirm('转为持仓状态',
+    `将记录 ${SYM_NAME||SYM}（${SYM}）· ${period}分 · ${t}\n默认 A类二买 进场 → A类二卖 离场（自动推导）\n要改买卖点/级别可回监控页「持仓」面板编辑`,
+    async()=>{
+      const r=await fetch('/api/positions/add',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({symbol:SYM, period:period, entry:'二买', exit:'二卖', note:''})});
+      const d=await r.json();
+      if(d.error){ alert(d.error); return; }
+      const ok=d.sync&&d.sync.ok;
+      $('nameUpd').textContent= ok?'已记持仓（已同步手机端）':'已记持仓（⚠Gitee同步失败，稍后自动重试）';
+      setTimeout(()=>{ $('nameUpd').textContent=''; },6000);
+    });
+}
 </script>
 </body>
 </html>
