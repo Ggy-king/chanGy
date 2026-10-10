@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -38,6 +40,8 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private String baseUrl;          // 例如 http://192.168.1.5:8000
     private boolean offlineShown;    // 当前处于离线壳页
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private Runnable bootDog;        // 开屏看门狗：主框架 3 秒没加载出来 → 切离线壳
 
     @Override
     protected void onCreate(Bundle b) {
@@ -48,12 +52,28 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(Color.parseColor("#131722"));
 
         web = new WebView(this);
+        web.setBackgroundColor(Color.parseColor("#131722"));   // 消灭加载期白屏（WebView 默认白底）
         WebSettings ws = web.getSettings();
         ws.setJavaScriptEnabled(true);
         ws.setDomStorageEnabled(true);
         ws.setAllowFileAccess(true);
         ws.setAllowUniversalAccessFromFileURLs(true);   // 离线壳(file://)直连 Gitee API
         web.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageStarted(WebView v, String url, android.graphics.Bitmap favicon) {
+                // 开屏看门狗：电脑连不上时 WebView 自己的超时要 10~30 秒才报错，
+                // 期间全是白屏。主框架 3 秒没加载出来 → 直接切离线壳秒开；
+                // 后台解析链找到电脑后 succeed() 会自动切回在线页。
+                if (!offlineShown && url.startsWith("http")) {
+                    if (bootDog != null) ui.removeCallbacks(bootDog);
+                    bootDog = () -> { if (!offlineShown) showOffline(); };
+                    ui.postDelayed(bootDog, 3000);
+                }
+            }
+            @Override
+            public void onPageFinished(WebView v, String url) {
+                if (bootDog != null) { ui.removeCallbacks(bootDog); bootDog = null; }
+            }
             @Override
             public void onReceivedError(WebView v, android.webkit.WebResourceRequest req, android.webkit.WebResourceError err) {
                 // 主页加载失败（电脑不在/地址失效）：不弹全屏提示，直接切离线壳（秒开），后台继续找电脑
@@ -66,10 +86,11 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         setContentView(root);
-        // 秒开：不等任何探测，直接按已知地址进页面（失败由 onReceivedError 静默切离线壳），
-        // 连接/扫描全部放后台，找到电脑后自动切换或刷新。
-        String saved = prefs.getString("base_url", "");
-        web.loadUrl((saved.isEmpty() ? "http://" + DEFAULT_HOST + ":" + PORT : saved) + PAGE);
+        // 秒开（用户定稿 2026-10-10）：启动永远直接进本地离线壳持仓页（file:// 零等待，
+        // localStorage 先渲染 + Gitee 后台取数，拿不到就空态/重试）。
+        // 连电脑是后台自己的事：解析链在后台慢慢找，找到后 succeed() 自动切在线页。
+        offlineShown = true;
+        web.loadUrl("file:///android_asset/positions.html");
         resolveInBackground();
     }
 
@@ -120,10 +141,11 @@ public class MainActivity extends Activity {
         baseUrl = base;
         prefs.edit().putString("base_url", base).apply();
         runOnUiThread(() -> {
-            // 已在正确地址的正常页面 → 不打扰；在离线壳或旧地址 → 自动切换
+            // 已在正确地址的正常页面 → 不打扰；在离线壳或旧地址 → 自动切在线页
             String cur = String.valueOf(web.getUrl());
             if (offlineShown || !cur.startsWith(baseUrl)) {
                 offlineShown = false;
+                web.stopLoading();
                 web.loadUrl(baseUrl + PAGE);
             }
         });
@@ -131,6 +153,8 @@ public class MainActivity extends Activity {
 
     private void showOffline() {
         offlineShown = true;
+        if (bootDog != null) { ui.removeCallbacks(bootDog); bootDog = null; }
+        web.stopLoading();   // 掐掉还在黑洞里等的 http 加载，防止它稍后报错/加载完顶掉离线壳
         web.loadUrl("file:///android_asset/positions.html");
     }
 
