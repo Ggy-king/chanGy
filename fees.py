@@ -35,13 +35,22 @@ def _fetch_all():
                 v = float(r[k]); return v if v == v else d  # nan guard
             except Exception:
                 return d
+        # 按比例收费品种（焦煤/鸡蛋/螺纹等）的"费用/手"列是占位值 0.01，
+        # 真实数据在 费率列（如万1.01）和 "1手XX费用" 列（按最新价折算的真实每手金额）
+        oc, cc, ct = num('开仓费用/手'), num('平仓费用/手'), num('平今费用/手')
+        if oc <= 0.011: oc = num('1手开仓费用')
+        if cc <= 0.011: cc = num('1手平仓费用')
+        if ct <= 0.011: ct = num('1手平今费用')
+        mg = num('做多保证金/手')
+        if mg <= 0: mg = num('做多1手保证金')
         out[_key(code)] = {
             'multiplier': num('合约乘数'),
             'min_tick': num('最小跳动'),
-            'open_cost': num('开仓费用/手'),
-            'close_cost': num('平仓费用/手'),
-            'close_today_cost': num('平今费用/手'),
-            'margin': num('做多保证金/手'),
+            'open_cost': oc,
+            'close_cost': cc,
+            'close_today_cost': ct,
+            'margin': mg,
+            'open_ratio': num('开仓费率'),     # 比例品种留档（如 0.000101 = 万1.01）
         }
     return out
 

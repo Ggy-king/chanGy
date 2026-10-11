@@ -190,8 +190,9 @@ def _build(df, symbol, name, bi_conf=None, zs_conf=None):
             ts = int(df['datetime'].iloc[raw].timestamp())
             buy_price = round(float(df['close'].iloc[raw]), 1)
             stop = round(float(df['low'].iloc[raw]), 1)
+            # marker 文字 = 笔端点价格（底分型极值），不再是"买/卖"字样（用户定稿 2026-10-11）
             markers.append({'time': ts, 'position': 'belowBar', 'color': '#ef5350',
-                            'shape': 'arrowUp', 'text': '买'})
+                            'shape': 'circle', 'text': '%g' % float(df['low'].iloc[raw])})
             signals.append({'side': 'buy', 'time': ts, 'price': buy_price,
                             'stop_loss': stop, 'raw_idx': raw,
                             'label': '底分型确认·买入',
@@ -201,7 +202,7 @@ def _build(df, symbol, name, bi_conf=None, zs_conf=None):
             ts = int(df['datetime'].iloc[raw].timestamp())
             sell_price = round(float(df['close'].iloc[raw]), 1)
             markers.append({'time': ts, 'position': 'aboveBar', 'color': '#26a69a',
-                            'shape': 'arrowDown', 'text': '卖'})
+                            'shape': 'circle', 'text': '%g' % float(df['high'].iloc[raw])})
             signals.append({'side': 'sell', 'time': ts, 'price': sell_price,
                             'label': '顶分型确认·平多',
                             'reason': '15分顶分型确认，向下笔起点，平多止盈'})

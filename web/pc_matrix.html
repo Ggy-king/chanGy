@@ -128,7 +128,7 @@ select{appearance:none;-webkit-appearance:none;
   background-repeat:no-repeat;background-position:right 9px center;}
 /* 右上角预警弹卡：页面内 DOM 弹窗，不依赖浏览器通知授权（Notification 授权丢了也能弹） */
 #popStack{position:fixed;top:20px;right:20px;z-index:150;display:flex;flex-direction:column;gap:10px;
-  pointer-events:none;max-width:340px;}
+  pointer-events:none;max-width:340px;max-height:calc(100vh - 40px);overflow:hidden;}
 .alert-pop{pointer-events:auto;position:relative;background:#1e222d;border:2px solid #ef5350;border-radius:12px;
   padding:11px 30px 11px 16px;box-shadow:0 8px 30px #000a;cursor:pointer;font-size:12.5px;
   animation:popSlide .25s ease;}
@@ -360,8 +360,16 @@ function cardEl(m){
 const trigT=m=>m.trigger_time||m.time||'';
 
 function renderStream(){
+  const firstT=m=>m.first_time||m.time||'';
   const list=(TAB==='conf'?EVTS.filter(isConf):EVTS)
-    .slice().sort((a,b)=>(trigT(b)>trigT(a)?1:trigT(b)<trigT(a)?-1:0));   // 按触发时刻降序
+    .slice().sort((a,b)=>{
+      const d=trigT(b)>trigT(a)?1:trigT(b)<trigT(a)?-1:0;   // 按触发时刻降序（主序，时间说话）
+      if(d)return d;
+      const f=firstT(b)>firstT(a)?-1:firstT(b)<firstT(a)?1:0; // 同刻：结构形成晚的在前
+      if(f)return f;
+      const k=evKey(a)>evKey(b)?1:evKey(a)<evKey(b)?-1:0;     // 同刻同结构（A/B配对）：指纹定序，实时与重建同序
+      return k;
+    });
   const view=list.slice(0,CAP[TAB]);
   const st=$('stream');st.innerHTML='';
   view.forEach(m=>st.appendChild(cardEl(m)));
@@ -423,7 +431,7 @@ function showPatternPopup(m,isUpdate){
     el.onclick=()=>{location.href='/pc/detail?sym='+encodeURIComponent(m.symbol);};
     el.innerHTML='<span class="x" onclick="event.stopPropagation();this.parentElement.remove()">×</span>'+
       '<div class="t '+(long?'up':'down')+'"></div><div class="i"></div>';
-    $('popStack').appendChild(el);   // 叠叠乐：新卡排在下面，先来先走
+    $('popStack').prepend(el);   // 新卡在最上，老卡依次下挤（聊天软件通知式排列）
     rec=_pops[m.fingerprint]={el};
   }
   rec.el.querySelector('.t').textContent=(isUpdate?'🔔 延续触发 · ':'')+

@@ -51,11 +51,15 @@
   .alert-list-panel .foot{padding:8px 14px;border-top:1px solid #d8dde6;background:#fff;border-radius:0 0 12px 12px;display:flex;justify-content:flex-end;}
   .alert-list-panel .foot .btn{background:#ef5350;border-color:#ef5350;color:#fff;padding:6px 14px;font-size:12.5px;border-radius:8px;cursor:pointer;border-style:solid;border-width:1px;}
   /* ⚙ 笔设置按钮：有非默认设置时右上角金色小点提示 */
-  #biConfBtn{position:relative;}
-  #biConfBtn.dirty::after{content:'';position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:#f0b90b;}
-  /* ▣ 中枢设置按钮：有非默认设置时右上角金色小点提示 */
-  #zsConfBtn{position:relative;}
-  #zsConfBtn.dirty::after{content:'';position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:#f0b90b;}
+  /* ⚙ 大设置按钮：笔或中枢有非默认设置时右上角金色小点提示 */
+  #setBtn{position:relative;}
+  #setBtn.dirty::after{content:'';position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:#f0b90b;}
+  /* ⚙ 设置下拉菜单（同右键菜单风格） */
+  #setMenu{position:absolute;z-index:9999;background:#1e222d;border:1px solid #2a2e39;border-radius:8px;padding:4px;display:none;min-width:150px;box-shadow:0 4px 20px rgba(0,0,0,.5);}
+  #setMenu .item{padding:8px 14px;cursor:pointer;border-radius:6px;font-size:13px;color:#d1d4dc;}
+  #setMenu .item:hover{background:#2a2e39;}
+  /* 📊 图表设置面板（同笔/中枢面板风格） */
+  #chartConfPanel{position:fixed;z-index:9998;background:#1e222d;border:1px solid #2a2e39;border-radius:12px;padding:12px 14px 14px;width:316px;box-shadow:0 8px 30px rgba(0,0,0,.6);display:none;}
   /* ▣ 中枢下拉设置面板 */
   #zsConfPanel{position:fixed;z-index:9998;background:#1e222d;border:1px solid #2a2e39;border-radius:12px;padding:12px 14px 10px;width:316px;box-shadow:0 8px 30px rgba(0,0,0,.6);display:none;}
   /* ⚙ 下拉设置面板 */
@@ -190,15 +194,82 @@
     <span id="tradeStatus" class="mut"></span>
     <button class="btn icon-btn" onclick="loadPeriod(currentPeriod, true)" title="刷新（保持当前视图不动）">⟳</button>
     <button class="btn icon-btn" onclick="posAddOpen()" title="一键转为持仓状态（品种/级别/时间自动带入，二买→二卖默认推导；要改细节回监控页编辑）">＋</button>
-    <button class="btn icon-btn" id="biConfBtn" onclick="toggleBiConfPanel(event)" title="缠论笔设置：六个开关对应 chan.py CBiConfig，默认=原版默认；有非默认设置时按钮右上角显示金点">⚙</button>
-    <button class="btn icon-btn" id="zsConfBtn" onclick="toggleZsConfPanel(event)" title="中枢设置：三笔重叠成枢；三个开关处理边界情况；有非默认设置时按钮右上角显示金点">▣</button>
-    <a href="/pc/help" class="btn icon-btn" title="打开设置说明（缠论·笔参数详解）">?</a>
+    <button class="btn icon-btn" id="setBtn" onclick="toggleSetMenu(event)" title="设置：缠论笔 / 中枢 / 图表 / 使用说明（笔或中枢有非默认设置时右上角显示金点）">⚙</button>
     <button class="btn icon-btn alert-list-btn" id="alertListBtn" onclick="toggleAlertList()" title="预警列表">🔔<span class="badge" id="alertBadge">0</span></button>
   </div>
 </header>
 <main>
   <div id="chartbox"></div>
+  <!-- ⚙ 大设置按钮的下拉菜单（笔/中枢/图表/说明，用户定稿：右键菜单留给量化关键功能） -->
+  <div id="setMenu">
+    <div class="item" onclick="openFromMenu('bi')">✏️ 缠论笔设置</div>
+    <div class="item" onclick="openFromMenu('zs')">▣ 中枢设置</div>
+    <div class="item" onclick="openFromMenu('chart')">📊 图表设置</div>
+    <div class="item" onclick="location.href='/pc/help'">❓ 使用说明</div>
+  </div>
+  <!-- 📊 图表设置面板 -->
+  <div id="chartConfPanel">
+    <div class="bc-title">缠论 · 图表 <span class="mut">实时生效并记忆</span></div>
+    <div class="bc-row">
+      <span class="bc-label" title="显示K线图竖向网格线">竖网格</span>
+      <label class="bc-toggle" for="gridVToggle" title="切换竖网格">
+        <input type="checkbox" id="gridVToggle">
+        <span class="switch"></span>
+        <span class="txt">开</span>
+      </label>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="显示K线图横向网格线">横网格</span>
+      <label class="bc-toggle" for="gridHToggle" title="切换横网格">
+        <input type="checkbox" id="gridHToggle">
+        <span class="switch"></span>
+        <span class="txt">开</span>
+      </label>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="显示或隐藏图表底部的成交量柱">成交量</span>
+      <label class="bc-toggle" for="volToggle" title="切换成交量显示">
+        <input type="checkbox" id="volToggle">
+        <span class="switch"></span>
+        <span class="txt">开</span>
+      </label>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="贯穿整个图表的当前价水平虚线（不喜欢可以单独关掉，右侧价格标签不受影响）">贯穿现价线</span>
+      <label class="bc-toggle" for="priceLineToggle" title="切换贯穿现价线">
+        <input type="checkbox" id="priceLineToggle">
+        <span class="switch"></span>
+        <span class="txt">开</span>
+      </label>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="右侧价格轴上跟随最新价上下移动的价格标签">轴上现价标签</span>
+      <label class="bc-toggle" for="lastValueToggle" title="切换轴上现价标签">
+        <input type="checkbox" id="lastValueToggle">
+        <span class="switch"></span>
+        <span class="txt">开</span>
+      </label>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="十字光标样式：正常=十字线全程跟随；磁性=自动吸到K线上；隐藏=关闭十字光标">十字星</span>
+      <div class="seg" id="crossSeg">
+        <button data-m="0">正常</button>
+        <button data-m="1">磁性</button>
+        <button data-m="2">隐藏</button>
+      </div>
+    </div>
+    <div class="bc-row">
+      <span class="bc-label" title="笔端点标记文字：价格=端点价格（配合止损线定位最快）；买卖=原来的买/卖；智能=只标当前有效结构上的2买/3买/2卖/3卖，判不出的不显示">端点标记</span>
+      <div class="seg" id="mkSeg">
+        <button data-m="price">价格</button>
+        <button data-m="bs">买卖</button>
+        <button data-m="smart">智能</button>
+      </div>
+    </div>
+  </div>
   <div id="ctxMenu">
+    <div class="item" onclick="startSlSet()">🛡 一键止损线（按现价）</div>
+    <div class="sep"></div>
     <div class="item" onclick="startAddAlert()">＋ 添加价格预警</div>
     <div class="sep"></div>
     <div class="item" id="ctxToggleSide" onclick="toggleSidePanel()">隐藏右侧信息栏</div>
@@ -529,19 +600,42 @@ function applyView(){
   }
 }
 
+// ===== 图表设置（⚙大按钮 → 📊 图表设置）：网格/成交量/现价线/标签/十字星，存 localStorage =====
+const GRID_COLOR='rgba(120,123,134,.13)';   // 低调暗灰，比库默认(#2B2B43 偏亮蓝)更细更不抢眼
+const CC={gridV:false,gridH:false,vol:true,priceLine:true,lastValue:true,crossMode:0,markerMode:'price'};
+try{
+  const c=JSON.parse(localStorage.getItem('cl_chart_conf')||'null');
+  if(c) Object.assign(CC,{gridV:!!c.gridV,gridH:!!c.gridH,vol:c.vol!==false,
+    priceLine:c.priceLine!==false,lastValue:c.lastValue!==false,
+    crossMode:[0,1,2].includes(c.crossMode)?c.crossMode:0,
+    markerMode:['price','bs','smart'].includes(c.markerMode)?c.markerMode:'price'});
+}catch(e){}
+function applyChartConf(){
+  try{ chart.applyOptions({grid:{vertLines:{visible:CC.gridV,color:GRID_COLOR},
+    horzLines:{visible:CC.gridH,color:GRID_COLOR}}}); }catch(e){}
+  try{ vol.applyOptions({visible:CC.vol}); }catch(e){}
+  try{ candle.applyOptions({priceLineVisible:CC.priceLine,lastValueVisible:CC.lastValue}); }catch(e){}
+  try{ chart.applyOptions({crosshair:{mode:CC.crossMode}}); }catch(e){}
+}
+function saveChartConf(){
+  try{ localStorage.setItem('cl_chart_conf',JSON.stringify(CC)); }catch(e){}
+}
+
 function initChart(){
   const el=$('chartbox');
   chart=LightweightCharts.createChart(el,{
     layout:{background:{type:'solid',color:'#131722'},textColor:'#787b86',fontSize:11},
-    grid:{vertLines:{visible:false},horzLines:{visible:false}},
+    grid:{vertLines:{visible:CC.gridV},horzLines:{visible:CC.gridH}},
     crosshair:{mode:0},
     rightPriceScale:{borderColor:'rgba(197,203,206,.15)'},
     timeScale:{borderVisible:false,timeVisible:true,secondsVisible:false}});
   candle=chart.addCandlestickSeries({upColor:'#ef5350',downColor:'#26a69a',
-    borderUpColor:'#ef5350',borderDownColor:'#26a69a',wickUpColor:'#ef5350',wickDownColor:'#26a69a'});
+    borderUpColor:'#ef5350',borderDownColor:'#26a69a',wickUpColor:'#ef5350',wickDownColor:'#26a69a',
+    priceLineVisible:CC.priceLine,lastValueVisible:CC.lastValue});
   vol=chart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'',
-    lastValueVisible:false,priceLineVisible:false});
+    lastValueVisible:false,priceLineVisible:false,visible:CC.vol});
   vol.priceScale().applyOptions({scaleMargins:{top:.82,bottom:0}});
+  applyChartConf();
   // 中枢边框：画在独立 canvas 浮层上（脱离图表 series），四条边统一虚线、粗细一致
   zsOverlay=document.createElement('canvas');
   zsOverlay.id='zsOverlay';
@@ -579,9 +673,11 @@ async function loadStats(){
     const f=s.fee||{};
     // akshare 数据源对按比例收费品种（鸡蛋/螺纹等）的"费用/手"列给占位值 0.01，非真实金额 → 显示"按比例"
     const feeTxt=v=>(v!=null&&Number(v)>0.011)?Number(v)+' 元':'按比例';
+    // "平"按平今算（用户定稿：只在乎手续费最多多少；平今历来最贵，平今免费的特殊品种取平昨=max）
+    const feeClose=Math.max(Number(f.close_today_cost)||0, Number(f.close_cost)||0);
     $('hmid').innerHTML=
       `<span>保 <b>${s.margin_per_lot??'–'}</b></span>`+
-      `<span>费 <b>${feeTxt(f.open_cost)}</b>/${feeTxt(f.close_cost)}</span>`+
+      `<span>费 <b>${feeTxt(f.open_cost)}</b>/${feeTxt(feeClose)}</span>`+
       `<span>乘 <b>${f.multiplier??'–'}</b></span>`;
     // 保存乘数和最小跳动给止损计算器用
     calc.multiplier = (f.multiplier!=null && !isNaN(f.multiplier)) ? Number(f.multiplier) : 10;
@@ -646,23 +742,55 @@ function applyBiConf(reload){
     seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===biConf[key]));
   });
   applyBiVisibility(false);
-  $('biConfBtn').classList.toggle('dirty', !biConfIsDefault());
+  updateSetDot();
   if(reload){
     // 笔配置变了，K线缓存里的旧笔一并作废
     Object.keys(_klineCache).forEach(k=>delete _klineCache[k]);
     loadPeriod(currentPeriod, false, true);
   }
 }
+// ⚙ 大按钮金点：笔或中枢有非默认设置时点亮（兼容两面板初始化先后）
+function updateSetDot(){
+  let dirty=false;
+  try{ dirty=!biConfIsDefault(); }catch(e){}
+  try{ dirty=dirty||!zsConfIsDefault(); }catch(e){}
+  $('setBtn').classList.toggle('dirty', dirty);
+}
+function toggleSetMenu(e){
+  if(e) e.stopPropagation();
+  const m=$('setMenu');
+  if(m.style.display==='block'){ m.style.display='none'; return; }
+  // 打开菜单前先收掉已弹出的设置面板，避免叠在一起（用户反馈 2026-10-11）
+  ['biConfPanel','zsConfPanel','chartConfPanel'].forEach(x=>{ $(x).style.display='none'; });
+  const btn=$('setBtn'), r=btn.getBoundingClientRect();
+  m.style.display='block';
+  let left=r.right-m.offsetWidth; if(left<8) left=8;
+  m.style.left=left+'px';
+  m.style.top=(r.bottom+6)+'px';
+}
+function openFromMenu(kind){
+  $('setMenu').style.display='none';
+  if(kind==='bi'){ applyBiConf(false); showConfPanel('biConfPanel'); }
+  else if(kind==='zs'){ applyZsConf(false); showConfPanel('zsConfPanel'); }
+  else if(kind==='chart'){ showConfPanel('chartConfPanel'); }
+}
+function showConfPanel(id){
+  // 关其它面板，锚定在 ⚙ 大按钮下方（面板统一从这里弹出）
+  ['biConfPanel','zsConfPanel','chartConfPanel'].forEach(x=>{
+    if(x!==id) $(x).style.display='none';
+  });
+  const p=$(id), r=$('setBtn').getBoundingClientRect();
+  p.style.display='block';
+  let left=r.right-p.offsetWidth; if(left<8) left=8;
+  p.style.left=left+'px';
+  p.style.top=(r.bottom+6)+'px';
+}
 function toggleBiConfPanel(e){
   if(e) e.stopPropagation();
   const p=$('biConfPanel');
   if(p.style.display==='block'){ p.style.display='none'; return; }
   applyBiConf(false);
-  const btn=$('biConfBtn'), r=btn.getBoundingClientRect();
-  p.style.display='block';
-  let left=r.right-p.offsetWidth; if(left<8) left=8;
-  p.style.left=left+'px';
-  p.style.top=(r.bottom+6)+'px';
+  showConfPanel('biConfPanel');
 }
 document.querySelectorAll('#biConfPanel .seg button').forEach(b=>{
   b.addEventListener('click',ev=>{
@@ -684,14 +812,55 @@ $('biVisibleToggle').addEventListener('change',ev=>{
   biVisible=ev.target.checked;
   applyBiVisibility();
 });
+// 📊 图表设置开关：竖网格/横网格/成交量/贯穿现价线/轴上现价标签
+[['gridVToggle','gridV'],['gridHToggle','gridH'],['volToggle','vol'],
+ ['priceLineToggle','priceLine'],['lastValueToggle','lastValue']].forEach(([id,key])=>{
+  const el=$(id);
+  el.checked=CC[key];
+  el.addEventListener('change',ev=>{
+    ev.stopPropagation();
+    CC[key]=ev.target.checked;
+    saveChartConf();
+    applyChartConf();
+    const t=el.parentElement.querySelector('.txt'); if(t) t.textContent=CC[key]?'开':'关';
+  });
+});
+// 十字星三档：正常(0)/磁性(1)/隐藏(2)
+document.querySelectorAll('#crossSeg button').forEach(b=>{
+  if(parseInt(b.dataset.m)===CC.crossMode) b.classList.add('on');
+  b.addEventListener('click',ev=>{
+    ev.stopPropagation();
+    CC.crossMode=parseInt(b.dataset.m);
+    saveChartConf();
+    applyChartConf();
+    document.querySelectorAll('#crossSeg button').forEach(x=>x.classList.toggle('on',x===b));
+  });
+});
+// 端点标记三档：价格/买卖/智能（服务端按档位出 markers，切换即重拉当前级别）
+document.querySelectorAll('#mkSeg button').forEach(b=>{
+  if(b.dataset.m===CC.markerMode) b.classList.add('on');
+  b.addEventListener('click',ev=>{
+    ev.stopPropagation();
+    CC.markerMode=b.dataset.m;
+    saveChartConf();
+    document.querySelectorAll('#mkSeg button').forEach(x=>x.classList.toggle('on',x===b));
+    Object.keys(_klineCache).forEach(k=>delete _klineCache[k]);   // 缓存里的旧标记作废
+    loadPeriod(currentPeriod, false, true);
+  });
+});
 document.addEventListener('click',e=>{
-  if(!e.target.closest('#biConfPanel') && !e.target.closest('#biConfBtn'))
+  const inSet=e.target.closest('#setBtn')||e.target.closest('#setMenu');
+  if(!e.target.closest('#biConfPanel') && !inSet)
     $('biConfPanel').style.display='none';
-  if(!e.target.closest('#zsConfPanel') && !e.target.closest('#zsConfBtn'))
+  if(!e.target.closest('#zsConfPanel') && !inSet)
     $('zsConfPanel').style.display='none';
+  if(!e.target.closest('#chartConfPanel') && !inSet)
+    $('chartConfPanel').style.display='none';
+  if(!inSet)
+    $('setMenu').style.display='none';
 });
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'){ $('biConfPanel').style.display='none'; $('zsConfPanel').style.display='none'; }
+  if(e.key==='Escape'){ $('biConfPanel').style.display='none'; $('zsConfPanel').style.display='none'; $('chartConfPanel').style.display='none'; $('setMenu').style.display='none'; }
 });
 
 // ===== 中枢设置（三笔重叠成枢，三个边界开关 + 显隐） =====
@@ -715,7 +884,7 @@ function applyZsConf(reload){
     seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===zsConf[key]));
   });
   applyZsVisibility(false);
-  $('zsConfBtn').classList.toggle('dirty', !zsConfIsDefault());
+  updateSetDot();
   if(reload){
     // 中枢配置变了，缓存作废重拉（中枢从笔现算，笔配置变化同样会带到这里）
     Object.keys(_klineCache).forEach(k=>delete _klineCache[k]);
@@ -784,11 +953,7 @@ function toggleZsConfPanel(e){
   const p=$('zsConfPanel');
   if(p.style.display==='block'){ p.style.display='none'; return; }
   applyZsConf(false);
-  const btn=$('zsConfBtn'), r=btn.getBoundingClientRect();
-  p.style.display='block';
-  let left=r.right-p.offsetWidth; if(left<8) left=8;
-  p.style.left=left+'px';
-  p.style.top=(r.bottom+6)+'px';
+  showConfPanel('zsConfPanel');
 }
 document.querySelectorAll('#zsConfPanel .seg button').forEach(b=>{
   b.addEventListener('click',ev=>{
@@ -833,7 +998,7 @@ let _errRetryTimer=null;
 async function loadPeriod(period, isRefresh, onlyBi){
   try{
     if(onlyBi){
-      const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery()+zsQuery());
+      const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery()+zsQuery()+'&mk='+CC.markerMode);
       const s=await r.json();
       if(s.error){ console.warn('[笔刷新] 后端返回错误:', s.error); return; }
       setBiData(fixTime(s.bi||[]), fixTime(s.markers||[]));
@@ -854,7 +1019,7 @@ async function loadPeriod(period, isRefresh, onlyBi){
       if(_cacheLoading[period]) return;
     }
     _cacheLoading[period]=true;
-    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery()+zsQuery()+(isRefresh?'&force=1':''));
+    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery()+zsQuery()+'&mk='+CC.markerMode+(isRefresh?'&force=1':''));
     const s=await r.json();
     _cacheLoading[period]=false;
     if(s.error){
@@ -919,6 +1084,9 @@ function renderKlineData(s, period, isRefresh){
   $('nameUpd').textContent='更新 '+ts;
   $('cd').textContent=s.symbol+' · '+label+' · '+s.bar_count+'根/'+s.bi_count+'笔'+((s.zs||[]).length?'/'+s.zs.length+'枢':'');
   $('p').textContent=s.last_price;
+  // 实时价喂给一键止损线：入场=现价，价格一动线上"金额/手数/点数"实时重算
+  const _lp=Number(s.last_price);
+  if(isFinite(_lp)&&_lp>0&&_lp!==_livePrice){ _livePrice=_lp; slRefresh(); }
   const up=s.change>=0;
   $('chg').innerHTML=`<span class="${up?'red':'green'}">${up?'▲':'▼'} ${Math.abs(s.change)} (${s.change_pct}%)</span>`;
   const biStr=JSON.stringify(s.bi||[]);
@@ -937,6 +1105,7 @@ function renderKlineData(s, period, isRefresh){
     vol.setData(fixTime(s.vol||[]));
     setBiData(fixTime(s.bi||[]), fixTime(s.markers||[]));
     setZsData(s.zs||[]);
+    loadSlLine();   // 止损线按 (品种,级别) 存取：切级别清旧线、取回当前级别的线
     applyView();
   }
   _lastBiStr=biStr;
@@ -1010,6 +1179,7 @@ document.querySelectorAll('#riskSeg button').forEach(b=>{
     calc.riskPct=parseFloat(b.dataset.p);
     try{localStorage.setItem('cl_calc_risk_pct', calc.riskPct);}catch(e){}
     if(calc.hasResult) updateCalc(calc.startPrice, calc._lastStopPrice);
+    slRefresh();
   };
 });
 // 总资金输入
@@ -1017,12 +1187,14 @@ $('calcCapital').addEventListener('input',()=>{
   calc.capital=parseFloat($('calcCapital').value)||0;
   try{localStorage.setItem('cl_calc_capital', calc.capital);}catch(e){}
   if(calc.hasResult) updateCalc(calc.startPrice, calc._lastStopPrice);
+  slRefresh();
 });
 // 固定手数输入
 $('calcLots').addEventListener('input',()=>{
   const v=$('calcLots').value;
   calc.fixedLots=(v&&parseFloat(v)>0)?parseFloat(v):null;
   if(calc.hasResult) updateCalc(calc.startPrice, calc._lastStopPrice);
+  slRefresh();
 });
 
 function toggleMeasure(){
@@ -1150,6 +1322,81 @@ function updateCalc(entry, stop){
       title:(over?'⚠ ':'')+loss.toFixed(0)+'元/'+lots+'手/'+pts.toFixed(1)+'点'
     });
   }
+}
+
+// ===== 一键止损线（右键菜单 → 点击图面布线；入场价=实时价，不拖不用；线上实时反算 金额/手数/点数）=====
+// 存服务端内存（随项目存活：项目停线消失，切页面/切级别回来还在）；可拖动微调，右键删除。
+let slLine=null;        // 当前级别图上的止损线
+let slSetting=false;    // 布防模式：下一击图面设线
+let slDragging=false, slDragOffset=0;
+let _livePrice=null;    // 实时价（renderKlineData 每轮刷新更新）
+
+function slCompute(stop){
+  // 入场=实时价；其余参数全部复用止损计算器（总资金/止损比/固定手数/乘数）
+  const entry=(_livePrice!=null)?_livePrice:stop;
+  const pts=Math.abs(entry-stop);
+  const perLot=pts*calc.multiplier;
+  const maxLoss=(calc.capital||0)*calc.riskPct;
+  let lots, auto=(calc.fixedLots==null);
+  if(auto){ lots=perLot>0?Math.floor(maxLoss/perLot):1; if(lots<1)lots=1; }
+  else lots=calc.fixedLots;
+  const loss=lots*perLot;
+  const pct=calc.capital>0?(loss/calc.capital*100):0;
+  return {pts, lots, loss, over:pct>calc.riskPct*100+0.001};
+}
+function slTitle(stop){
+  const c=slCompute(stop);
+  return (c.over?'⚠ ':'')+c.loss.toFixed(0)+'元/'+c.lots+'手/'+c.pts.toFixed(1)+'点';
+}
+function slRefresh(){   // 实时价变化/计算器参数变化时刷新线上播报
+  if(!slLine||slDragging) return;
+  try{ const p=slLine.options().price; slLine.applyOptions({title:slTitle(p)}); }catch(e){}
+}
+function slRender(price){
+  const sp=snapPrice(price);
+  if(slLine){
+    try{ slLine.applyOptions({price:sp, title:slTitle(sp)}); }catch(e){}
+  }else{
+    slLine=candle.createPriceLine({
+      price:sp, color:'#ef5350', lineWidth:2, lineStyle:2,
+      axisLabelVisible:true, title:slTitle(sp), draggable:true
+    });
+  }
+  return sp;
+}
+async function slSave(price){
+  try{ await fetch('/api/sl_line',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({sym:SYM,price:price})}); }catch(e){}
+}
+function startSlSet(){
+  hideCtxMenu();
+  slSetting=true;
+  const el=document.getElementById('chartbox');
+  el.style.cursor='crosshair';
+  _origCrosshairMode=chart.options().crosshair.mode;
+  chart.applyOptions({crosshair:{mode:2}});   // 隐藏十字星，避免价格标签遮挡
+  $('nameUpd').textContent='点击图面设置止损线（现价=入场价）· 右键取消';
+  setTimeout(()=>{ if(slSetting)$('nameUpd').textContent=''; },4000);
+}
+function cancelSlSet(){
+  slSetting=false;
+  const el=document.getElementById('chartbox');
+  el.style.cursor='';
+  chart.applyOptions({crosshair:{mode:_origCrosshairMode}});
+  $('nameUpd').textContent='';
+}
+function slSetAt(price){
+  cancelSlSet();
+  const sp=slRender(price);
+  slSave(sp);
+}
+async function loadSlLine(){
+  // 切级别/进页面时调用：取回本品种的通用止损线（一条线跨级别通用，价格不变）
+  if(slLine){ try{candle.removePriceLine(slLine);}catch(e){} slLine=null; }
+  try{
+    const j=await (await fetch('/api/sl_line?sym='+encodeURIComponent(SYM))).json();
+    if(j.price!=null) slRender(j.price);
+  }catch(e){}
 }
 
 // 初始化
@@ -1315,6 +1562,7 @@ function playAlertSound(){
 document.getElementById('chartbox').addEventListener('contextmenu', function(e){
   e.preventDefault();
   if(addingAlert){cancelAddAlert();return;}
+  if(slSetting){cancelSlSet();return;}
   const rect=this.getBoundingClientRect();
   const y=e.clientY-rect.top;
   const price=candle.coordinateToPrice(y);
@@ -1327,6 +1575,16 @@ document.getElementById('chartbox').addEventListener('contextmenu', function(e){
   menu.style.top=(e.clientY+window.scrollY)+'px';
 });
 document.addEventListener('click', (e)=>{
+  if(slSetting && e.target.closest('#chartbox')){
+    const el=document.getElementById('chartbox');
+    const rect=el.getBoundingClientRect();
+    const y=e.clientY-rect.top;
+    const price=candle.coordinateToPrice(y);
+    if(price!==null && price!==undefined && !isNaN(price)){
+      slSetAt(price);
+      return;
+    }
+  }
   if(addingAlert && e.target.closest('#chartbox')){
     const el=document.getElementById('chartbox');
     const rect=el.getBoundingClientRect();
@@ -1352,9 +1610,10 @@ document.getElementById('chartbox').addEventListener('mousemove', function(e){
   }
 });
 
-// ESC取消添加预警
+// ESC取消添加预警/止损布防
 document.addEventListener('keydown', e=>{
   if(e.key==='Escape' && addingAlert) cancelAddAlert();
+  if(e.key==='Escape' && slSetting) cancelSlSet();
 });
 
 // ========== 预警线拖动和右键删除 ==========
@@ -1395,10 +1654,37 @@ document.addEventListener('mousedown', function(e){
     e.preventDefault();
     e.stopPropagation();
     chartEl.style.cursor='ns-resize';
+    return;
+  }
+  // 止损线拖动（同预警线手感）
+  if(slLine){
+    try{
+      const lp=slLine.options().price;
+      const ly=candle.priceToCoordinate(lp);
+      if(ly!==null && Math.abs(ly-y)<=15){
+        slDragging=true;
+        const curPrice=priceAtY(y);
+        slDragOffset=(curPrice!==null)?(lp-curPrice):0;
+        e.preventDefault();
+        e.stopPropagation();
+        chartEl.style.cursor='ns-resize';
+      }
+    }catch(err){}
   }
 }, true);
 
 document.addEventListener('mousemove', function(e){
+  if(slDragging){
+    const chartEl=document.getElementById('chartbox');
+    if(!chartEl) return;
+    const rect=chartEl.getBoundingClientRect();
+    const y=e.clientY-rect.top;
+    const price=priceAtY(y);
+    if(price===null) return;
+    const newPrice=snapPrice(price+slDragOffset);
+    try{ slLine.applyOptions({price:newPrice, title:slTitle(newPrice)}); }catch(err){}
+    return;
+  }
   if(!draggingAlert) return;
   const chartEl=document.getElementById('chartbox');
   if(!chartEl) return;
@@ -1414,6 +1700,19 @@ document.addEventListener('mousemove', function(e){
 }, true);
 
 document.addEventListener('mouseup', function(){
+  if(!draggingAlert && slDragging){
+    const chartEl=document.getElementById('chartbox');
+    if(chartEl) chartEl.style.cursor='';
+    slDragging=false;
+    let rawPrice=null;
+    try{ rawPrice=slLine.options().price; }catch(err){}
+    if(rawPrice!==null){
+      const sp=snapPrice(rawPrice);
+      try{ slLine.applyOptions({price:sp, title:slTitle(sp)}); }catch(err){}
+      slSave(sp);   // 拖完存服务端（随项目存活）
+    }
+    return;
+  }
   if(!draggingAlert) return;
   const chartEl=document.getElementById('chartbox');
   if(chartEl) chartEl.style.cursor='';
@@ -1464,6 +1763,23 @@ document.addEventListener('contextmenu', function(e){
         })
         .catch(err=>console.error('[预警] 删除失败', err));
     });
+    return;
+  }
+  // 右键删除止损线（同预警线交互）
+  if(slLine){
+    try{
+      const lp=slLine.options().price;
+      const ly=candle.priceToCoordinate(lp);
+      if(ly!==null && Math.abs(ly-y)<=15){
+        e.preventDefault();
+        e.stopPropagation();
+        showConfirm('删除止损线', '确定删除这条止损线吗？', ()=>{
+          fetch('/api/sl_line?sym='+encodeURIComponent(SYM), {method:'DELETE'}).catch(()=>{});
+          try{candle.removePriceLine(slLine);}catch(err){}
+          slLine=null;
+        });
+      }
+    }catch(err){}
   }
 }, true);
 

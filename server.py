@@ -414,7 +414,8 @@ async def _apply_pattern(sym, name, period, result, push):
                    'bi_span': ev.get('bi_span'), 'ratio': ev.get('ratio'),
                    'brief': _pattern_brief(ev['pattern'], ev),
                    'fingerprint': ev['fingerprint'],
-                   'text': _pattern_text(name, period, ev), 'ts': time.time()}
+                   'text': _pattern_text(name, period, ev), 'ts': time.time(),
+                   'first_time': ev['time']}   # 快照重建时首检时刻≈触发时刻（内存流不丢首次显示）
             if push:
                 await _upsert_event_card(msg)
             else:
@@ -485,47 +486,101 @@ _PERIOD_SCAN_MIN = {'3': 3, '5': 5, '15': 15, '30m': 30, '60': 60}
 _last_scan_minute = {}    # period -> 上次扫描的 minute_of_day（防同一分钟内 30s tick 重复拉）
 
 
+_SESSION_CLOSE_MIN = (11 * 60 + 30, 15 * 60, 23 * 60, 2 * 60 + 30)   # 各时段真实收盘（分钟）
+_last_catchup = None       # (日期, 收盘分钟) 防同一次收盘重复收尾
+_baseline_ts = 0.0         # 基线完成时刻（刚跑完基线就无需收尾，数据相同）
+_last_loop_ts = None       # 上一轮循环时刻（检测停摆：合盖休眠超 4 分钟 → 恢复后立即补扫）
+
+
 async def pattern_loop():
     """形态监视主循环（§5.2/§5.4 + 用户节奏要求）：
     交易时段每 30s 醒来检查挂钟——3 分级别每 3 分钟、5 分每 5 分钟、15/30/60 各按自己的
     分钟倍数对齐拉取（重合时刻同一序列只拉一次）。
+    时段收尾扫描（用户定稿 2026-10-11）：收盘 3 分钟后补扫一轮全级别——各品种"收盘最后一根
+    K 线"的数据到达时序有竞争，23:00 整收线的单元可能在对齐扫描轮漏发（白糖60 事件），收尾补齐。
+    窗口 [收盘+3min, 收盘+5min)，落在 trading_time 的 5 分钟缓冲内（11:35/15:05/23:59/02:35）。
     节假日/非交易时段：只在启动后拉一遍基线（矩阵有数据可看），之后完全停止拉取，
-    每分钟只检查一次是否进入交易时段——开市自动恢复，期间零网络请求。"""
-    global _pattern_ready
+    每分钟只检查一次是否进入交易时段——开市自动恢复，期间零网络请求。
+    停摆恢复（用户定稿 2026-10-11）：循环空闲间隔超 4 分钟（合盖休眠/系统挂起，正常只睡
+    30s/60s）→ 恢复后立即补扫全级别，不等各自主对齐点（否则 3 分最多等 3 分钟、
+    30 分要等 30 分钟、60 分等 1 小时）。阈值 4 分钟 > 最小级别 3 分钟，短断片由各级别
+    自己的对齐点自愈，不触发全扫。"""
+    global _pattern_ready, _last_catchup, _baseline_ts, _last_loop_ts
     await asyncio.sleep(15)   # 等服务与其他初始化就绪
     while True:
         try:
+            now = dt.datetime.now()
+            gap = _last_loop_ts is not None and (now - _last_loop_ts).total_seconds() > 240
             if trading_time.is_trading_time():
                 if not _pattern_ready:
                     # 启动基线：全级别立即扫一遍（否则 60 分级别要等下一个整点，矩阵空窗太长），
                     # 之后进入挂钟对齐节奏；基线静默不推送
                     await _pattern_scan_once(False)
                     _pattern_ready = True
+                    _baseline_ts = time.time()
                     await _push_startup_snapshot()
                     print(f'[pattern_loop] {dt.datetime.now():%H:%M} 启动基线扫描完成，进入挂钟对齐节奏')
-                now = dt.datetime.now()
-                mod = now.hour * 60 + now.minute
-                due = []
-                for period in config.PATTERN_PERIODS:
-                    iv = _PERIOD_SCAN_MIN.get(period)
-                    if iv and mod % iv == 0 and _last_scan_minute.get(period) != mod:
-                        _last_scan_minute[period] = mod
-                        due.append(period)
-                if due:
-                    await _pattern_scan_once(True, periods=due)
+                elif gap:
+                    print(f'[pattern_loop] {now:%H:%M} 停摆恢复（间隔超 2 分钟），立即补扫全级别')
+                    await _pattern_scan_once(True)
+                    # 标记本轮已扫过的级别，避免紧跟的对齐点重复拉同一轮
+                    for period in config.PATTERN_PERIODS:
+                        iv = _PERIOD_SCAN_MIN.get(period)
+                        if iv and now.minute % iv == 0:
+                            _last_scan_minute[period] = now.hour * 60 + now.minute
+                else:
+                    # —— 时段收尾扫描：收盘 +3 分钟补一轮全级别，补齐"最后一根K线"漏发 ——
+                    # 刚跑完基线（5 分钟内）则跳过：数据相同，补扫是冗余
+                    nmin = now.hour * 60 + now.minute
+                    for c in _SESSION_CLOSE_MIN:
+                        if c + 3 <= nmin < c + 5 and _last_catchup != (now.date().isoformat(), c) \
+                                and time.time() - _baseline_ts > 300:
+                            _last_catchup = (now.date().isoformat(), c)
+                            print(f'[pattern_loop] {now:%H:%M} 时段收尾扫描（{c//60:02d}:{c%60:02d} 收盘补齐，全级别）')
+                            await _pattern_scan_once(True)
+                            break
+                    mod = now.hour * 60 + now.minute
+                    due = []
+                    for period in config.PATTERN_PERIODS:
+                        iv = _PERIOD_SCAN_MIN.get(period)
+                        if iv and mod % iv == 0 and _last_scan_minute.get(period) != mod:
+                            _last_scan_minute[period] = mod
+                            due.append(period)
+                    if due:
+                        await _pattern_scan_once(True, periods=due)
                 await asyncio.sleep(30)
             else:
                 # 节假日/非交易时段：启动后只拉一遍基线（矩阵有数据可看），之后零拉取
                 if not _pattern_ready:
                     await _pattern_scan_once(False)
                     _pattern_ready = True
+                    _baseline_ts = time.time()
                     await _push_startup_snapshot()
                     print(f'[pattern_loop] {dt.datetime.now():%H:%M} 非交易时段基线就绪，'
                           f'停止定时拉取，等待开市自动恢复')
-            await asyncio.sleep(60)   # 非交易时段每分钟只查一次是否开市（不发任何数据请求）
+                elif gap:
+                    # 停摆横跨收盘/休市（如 22:50 合盖 23:05 打开）：补扫一轮，
+                    # 覆盖休眠期间收盘的最后K线
+                    print(f'[pattern_loop] {now:%H:%M} 停摆恢复（非交易时段），补扫一轮全级别')
+                    await _pattern_scan_once(True)
+                await asyncio.sleep(60)   # 非交易时段每分钟只查一次是否开市（不发任何数据请求）
+            _last_loop_ts = dt.datetime.now()   # 一轮工作全部完成才更新——gap 度量空闲间隔，
+            # 耗时长的扫描不会误判成停摆（否则会级联触发一轮又一轮全扫）
         except Exception as e:
             print('[pattern_loop] error:', e)
             await asyncio.sleep(30)
+
+
+async def fees_refresh_loop():
+    """启动 3 分钟后拉一次手续费/保证金（用户定稿 2026-10-10：每次启动都刷新，
+    特殊行情交易所调费率快；避开启动重活——首次行情基线+形态基线扫描那时已完成，
+    akshare 拉取在线程池里跑，不卡事件循环；失败沿用旧缓存）。"""
+    await asyncio.sleep(180)
+    try:
+        await asyncio.get_event_loop().run_in_executor(None, lambda: fees.load(force=True))
+        print('[fees] 启动刷新完成（手续费/保证金）')
+    except Exception as e:
+        print('[fees] 启动刷新失败（沿用旧缓存）：', e)
 
 
 @asynccontextmanager
@@ -533,10 +588,12 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(periodic())
     alert_task = asyncio.create_task(alert_loop())
     pattern_task = asyncio.create_task(pattern_loop())
+    fees_task = asyncio.create_task(fees_refresh_loop())
     yield
     task.cancel()
     alert_task.cancel()
     pattern_task.cancel()
+    fees_task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -901,12 +958,47 @@ async def api_backtest(sym: str = 'ALL', months: int = 1):
     return JSONResponse(backtest.run_backtest(sym, months))
 
 
+def _smart_markers(sym, period):
+    """智能端点标记（用户定稿 2026-10-11）：只标当前有效结构上的买卖点，
+    判不出的一律不显示（不回落成价格）。
+    A类确认 → 2买/2卖（回调/反抽笔端点即买卖点位）；
+    B类确认/触发 → 3买/3卖（回踩笔端点）；候选事件触发笔端点是突破极值、不是买卖点位，不标。
+    同刻同向多标签合并（如 A类确认+B类确认同点位 → '2买+3买'）。"""
+    labels = {}
+    for ev in _pattern_events:
+        if ev.get('symbol') != sym or ev.get('period') != period:
+            continue
+        p = str(ev.get('pattern') or '')
+        if 'CONF' not in p and 'TRIG' not in p:
+            continue   # 候选事件端点是突破极值，不是买卖点位
+        if 'VREV' in p:
+            lab, pos, color = ('2买', 'belowBar', '#ef5350') if 'LONG' in p else ('2卖', 'aboveBar', '#26a69a')
+        elif '3BUY' in p:
+            lab, pos, color = '3买', 'belowBar', '#ef5350'
+        elif '3SELL' in p:
+            lab, pos, color = '3卖', 'aboveBar', '#26a69a'
+        else:
+            continue
+        try:
+            # 与 engine.get_live 的 marker 时间基准一致：naive 北京时间按 UTC 取 epoch（前端 +8h 修正）
+            ts = int(dt.datetime.fromisoformat(str(ev['time'])).replace(tzinfo=dt.timezone.utc).timestamp())
+        except Exception:
+            continue
+        labels.setdefault((ts, pos), set()).add(lab)
+    markers = [{'time': ts, 'position': pos, 'color': color, 'shape': 'circle',
+                'text': '+'.join(sorted(labs))}
+               for (ts, pos), labs in labels.items()
+               for color in ['#ef5350' if pos == 'belowBar' else '#26a69a']]
+    markers.sort(key=lambda m: m['time'])
+    return markers[-30:]
+
+
 @app.get('/api/live')
 async def api_live(sym: str, period: str = '15', subpeak: str = '1',
                    algo: str = 'normal', strict: str = '1', fxcheck: str = 'strict',
                    endpeak: str = '1', gap: str = '0',
                    zsextend: str = '1', zsmerge: str = '0', zsfirst: str = '0',
-                   force: str = '0'):
+                   mk: str = 'price', force: str = '0'):
     """看盘模式：指定周期K线+笔，独立于15分钟预警缓存。
     六个笔开关对应 chan.py CBiConfig，默认值=原版默认：
     algo(normal/fx) strict(1/0) fxcheck(loss/half/strict/totally)
@@ -933,7 +1025,18 @@ async def api_live(sym: str, period: str = '15', subpeak: str = '1',
         'zs_first_bi': zsfirst == '1',
     }
     try:
-        return JSONResponse(engine.get_live(sym, period, bi_conf=bi_conf, zs_conf=zs_conf, force=force == '1'))
+        s = engine.get_live(sym, period, bi_conf=bi_conf, zs_conf=zs_conf, force=force == '1')
+        # 端点标记三档（⚙→📊 图表设置）：price=只有价格文字无圆点 / bs=原版箭头+买卖 / smart=2买3买2卖3卖（判不出不显示）
+        if mk == 'bs':
+            for m in s.get('markers') or []:
+                m['text'] = '买' if m.get('position') == 'belowBar' else '卖'
+                m['shape'] = 'arrowUp' if m.get('position') == 'belowBar' else 'arrowDown'
+        elif mk == 'price':
+            for m in s.get('markers') or []:
+                m['size'] = 0   # 圆点缩为不可见，只留价格文字（marker 形状是必需项，库不支持无形状）
+        elif mk == 'smart':
+            s['markers'] = _smart_markers(sym, period)
+        return JSONResponse(s)
     except Exception as e:
         return JSONResponse({'symbol': sym, 'error': str(e)[:120]}, status_code=200)
 @app.get('/api/trading_status')
@@ -993,6 +1096,57 @@ async def api_clear_triggered():
 @app.post('/api/alerts/clear_all')
 async def api_clear_all():
     alert_manager.clear_all()
+    return JSONResponse({'ok': True})
+
+
+# ===== 一键止损线（详情页 · 按现价反算金额/手数/点数）=====
+# 存 JSON 文件（用户定稿 2026-10-10：像预警线一样随文件活，项目重启也在）。
+# 每个品种一条通用线（不按级别分——止损位是交易的属性，拖动就是为了调整）。
+_SL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'sl_lines.json')
+_sl_lines = {}   # symbol -> {'price': float, 'ts': float}
+
+def _sl_load():
+    global _sl_lines
+    try:
+        with open(_SL_FILE, 'r', encoding='utf-8') as f:
+            _sl_lines = json.load(f)
+    except Exception:
+        _sl_lines = {}
+
+def _sl_save():
+    try:
+        os.makedirs(os.path.dirname(_SL_FILE), exist_ok=True)
+        with open(_SL_FILE, 'w', encoding='utf-8') as f:
+            json.dump(_sl_lines, f, ensure_ascii=False, indent=1)
+    except Exception as e:
+        print('[sl_line] 写文件失败：', e)
+
+_sl_load()
+
+
+@app.get('/api/sl_line')
+async def api_sl_get(sym: str):
+    rec = _sl_lines.get(sym)
+    return JSONResponse({'price': rec['price'] if rec else None})
+
+
+@app.post('/api/sl_line')
+async def api_sl_set(request: Request):
+    try:
+        d = await request.json()
+        sym = str(d['sym'])
+        price = float(d['price'])
+    except Exception:
+        return JSONResponse({'ok': False, 'error': 'bad params'}, status_code=400)
+    _sl_lines[sym] = {'price': price, 'ts': time.time()}
+    _sl_save()
+    return JSONResponse({'ok': True})
+
+
+@app.delete('/api/sl_line')
+async def api_sl_del(sym: str):
+    _sl_lines.pop(sym, None)
+    _sl_save()
     return JSONResponse({'ok': True})
 
 
