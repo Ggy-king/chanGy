@@ -1522,12 +1522,10 @@ if __name__ == '__main__':
             return []
 
     def _pick(title, options, default_idx):
-        """↑↓ 移动 + 回车确认（原生 termios，零依赖）；非交互环境（管道/自启）直接用默认"""
+        """↑↓ 移动 + 回车确认（零依赖）；Windows 用 msvcrt，Unix 用 termios；
+非交互环境（管道/自启）直接用默认"""
         if not _ASK:
             return default_idx
-        import termios, tty
-        fd = _sys.stdin.fileno()
-        old = termios.tcgetattr(fd)
         sel = max(0, min(default_idx, len(options) - 1))
 
         def _draw(first):
@@ -1538,9 +1536,43 @@ if __name__ == '__main__':
                 print(f'  {cur}{hl}{o}{_RST}\x1b[K')
 
         print(title)
+        if _sys.platform == 'win32':
+            import msvcrt
+            # 旧版 conhost 需手动开启 ANSI 转义序列；Windows Terminal 默认已开
+            try:
+                import ctypes
+                _k32 = ctypes.windll.kernel32
+                _h = _k32.GetStdHandle(-11)
+                _mode = ctypes.c_uint32()
+                if _k32.GetConsoleMode(_h, ctypes.byref(_mode)):
+                    _k32.SetConsoleMode(_h, _mode.value | 0x0004)
+            except Exception:
+                pass
+            print('\x1b[?25l', end='')   # 隐藏光标
+            _draw(True)
+            try:
+                while True:
+                    ch = msvcrt.getwch()
+                    if ch in ('\x00', '\xe0'):    # 功能键前缀，需再读一键
+                        k = msvcrt.getwch()
+                        if k == 'H':              # ↑
+                            sel = (sel - 1) % len(options)
+                        elif k == 'P':            # ↓
+                            sel = (sel + 1) % len(options)
+                    elif ch in ('\r', '\n'):
+                        return sel
+                    elif ch == '\x03':
+                        raise KeyboardInterrupt
+                    _draw(False)
+            finally:
+                print('\x1b[?25h', end='')
+            return sel
+        import termios, tty
+        fd = _sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        print('\x1b[?25l', end='')   # 隐藏光标
         try:
             tty.setcbreak(fd)
-            print('\x1b[?25l', end='')   # 隐藏光标
             _draw(True)
             while True:
                 ch = _sys.stdin.read(1)
