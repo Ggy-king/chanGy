@@ -224,8 +224,11 @@ class TqData:
         df = None
         for attempt in range(4):
             try:
-                api = self._ensure_api()
+                self._ensure_api()
                 with self._api_lock:
+                    # 锁内重取实例：锁外拿到的引用可能已被其他线程重建关闭
+                    # （close+new 后旧实例报 "Event loop is closed"，整轮拉取作废）
+                    api = self._api
                     if key not in self._klines:
                         # 新订阅：循环等历史块真正落地（单次固定 deadline 会被其他
                         # 订阅的 tick 抢先唤醒，历史大包没到就返回 → 图表只剩几根）

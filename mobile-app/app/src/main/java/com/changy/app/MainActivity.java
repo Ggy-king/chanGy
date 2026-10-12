@@ -9,6 +9,7 @@ import android.os.Looper;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -46,6 +47,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        // 屏幕常亮（用户定稿 2026-10-12，同花顺式）：App 打开期间越过系统息屏计时，
+        // 切后台/锁屏离开自动恢复系统默认。FLAG 只对本窗口生效，不申请任何权限。
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         prefs = getSharedPreferences("chan", MODE_PRIVATE);
 
         root = new FrameLayout(this);

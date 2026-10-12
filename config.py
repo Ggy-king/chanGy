@@ -14,7 +14,7 @@ PERIOD_BIG = "60"     # 更大级别
 
 # 盯盘合约清单（来自文华自选）
 CONTRACTS = [
-    {"symbol": "jd2611", "name": "鸡蛋",   "exchange": "DCE"},
+    {"symbol": "jd2612", "name": "鸡蛋",   "exchange": "DCE"},
     {"symbol": "UR2701", "name": "尿素",   "exchange": "CZCE"},
     {"symbol": "MA2611", "name": "甲醇",   "exchange": "CZCE"},
     {"symbol": "jm2701", "name": "焦煤",   "exchange": "DCE"},

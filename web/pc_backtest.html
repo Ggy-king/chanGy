@@ -66,14 +66,16 @@
 </div>
 
 <script>
-const SYMS = [
-  ["jd2611","鸡蛋"],["UR2701","尿素"],["MA2610","甲醇"],["jm2701","焦煤"],
-  ["CF2701","棉花"],["SA2701","纯碱"],["SR2701","白糖"],["v2701","PVC"],
-  ["CJ2701","红枣"],["SP2611","纸浆"],["RU2701","橡胶"],["lh2611","生猪"],
-  ["AP2701","苹果"],["pg2611","液化气"],["RB2701","螺纹钢"],["NI2610","沪镍"],["PK2611","花生"]
-];
+let SYMS = [];   // 从服务端 /api/contracts 动态加载（换合约只改 config.py，页面自动跟随）
 const sel = document.getElementById('sym');
-SYMS.forEach(([s,n])=>{ const o=document.createElement('option'); o.value=s; o.textContent=n+' '+s; sel.appendChild(o); });
+function fillSyms(list){
+  sel.innerHTML='';
+  list.forEach(([s,n])=>{ const o=document.createElement('option'); o.value=s; o.textContent=n+' '+s; sel.appendChild(o); });
+  if(q.get('sym')) sel.value = q.get('sym'); else sel.value='ALL';
+}
+fetch('/api/contracts').then(r=>r.json())
+  .then(d=>fillSyms((d.contracts||[]).map(c=>[c.symbol,c.name])))
+  .catch(()=>{});   // 服务端同源，页面能打开接口就通；失败时下拉为空属服务异常
 
 const q = new URLSearchParams(location.search);
 let months = parseInt(q.get('months')||'1',10);

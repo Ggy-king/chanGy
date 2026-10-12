@@ -198,6 +198,7 @@
   #toast.show{opacity:1;}
   ::-webkit-scrollbar{width:0;}
 </style>
+<script src="/popup_cards.js"></script>
 </head>
 <body>
 <div id="app">
@@ -348,7 +349,16 @@
 const GH={owner:'ggy-king',repo:'chan-gy-data',branch:'master',token:'你的Gitee私人令牌'};
 const POS_EXIT={'二买':'二卖','二卖':'二买','三买':'三卖','三卖':'三买'};
 const POS_LIMIT=4;
-const POS_SYMS=[["jd2611", "鸡蛋"], ["UR2701", "尿素"], ["MA2611", "甲醇"], ["jm2701", "焦煤"], ["CF2701", "棉花"], ["SA2701", "纯碱"], ["SR2701", "白糖"], ["v2701", "PVC"], ["CJ2701", "红枣"], ["SP2611", "纸浆"], ["RU2701", "橡胶"], ["lh2611", "生猪"], ["AP2701", "苹果"], ["pg2611", "液化气"], ["RB2701", "螺纹钢"], ["NI2611", "沪镍"], ["PK2611", "花生"]];
+let POS_SYMS=[];   // 从服务端 /api/contracts 动态加载（换合约只改 config.py，页面自动跟随）
+async function loadContracts(){
+  try{
+    const r=await fetch('/api/contracts');
+    const d=await r.json();
+    POS_SYMS=(d.contracts||[]).map(c=>[c.symbol,c.name]);
+    if(typeof renderFeed==='function')renderFeed();   // 已入列的事件补中文名
+    if(typeof posLoad==='function')posLoad();          // 持仓列表补一次名称
+  }catch(e){}
+}
 const POS_PNAME={'30':'30秒','3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分','daily':'日线'};
 let POSITIONS=[], posEditId=null, posDelId=null, _toastTimer=null;
 const _delPend=new Set();   // 已本地删除但还没推到远端的 id（防止 posLoad 拉回）
@@ -518,9 +528,10 @@ function feedCard(m,idx){
   const long=(m.side||'long')==='long';
   const tag=stateTag(m);
   d.className=`sig ${m.kind==='B'?'B':'A'} ${long?'long':'short'}`;
+  const cont=!!(m.first_time&&m.first_time!==trigT(m));   // 延续触发：触发时刻晚于首次成立
   d.innerHTML=`<div class="sig-bar"></div><div class="sig-bd">
     <div class="sig-r1"><span class="sym">${m.name||m.symbol||''}</span>
-      <span class="b-lvl">${periodLabel(m.period)}</span><span class="b-ab">${m.kind==='A'?'A类':'B类'}</span>
+      <span class="b-lvl">${periodLabel(m.period)}</span><span class="b-ab">${m.kind==='A'?'A类':'B类'}</span>${cont?'<span style="font-size:9.5px;color:#e8b339;margin-left:2px">延续</span>':''}
       <span class="sig-time"><span class="sno">#${idx+1}</span> ${timeHM(m)}</span></div>
     <div class="sig-r2"><span class="sig-price">${m.price??''}</span>
       <span class="sig-tag ${tag.cls}">${tag.text}</span></div>
@@ -854,6 +865,17 @@ function addPatternAlert(m,upd){
   if(!m.symbol)return;
   if(_booted&&!upd)alertBeep();
   pushFeed(m,'pattern');
+  // 全局弹卡组件（与监控/详情页同款）：延续触发原卡刷新，点卡进该品种详情
+  // 只弹实时消息（init 历史回放 _booted=false 不弹，避免连上瞬间弹一串旧闻）
+  if(!_booted)return;
+  const long=(m.side||'long')==='long';
+  PopupCards.push({
+    fp:m.fingerprint,
+    tone:long?'up':'down',
+    title:(upd?'🔔 延续触发 · ':'')+(m.kind==='A'?'A类·背驰V反':'B类·三买卖点')+(long?'（多）':'（空）'),
+    info:(m.text||'')+'<br>价 <b>'+m.price+'</b>　触发 '+(m.trigger_time||m.time||'').replace('T',' '),
+    onClick:()=>location.href='/m/detail?sym='+encodeURIComponent(m.symbol)+'&period='+encodeURIComponent(m.period||'15')
+  });
 }
 function addPriceAlert(a){
   if(_booted)alertBeep();
@@ -932,6 +954,18 @@ async function loadPatternEvents(){
 loadPatternEvents();
 connect();
 posLoad();   // 启动静默拉一次（记持仓查重 + tab 徽章）
+loadContracts();   // 合约清单动态加载（换合约只改 config.py）
+/* 屏幕常亮（2026-10-12）：浏览器里支持就用 Wake Lock（需 https/localhost 才生效，
+   http 局域网访问会被浏览器静默拒绝——APK 端已用原生 FLAG_KEEP_SCREEN_ON 兜底） */
+(async function(){
+  let lock=null;
+  try{ lock=await navigator.wakeLock&&await navigator.wakeLock.request('screen'); }catch(e){}
+  document.addEventListener('visibilitychange',async()=>{
+    if(document.visibilityState==='visible'&&!lock){
+      try{ lock=await navigator.wakeLock.request('screen'); }catch(e){}
+    }
+  });
+})();
 </script>
 </body>
 </html>

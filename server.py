@@ -348,6 +348,10 @@ def _pattern_load_snapshot():
         if data.get('days_back') in (2, 3):
             _pattern_days_back = int(data['days_back'])   # 重启后窗口设置不丢
         for ev in data.get('events', []):
+            fp = str(ev.get('fingerprint') or '')
+            sym = str(ev.get('symbol') or '')
+            if sym and fp and not fp.startswith(sym + '|'):
+                ev['fingerprint'] = f'{sym}|{ev.get("period", "")}|{fp}'   # 旧快照指纹迁移（2026-10-12 加前缀）
             _pattern_events.append(ev)
         for k, fps in (data.get('reported') or {}).items():
             s, _, p = k.rpartition('|')
@@ -566,9 +570,12 @@ async def _apply_pattern(sym, name, period, result, push):
                    'price': ev['price'], 'time': ev['time'], 'trigger_time': _trig,
                    'time_str': _fmt_time_str(ev['time']),
                    'p1': ev['p1'], 'p2': ev['p2'], 'p3': ev['p3'],
+                   't1': ev.get('t1'), 't2': ev.get('t2'), 't3': ev.get('t3'),
                    'bi_span': ev.get('bi_span'), 'ratio': ev.get('ratio'),
                    'brief': _pattern_brief(ev['pattern'], ev),
-                   'fingerprint': ev['fingerprint'],
+                   # 指纹带 symbol|period（2026-10-12）：纯 pattern|p1|p2 会让不同周期/品种
+                   # 的同锚结构撞车（实测甲醇3分与15分同指纹互相覆盖事件卡，卡片"消失"）
+                   'fingerprint': f'{sym}|{period}|{ev["fingerprint"]}',
                    'text': _pattern_text(name, period, ev), 'ts': time.time(),
                    'first_time': ev['time']}   # 快照重建时首检时刻≈触发时刻（内存流不丢首次显示）
             if push:
@@ -590,6 +597,7 @@ async def _apply_pattern(sym, name, period, result, push):
         s = act['struct']
         cell.update({'pattern': act.get('pattern'), 'price': act.get('price'),
                      'time': act.get('time'), 'p1': s['p1'], 'p2': s['p2'], 'p3': s['p3'],
+                     't1': s.get('t1'), 't2': s.get('t2'), 't3': s.get('t3'),   # 结构三点时刻（详情页画结构区间用）
                      'fp': act.get('fp'), 'ratio': act.get('ratio')})
     if old and old['state'] == new_state and old.get('side') == cell.get('side') \
             and old.get('fp') == cell.get('fp') and old.get('price') == cell.get('price'):
@@ -621,7 +629,7 @@ async def _push_startup_snapshot():
     _snapshot_msgs.sort(key=lambda m: str(m.get('trigger_time') or m.get('time') or ''))
     seen = {}
     for msg in _snapshot_msgs:
-        # 同指纹去重：指纹=pattern|p1|p2 不含级别，同一结构在多个级别单元都会 fire，只留触发时刻最新的
+        # 同指纹去重（指纹已带 symbol|period → 只挡同一单元的重复推送，不同级别各留各卡）
         fp = msg.get('fingerprint')
         old = seen.get(fp)
         if old is None or str(msg.get('trigger_time') or msg.get('time') or '') > str(old.get('trigger_time') or old.get('time') or ''):
@@ -751,6 +759,8 @@ async def lifespan(app: FastAPI):
         print('[启动自检] !! 缺少 secret.py（天勤账号配置），行情登录会失败')
     if not os.path.exists(os.path.join(_HERE, 'data', 'gitee_conf.json')):
         print('[启动自检] !! 缺少 data/gitee_conf.json（持仓云同步配置），持仓推送会一直失败')
+    else:
+        threading.Thread(target=_sync_contracts_to_gitee, daemon=True).start()   # 后台执行，启动不等网络
     task = asyncio.create_task(periodic())
     alert_task = asyncio.create_task(alert_loop())
     pattern_task = asyncio.create_task(pattern_loop())
@@ -783,6 +793,18 @@ async def page_pc_overview():
 @app.get('/pc/detail')
 async def page_pc_detail():
     return _page('pc_detail.html')
+
+
+@app.get('/struct_zone.js')
+async def asset_struct_zone_js():
+    """结构区间浮层模块（详情页引用；独立于中枢，2026-10-12 用户定稿）"""
+    return _page('struct_zone.js')
+
+
+@app.get('/popup_cards.js')
+async def asset_popup_cards_js():
+    """右上角预警弹卡全局组件（监控/详情/列表页共用，2026-10-12 用户定稿）"""
+    return _page('popup_cards.js')
 
 
 @app.get('/m')
@@ -876,12 +898,14 @@ async def api_pattern_bi_conf(request: Request):
 
 _POSITIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'positions.json')
 _HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'history.json')
+_CONTRACTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'contracts.json')
+_REMOTE_LOCAL = {'positions.json': _POSITIONS_FILE, 'history.json': _HISTORY_FILE, 'contracts.json': _CONTRACTS_FILE}
 _POS_EXIT_MAP = {'二买': '二卖', '二卖': '二买', '三买': '三卖', '三卖': '三买'}
 _POS_WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 _POS_LIMIT = 4
 _POS_LOCK = threading.Lock()
 _GITEE_SHA = {}                                          # remote_path -> 上次已同步 sha
-_POS_DIRTY = {'positions.json': False, 'history.json': False}
+_POS_DIRTY = {'positions.json': False, 'history.json': False, 'contracts.json': False}
 _POS_LAST_ERR = ['']
 _LAST_PULL = [0.0]
 _SYNC_LOCK = threading.Lock()                            # 推送串行化（并发线程会互相用旧sha覆盖）
@@ -911,6 +935,44 @@ def _history_load():
 def _history_save(hist):
     with open(_HISTORY_FILE, 'w', encoding='utf-8') as f:
         json.dump({'history': hist}, f, ensure_ascii=False, indent=1)
+
+
+def _sync_contracts_to_gitee():
+    """把 config.CONTRACTS 落成 data/contracts.json 并推 Gitee（2026-10-12）。
+    手机端 positions.html 启动时拉它 → 改 config 重启后手机合约自动跟随，无需重打 APK。
+    内容没变就不标脏（避免每次重启都多一个 Gitee 提交）。"""
+    try:
+        data = {'contracts': [{'symbol': c['symbol'], 'name': c['name']} for c in config.CONTRACTS],
+                'ts': time.time()}
+        new_text = json.dumps(data, ensure_ascii=False, indent=1)
+        try:
+            with open(_CONTRACTS_FILE, encoding='utf-8') as f:
+                old_contracts = json.load(f).get('contracts', [])
+        except Exception:
+            old_contracts = None
+        if old_contracts != data['contracts']:
+            with open(_CONTRACTS_FILE, 'w', encoding='utf-8') as f:
+                f.write(new_text)
+            need_push = True
+        else:
+            # 本地与 config 一致，但远端可能缺失（如上次推送失败后重启，脏标记已丢）→ 查一次远端补推
+            need_push = False
+            conf = _gitee_conf()
+            if conf.get('token'):
+                try:
+                    api, _c = _gitee_api('contracts.json')
+                    r = requests.get(api, params={'access_token': conf['token'],
+                                                  'ref': conf.get('branch', 'master')}, timeout=8)
+                    if not (r.status_code == 200 and isinstance(r.json(), dict)):
+                        need_push = True
+                except Exception:
+                    pass   # 查远端失败不阻塞启动，等下次重启或改 config 时再补
+        if need_push:
+            _POS_DIRTY['contracts.json'] = True
+            _bg_sync()
+            print('[合约] contracts.json 已更新并推送 Gitee')
+    except Exception as e:
+        print('[合约] contracts.json 同步失败（不影响运行）:', str(e)[:120])
 
 
 def _gitee_conf():
@@ -949,13 +1011,14 @@ def _gitee_push_file(remote, local):
     if sha:
         body['sha'] = sha
     try:
-        r = requests.put(api, json=body, timeout=15)
+        # Gitee 规则：新建文件必须 POST（PUT 会报 "sha is missing"），更新才用 PUT
+        r = (requests.put if sha else requests.post)(api, json=body, timeout=15)
         if r.status_code in (200, 201):
             _GITEE_SHA[remote] = (r.json().get('content') or {}).get('sha') or sha
             return ''
         if sha:
             _GITEE_SHA[remote] = None   # sha 冲突等：作废缓存，下轮重取再推
-        return f'PUT {r.status_code}: {r.text[:150]}'
+        return f'{"PUT" if sha else "POST"} {r.status_code}: {r.text[:150]}'
     except Exception as e:
         return str(e)[:120]
 
@@ -970,7 +1033,7 @@ def _bg_sync():
                 for remote, dirty in list(_POS_DIRTY.items()):
                     if not dirty:
                         continue
-                    err = _gitee_push_file(remote, _POSITIONS_FILE if remote == 'positions.json' else _HISTORY_FILE)
+                    err = _gitee_push_file(remote, _REMOTE_LOCAL[remote])
                     if err:
                         errs.append(f'{remote}: {err}')
                     else:

@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>品种详情</title>
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script src="/popup_cards.js"></script>
+<script src="/struct_zone.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
   body{background:#131722;color:#d1d4dc;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
@@ -140,15 +142,7 @@
   #ctxMenu .item.up{color:#ef5350;}
   #ctxMenu .item.down{color:#26a69a;}
   #ctxMenu .sep{height:1px;background:#2a2e39;margin:4px 0;}
-  /* 预警弹窗 */
-  .alert-popup{position:fixed;top:20px;right:20px;z-index:10000;background:#1e222d;border:2px solid #ef5350;border-radius:12px;padding:16px 20px;min-width:280px;box-shadow:0 8px 30px rgba(0,0,0,.6);animation:slideIn .3s ease;}
-  .alert-popup.down{border-color:#26a69a;}
-  .alert-popup .title{font-size:16px;font-weight:700;margin-bottom:6px;}
-  .alert-popup .title.up{color:#ef5350;}
-  .alert-popup .title.down{color:#26a69a;}
-  .alert-popup .info{font-size:13px;color:#787b86;}
-  .alert-popup .close{position:absolute;top:8px;right:12px;cursor:pointer;color:#787b86;font-size:18px;}
-  @keyframes slideIn{from{transform:translateX(100%);opacity:0;}to{transform:translateX(0);opacity:1;}}
+  /* 预警弹窗：全局组件 popup_cards.js（与监控/列表页共用，按指纹去重刷新） */
   /* 自定义确认弹窗 */
   .confirm-mask{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);}
   .confirm-box{background:#1e222d;border:1px solid #2a2e39;border-radius:14px;padding:24px 28px;min-width:320px;box-shadow:0 20px 60px rgba(0,0,0,.5);animation:popIn .2s ease;}
@@ -644,6 +638,7 @@ function initChart(){
   zsOverlayCtx=zsOverlay.getContext('2d');
   chart.timeScale().subscribeVisibleTimeRangeChange(scheduleOverlayDraw);
   try{ candle.priceScale().subscribeVisibleRangeChange(scheduleOverlayDraw); }catch(e){}
+  StructZone.init(el);   // 结构区间浮层（独立于中枢：独立 canvas/开关/重绘订阅）
   bi=chart.addLineSeries({color:'#f0b90b',lineWidth:.7,priceLineVisible:false,lastValueVisible:false});
   new ResizeObserver(()=>{
     chart.applyOptions({width:el.clientWidth,height:el.clientHeight});
@@ -696,6 +691,7 @@ function switchPeriod(p){
   if(!PERIOD_LABEL[p]) return;
   currentPeriod=p;
   try{localStorage.setItem('cl_chart_period',p);}catch(e){}
+  StructZone.set(null);   // 结构区间只属于进入时的级别，切级别即清
   document.querySelectorAll('#periodSeg button').forEach(b=> b.classList.toggle('on', b.dataset.p===p));
   loadPeriod(p);
 }
@@ -1137,6 +1133,9 @@ function connect(){
       }else if(m.type==='pattern_alert'){
         // 形态预警（背驰V反/三买卖点）：弹窗提示，点击跳矩阵页
         try{ showPatternPopup(m); }catch(e){ console.error('[pattern popup]', e); }
+      }else if(m.type==='pattern_alert_update'){
+        // 延续触发：同指纹原卡刷新（全局组件按 fp 去重）
+        try{ m._upd=true; showPatternPopup(m); }catch(e){ console.error('[pattern popup]', e); }
       }else if(m.type==='devices'){
         window._devices=m.devices||[];
       }
@@ -1401,6 +1400,15 @@ async function loadSlLine(){
 
 // 初始化
 initChart();
+// 结构区间（用户定稿 2026-10-12）：仅当从监控页（格子/卡片）带着结构参数进来才画，
+// URL 无 szp 参数（列表页/直接打开/切品种）→ 详情页保持干净
+(function(){
+  const szp=params.get('szp');
+  if(!szp) return;
+  const a=szp.split('|');
+  if(a.length<5||a[0]===''||a[1]==='') return;
+  StructZone.set({p1:+a[0], p2:+a[1], t1:a[3], kind:a[4], side:a[5]||'long'});
+})();
 loadStats();
 loadPeriod(currentPeriod);
 connect();
@@ -1513,33 +1521,27 @@ function showAlertPopup(alert){
   if(alertLines.triggered && alertLines.triggered[alert.id]) return;
   (alertLines.triggered = alertLines.triggered || {})[alert.id] = true;
   const isUp=alert.direction==='up';
-  const div=document.createElement('div');
-  div.className='alert-popup '+(isUp?'up':'down');
-  div.innerHTML='<span class="close" onclick="this.parentElement.remove()">×</span>'+
-    '<div class="title '+(isUp?'up':'down')+'">'+(isUp?'▲ 涨破预警':'▼ 跌破预警')+'</div>'+
-    '<div class="info">'+alert.name+'（'+alert.symbol+'）<br>'+
-    '预警价：'+alert.price+'　触发价：'+alert.triggered_price+'<br>'+
-    '时间：'+alert.triggered_at+'</div>';
-  document.body.appendChild(div);
+  PopupCards.push({
+    fp:'price_'+alert.id,
+    tone:isUp?'up':'down',
+    title:isUp?'▲ 涨破预警':'▼ 跌破预警',
+    info:alert.name+'（'+alert.symbol+'）<br>'+
+      '预警价：'+alert.price+'　触发价：'+alert.triggered_price+'<br>'+
+      '时间：'+alert.triggered_at
+  });
   playAlertSound();
-  setTimeout(()=>{if(div.parentElement)div.remove();},15000);
 }
 
 function showPatternPopup(m){
   const long=(m.side||'long')==='long';
-  const div=document.createElement('div');
-  div.className='alert-popup '+(long?'up':'down');
-  div.style.cursor='pointer';
-  div.onclick=()=>location.href='/pc/matrix';
-  const kindTxt=m.kind==='A'?'🔺 A类·背驰V反'+(long?'(多)':'(空)'):'🟡 B类·三买卖点';
-  div.innerHTML='<span class="close" onclick="event.stopPropagation();this.parentElement.remove()">×</span>'+
-    '<div class="title '+(long?'up':'down')+'">'+kindTxt+'</div>'+
-    '<div class="info">'+(m.text||'')+'<br>'+
-    '结构：'+m.p1+' / '+m.p2+' / '+m.p3+'<br>'+
-    '时间：'+(m.time||'')+'</div>';
-  document.body.appendChild(div);
+  PopupCards.push({
+    fp:m.fingerprint,
+    tone:long?'up':'down',
+    title:(m._upd?'🔔 延续触发 · ':'')+(m.kind==='A'?'A类·背驰V反':'B类·三买卖点')+(long?'（多）':'（空）'),
+    info:(m.text||'')+'<br>价 <b>'+m.price+'</b>　触发 '+(m.trigger_time||'').replace('T',' '),
+    onClick:()=>location.href='/pc/matrix'
+  });
   playAlertSound();
-  setTimeout(()=>{if(div.parentElement)div.remove();},15000);
 }
 
 function playAlertSound(){

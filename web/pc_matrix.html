@@ -126,20 +126,10 @@ select{appearance:none;-webkit-appearance:none;
   border-radius:7px;padding:5px 9px;font-size:12.5px;}
 #posForm select{padding-right:26px;background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238B95A7' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat:no-repeat;background-position:right 9px center;}
-/* 右上角预警弹卡：页面内 DOM 弹窗，不依赖浏览器通知授权（Notification 授权丢了也能弹） */
-#popStack{position:fixed;top:20px;right:20px;z-index:150;display:flex;flex-direction:column;gap:10px;
-  pointer-events:none;max-width:340px;max-height:calc(100vh - 40px);overflow:hidden;}
-.alert-pop{pointer-events:auto;position:relative;background:#1e222d;border:2px solid #ef5350;border-radius:12px;
-  padding:11px 30px 11px 16px;box-shadow:0 8px 30px #000a;cursor:pointer;font-size:12.5px;
-  animation:popSlide .25s ease;}
-.alert-pop.down{border-color:#26a69a;}
-.alert-pop .t{font-size:14px;font-weight:700;margin-bottom:4px;}
-.alert-pop .t.up{color:#ef5350;} .alert-pop .t.down{color:#26a69a;}
-.alert-pop .i{color:#9aa0b0;line-height:1.65;}
-.alert-pop .x{position:absolute;top:5px;right:10px;color:#787b86;cursor:pointer;font-size:16px;}
-@keyframes popSlide{from{transform:translateX(110%);opacity:0;}to{transform:translateX(0);opacity:1;}}
+/* 右上角预警弹卡样式与容器由全局组件 popup_cards.js 提供（与详情/列表页共用一份） */
 
 </style>
+<script src="/popup_cards.js"></script>
 </head>
 <body>
 <header>
@@ -152,9 +142,7 @@ select{appearance:none;-webkit-appearance:none;
   <button class="btn" id="posBtn" onclick="togglePosPanel()">持仓 <span id="posCountHdr" class="mut" style="font-size:11px"></span></button>
 </header>
 
-<!-- 声音分类设置面板 -->
-<!-- 右上角预警弹卡容器 + 声音分类设置面板 -->
-<div id="popStack"></div>
+<!-- 右上角预警弹卡容器 + 声音分类设置面板（弹卡容器由 popup_cards.js 按需创建） -->
 <div id="sndPanel" style="display:none;position:fixed;top:52px;right:16px;z-index:130;background:#1e222d;
      border:1px solid #f0b90b66;border-radius:12px;padding:13px 15px;width:260px;box-shadow:0 12px 36px #000d;">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -172,6 +160,16 @@ select{appearance:none;-webkit-appearance:none;
     <button class="btn" onclick="sndTest(false)" style="padding:3px 9px;font-size:11.5px;flex:none;">试听</button>
   </div>
   <div style="font-size:10.5px;color:#565a66;margin-top:10px;line-height:1.6;">延续触发（同一信号再次确认）也会响铃，自动按类别选音色；设置自动保存在本机。</div>
+  <div style="border-top:1px solid #2a2e39;margin-top:11px;padding-top:10px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-size:12px;">详情页结构区间</span>
+      <label style="cursor:pointer;display:flex;align-items:center;gap:7px;" title="从监控页点卡片/格子进详情页时，图上画一块该结构的区间色带（A类橙/B类紫）；关=详情页保持干净">
+        <input type="checkbox" id="structVisTgl" onchange="structVisChange(this.checked)">
+        <span id="structVisTxt" style="font-size:11.5px;color:#9aa0b0;">开</span>
+      </label>
+    </div>
+    <div style="font-size:10.5px;color:#565a66;margin-top:5px;line-height:1.5;">A类橙 / B类紫，从监控页点进去时画在 K 线上，与中枢无关。</div>
+  </div>
 </div>
 
 <!-- 持仓面板（可拖动竖条，位置记忆） -->
@@ -303,8 +301,17 @@ function applyCell(cell){
   paintCell(cell);
 }
 
-function go(sym,period){location.href='/pc/detail?sym='+sym+'&period='+period;}
-function cellClick(sym,period){go(sym,period);}
+/* 结构参数随跳转携带（用户定稿 2026-10-12）：从监控页（格子/卡片）进详情页时，
+   把该结构的三点价位+起点时刻+类别带上，详情页只画这一个结构区间；
+   从列表页/直接打开则不带 → 详情页保持干净 */
+function zoneQuery(m){
+  if(!m||m.p1==null||m.p2==null) return '';
+  const t1=m.t1||m.time||m.first_time;
+  if(!t1) return '';
+  return '&szp='+encodeURIComponent([m.p1,m.p2,m.p3??'',t1,m.kind||'',m.side||''].join('|'));
+}
+function go(sym,period,cell){location.href='/pc/detail?sym='+sym+'&period='+period+zoneQuery(cell);}
+function cellClick(sym,period){go(sym,period,CELLS[sym+'|'+period]);}
 
 /* ---------- 事件流（用户定稿 2026-10-08：候选/确认无优先级纯时间序；
    「全部」30 条、「确认」20 条两个页签；延续触发原卡片更新，保留首次时间） ---------- */
@@ -316,8 +323,9 @@ const evKey=m=>m.fingerprint||('k_'+m.pattern+m.symbol+m.period+m.time);
 
 function setTab(t){
   TAB=t;
-  $('tabAll').classList.toggle('on',t==='all');
-  $('tabConf').classList.toggle('on',t==='conf');
+  try{localStorage.setItem('cl_evt_tab',t);}catch(e){}   // 页签记忆（用户定稿 2026-10-12）：
+  $('tabAll').classList.toggle('on',t==='all');           // 点确认一直确认、点全部一直全部，
+  $('tabConf').classList.toggle('on',t==='conf');         // 详情页返回/重开浏览器都不回"全部"
   renderStream();
 }
 
@@ -372,12 +380,14 @@ function cardEl(m){
   const sub=m.kind==='A'
     ?(m.snapshot?'观察中，破位即报警':('3→4跨 <b>'+(m.bi_span??'?')+'</b> 笔'))
     :('幅度 <b>'+(m.ratio??'?')+'</b>×');
-  // 主时间=触发时刻（端点K线完结）；延续更新的卡片额外显示首次成立时间
-  const first=(m.first_time&&m.first_time!==trigT(m))&&` <span class="mut" style="font-size:10px">首${fmtT(m.first_time)}</span>`||'';
+  // 主时间=触发时刻（端点K线完结）；延续更新的卡片：时间前加"延续"小字 + 显示首次成立时间
+  const cont=!!(m.first_time&&m.first_time!==trigT(m));
+  const contTag=cont&&`<span class="mut" style="font-size:10px;margin-right:3px;color:#e8b339">延续</span>`||'';
+  const first=cont&&` <span class="mut" style="font-size:10px">首${fmtT(m.first_time)}</span>`||'';
   div.className='evt '+cls;
   div.dataset.fp=evKey(m);
-  div.onclick=()=>location.href='/pc/detail?sym='+encodeURIComponent(m.symbol)+'&period='+encodeURIComponent(m.period||'15');
-  div.innerHTML=`<div class="r1"><span class="kind">${kind}</span><span>${fmtT(trigT(m))}${first}</span></div>
+  div.onclick=()=>location.href='/pc/detail?sym='+encodeURIComponent(m.symbol)+'&period='+encodeURIComponent(m.period||'15')+zoneQuery(m);
+  div.innerHTML=`<div class="r1"><span class="kind">${kind}</span><span>${contTag}${fmtT(trigT(m))}${first}</span></div>
     <div class="r2">${m.name} <span class="mut" style="font-size:11px">${periodLabel(m.period)}</span>
       <span style="float:right;color:${long?'#ef5350':'#26a69a'}">${long?'▲多':'▼空'}</span></div>
     <div class="r3">${m.price??''}</div>
@@ -446,27 +456,17 @@ function notify(m){
   if(_muted||!('Notification' in window)||Notification.permission!=='granted')return;
   try{new Notification('形态预警',{body:m.text});}catch(e){}
 }
-/* 右上角弹卡（页面内，不依赖通知授权）：同屏只保留一张，新事件立即顶替（谁出现就提示谁），
-   同一事件延续触发时原位刷新内容；12 秒无新事件自动消失；点卡片跳对应品种详情页 */
-let _pops={};   // fingerprint -> {el, timer}：叠叠乐多卡，各自 12 秒倒计时依次消失
+/* 右上角弹卡：全局组件 popup_cards.js（与详情/列表页共用）。
+   多卡叠叠乐各自 12 秒；延续触发原位刷新重新计时；卡片多时弹卡区可滚动 */
 function showPatternPopup(m,isUpdate){
   const long=(m.side||'long')==='long';
-  let rec=_pops[m.fingerprint];
-  if(rec)clearTimeout(rec.timer);   // 延续触发：原卡刷新、重新计时，不另开新卡
-  else{
-    const el=document.createElement('div');
-    el.className='alert-pop '+(long?'up':'down');
-    el.onclick=()=>{location.href='/pc/detail?sym='+encodeURIComponent(m.symbol);};
-    el.innerHTML='<span class="x" onclick="event.stopPropagation();this.parentElement.remove()">×</span>'+
-      '<div class="t '+(long?'up':'down')+'"></div><div class="i"></div>';
-    $('popStack').prepend(el);   // 新卡在最上，老卡依次下挤（聊天软件通知式排列）
-    rec=_pops[m.fingerprint]={el};
-  }
-  rec.el.querySelector('.t').textContent=(isUpdate?'🔔 延续触发 · ':'')+
-    (m.kind==='A'?'A类·背驰V反':'B类·三买卖点')+(long?'（多）':'（空）');
-  rec.el.querySelector('.i').innerHTML=(m.text||'')+'<br>'+
-    '价 <b>'+m.price+'</b>　触发 '+(m.trigger_time||'').replace('T',' ');
-  rec.timer=setTimeout(()=>{rec.el.remove();delete _pops[m.fingerprint];},12000);
+  PopupCards.push({
+    fp:m.fingerprint,
+    tone:long?'up':'down',
+    title:(isUpdate?'🔔 延续触发 · ':'')+(m.kind==='A'?'A类·背驰V反':'B类·三买卖点')+(long?'（多）':'（空）'),
+    info:(m.text||'')+'<br>价 <b>'+m.price+'</b>　触发 '+(m.trigger_time||'').replace('T',' '),
+    onClick:()=>{location.href='/pc/detail?sym='+encodeURIComponent(m.symbol);}
+  });
 }
 /* 时效闸门：事件触发时刻距今超过 3 分钟 = 天勤断线窗口错过扫描后恢复的补发，
    只进事件流，不弹卡/响铃/闪标题（否则恢复瞬间"新事件+一串旧闻"齐弹齐响） */
@@ -540,10 +540,23 @@ function syncBiConf(){
   }catch(e){}
 }
 
+/* ---------- 详情页结构区间开关（用户定稿 2026-10-12）：存本机，详情页画色带前读它 ---------- */
+function paintStructVis(){
+  let on=true; try{on=localStorage.getItem('cl_struct_visible')!=='0';}catch(e){}
+  const t=$('structVisTxt'); if(t) t.textContent=on?'开':'关';
+  const c=$('structVisTgl'); if(c) c.checked=on;
+}
+function structVisChange(v){
+  try{localStorage.setItem('cl_struct_visible',v?'1':'0');}catch(e){}
+  paintStructVis();
+}
+
 /* ---------- 启动 ---------- */
 (async function(){
   paintMute();
+  paintStructVis();
   syncBiConf();
+  try{setTab(localStorage.getItem('cl_evt_tab')==='conf'?'conf':'all');}catch(e){}   // 恢复上次选的页签
   const r=await fetch('/api/pattern_matrix');
   const d=await r.json();
   PERIODS=d.periods||[];CONTRACTS=d.contracts||[];

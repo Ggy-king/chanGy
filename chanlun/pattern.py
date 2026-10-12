@@ -63,6 +63,8 @@ def _event(pattern, struct, trig_bi, bi_span=None, ratio=None):
         'price': float(trig_bi['end_price']),          # 触发笔端点价
         'time': str(trig_bi['end_datetime']),          # 触发笔端点时间
         'p1': float(struct['p1']), 'p2': float(struct['p2']), 'p3': float(struct['p3']),
+        't1': str(struct.get('t1') or ''), 't2': str(struct.get('t2') or ''),
+        't3': str(struct.get('t3') or ''),             # 结构三点时刻（详情页按卡片画结构区间用）
         'fingerprint': fingerprint(pattern, struct),
     }
     if bi_span is not None:
