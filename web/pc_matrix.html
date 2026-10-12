@@ -239,6 +239,10 @@ select{appearance:none;-webkit-appearance:none;
       <button class="btn tab on" id="tabAll" onclick="setTab('all')">全部</button>
       <button class="btn tab" id="tabConf" onclick="setTab('conf')">确认</button>
       <span class="mut" style="font-weight:400;font-size:11px;margin-left:6px" id="streamCap"></span>
+      <span style="float:right;font-weight:400;font-size:11px">回看
+        <button class="btn tab" id="dBtn2" onclick="setDays(2)" title="保留最近2个交易日（不含今天，0点起卡）">2天</button>
+        <button class="btn tab" id="dBtn3" onclick="setDays(3)" title="保留最近3个交易日（不含今天，0点起卡）">3天</button>
+      </span>
     </div>
     <div id="stream"></div>
   </div>
@@ -315,6 +319,30 @@ function setTab(t){
   $('tabAll').classList.toggle('on',t==='all');
   $('tabConf').classList.toggle('on',t==='conf');
   renderStream();
+}
+
+/* ---------- 回看窗口（交易日，用户定稿 2026-10-11）：今天不算，往前推 N 个交易日 0 点起卡。
+   服务端始终保留 3 个交易日底仓，此设置只控制返回时筛哪个窗口——切换即时生效，不重扫 ---------- */
+function paintDays(n){
+  $('dBtn2').classList.toggle('on',n===2);
+  $('dBtn3').classList.toggle('on',n===3);
+}
+async function setDays(n){
+  if(n!==2&&n!==3)return;
+  paintDays(n);
+  try{localStorage.setItem('cl_matrix_days',String(n));}catch(e){}
+  try{
+    const r=await fetch('/api/pattern_days',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days:n})});
+    const d=await r.json();
+    if(d&&d.ok){
+      paintDays(d.days);                     // 以服务端为准（多端同值）
+      if(d.changed){                          // 窗口变了：重拉一次矩阵事件（毫秒级），不重扫
+        const r2=await fetch('/api/pattern_matrix');
+        const dd=await r2.json();
+        EVTS=[];(dd.events||[]).forEach(upsertEvent);renderStream();
+      }
+    }
+  }catch(e){}
 }
 
 function upsertEvent(m){
@@ -519,6 +547,7 @@ function syncBiConf(){
   const r=await fetch('/api/pattern_matrix');
   const d=await r.json();
   PERIODS=d.periods||[];CONTRACTS=d.contracts||[];
+  if(d.days_back)paintDays(d.days_back);   // 服务端值为准（可能从别的页面改过）
   (d.cells||[]).forEach(c=>{CELLS[c.symbol+'|'+c.period]=c;});
   render();
   (d.events||[]).forEach(upsertEvent);   // 旧→新入库，renderStream 新在上

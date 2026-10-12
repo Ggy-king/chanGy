@@ -33,6 +33,76 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 
 import engine, fees, backtest, trading_time, config, alert_manager
+
+
+# ==================== 日志落盘（用户定稿 2026-10-11） ====================
+# print 原样输出到终端，同时抄写进 data/logs/server_YYYYMMDD.log。
+# 跨天自动换新文件并清理 30 天前的旧文件——在写入时按日期判断，不用定时器，平时零开销。
+class _TeeLog:
+    KEEP_DAYS = 30
+
+    def __init__(self, stream):
+        self._stream = stream
+        self._dir = os.path.join(_HERE, 'data', 'logs')
+        self._date = None
+        self._fh = None
+
+    def _ensure(self):
+        d = dt.date.today()
+        if d != self._date:
+            if self._fh:
+                try:
+                    self._fh.close()
+                except Exception:
+                    pass
+            os.makedirs(self._dir, exist_ok=True)
+            self._fh = open(os.path.join(self._dir, f'server_{d:%Y%m%d}.log'), 'a', encoding='utf-8')
+            self._date = d
+            self._prune()
+
+    def _prune(self):
+        try:
+            cutoff = time.time() - self.KEEP_DAYS * 86400
+            for fn in os.listdir(self._dir):
+                if fn.startswith('server_') and fn.endswith('.log'):
+                    p = os.path.join(self._dir, fn)
+                    if os.path.getmtime(p) < cutoff:
+                        os.remove(p)
+        except Exception:
+            pass
+
+    def __getattr__(self, name):
+        # 未显式实现的属性（isatty/encoding/fileno 等）透传给原终端，
+        # 否则 uvicorn 等库访问 sys.stdout.isatty() 会崩（2026-10-11 启动报错）
+        return getattr(self._stream, name)
+
+    def isatty(self):
+        return False
+
+    def write(self, s):
+        try:
+            self._ensure()
+            if self._fh:
+                self._fh.write(s)
+                self._fh.flush()
+        except Exception:
+            pass
+        try:
+            return self._stream.write(s)
+        except Exception:
+            return 0
+
+    def flush(self):
+        for f in (self._fh, self._stream):
+            try:
+                if f:
+                    f.flush()
+            except Exception:
+                pass
+
+
+sys.stdout = _TeeLog(sys.stdout)
+sys.stderr = _TeeLog(sys.stderr)
 from chanlun.pattern import fingerprint as pattern_fingerprint
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
@@ -149,22 +219,17 @@ async def alert_loop():
                 await asyncio.sleep(10)
                 continue
             loop = asyncio.get_event_loop()
-            import tqsdk_data as tq
-            syms = sorted({a['symbol'] for a in alert_manager.get_active_alerts()}
-                          | {c['symbol'] for c in config.CONTRACTS})
-            prices = {}
-            def _one(s):
-                try:
-                    df = tq.fetch_kline(s, 30, data_length=2)
-                    if df is not None and len(df):
-                        return float(df['close'].iloc[-1])
-                except Exception:
-                    pass
-                return None
-            for s in syms:
-                p = _one(s)
-                if p is not None:
-                    prices[s] = p
+            # 只拉设了预警线的品种：没设线就零请求（用户定稿 2026-10-11）。
+            # 价格改走新浪hq（一次 HTTP 批量请求，线程池里跑），天勤长连接只服务
+            # K 线监控，预警不再上去抢锁——新浪实时价与列表页同源（用户定稿 2026-10-11）
+            syms = sorted({a['symbol'] for a in alert_manager.get_active_alerts()})
+            if not syms:
+                await asyncio.sleep(30)
+                continue
+            raw = await loop.run_in_executor(None, engine.get_quotes, syms)
+            quotes = (raw or {}).get('quotes') or {}
+            prices = {s: v['price'] for s, v in quotes.items()
+                      if isinstance(v, dict) and v.get('price')}
             triggered = alert_manager.check_prices(prices)
             for a in triggered:
                 msg = {'type': 'price_alert', 'id': a['id'], 'symbol': a['symbol'],
@@ -210,6 +275,95 @@ def _coerce_bi_conf(raw):
     return conf
 
 
+# ==================== 指纹去重集合（防无限增长，用户定稿 2026-10-11） ====================
+# 指纹格式 pattern|p1|p2 不含时间，无法从指纹本身判断新旧 → 加一层 _DatedSet
+# 记录每个指纹的入库日期，每天（写入时按日期判断，不用定时器）清理 30 天前的旧指纹。
+# 近期事件流里仍存在的指纹不清理（防止"延续触发"被误清后重复推卡）。
+class _DatedSet(set):
+    def __init__(self, iterable=()):
+        super().__init__(iterable)
+        self._dates = {}   # fingerprint -> 'YYYY-MM-DD' 入库日期
+
+    def add(self, fp):
+        super().add(fp)
+        self._dates[fp] = dt.date.today().isoformat()
+
+
+_fp_prune_date = None
+
+
+def _prune_reported(keep_days=30):
+    global _fp_prune_date
+    today = dt.date.today().isoformat()
+    if _fp_prune_date == today:
+        return
+    _fp_prune_date = today
+    cutoff = (dt.date.today() - dt.timedelta(days=keep_days)).isoformat()
+    recent = {ev.get('fingerprint') for ev in _pattern_events}
+    n = 0
+    for rep in _pattern_reported.values():
+        if not isinstance(rep, _DatedSet):
+            continue
+        for fp in [f for f, d in rep._dates.items() if d < cutoff and f not in recent]:
+            rep._dates.pop(fp, None)
+            rep.discard(fp)
+            n += 1
+    if n:
+        print(f'[pattern] 指纹清理：移除 {keep_days} 天前的旧指纹 {n} 条')
+
+
+# ==================== 事件快照落盘（用户定稿 2026-10-11） ====================
+# 增删改查全在内存做（快），JSON 只是定期把内存抄一份到磁盘：重启后恢复事件流
+# （24h 卡片不丢、首次发现时间不重置）和去重指纹（重启后旧结构不会被当新事件重推）。
+# 文件永远只有一份、事件最多 100 条（deque 上限），不会越存越多，无需按时间清理。
+_PATTERN_SNAPSHOT_FILE = os.path.join(_HERE, 'data', 'pattern_snapshot.json')
+
+
+def _pattern_save_snapshot():
+    try:
+        os.makedirs(os.path.dirname(_PATTERN_SNAPSHOT_FILE), exist_ok=True)
+        data = {
+            'saved_at': dt.datetime.now().isoformat(timespec='seconds'),
+            'days_back': _pattern_days_back,
+            'events': list(_pattern_events),
+            'reported': {f'{s}|{p}': sorted(rep) for (s, p), rep in _pattern_reported.items()},
+            'reported_dates': {f'{s}|{p}': dict(getattr(rep, '_dates', {}))
+                               for (s, p), rep in _pattern_reported.items()},
+        }
+        tmp = _PATTERN_SNAPSHOT_FILE + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, _PATTERN_SNAPSHOT_FILE)
+    except Exception as e:
+        print('[pattern] 事件快照保存失败:', e)
+
+
+def _pattern_load_snapshot():
+    global _pattern_days_back
+    try:
+        if not os.path.exists(_PATTERN_SNAPSHOT_FILE):
+            return
+        with open(_PATTERN_SNAPSHOT_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if data.get('days_back') in (2, 3):
+            _pattern_days_back = int(data['days_back'])   # 重启后窗口设置不丢
+        for ev in data.get('events', []):
+            _pattern_events.append(ev)
+        for k, fps in (data.get('reported') or {}).items():
+            s, _, p = k.rpartition('|')
+            rep = _DatedSet(fps)
+            rep._dates = dict((data.get('reported_dates') or {}).get(k, {}))
+            _pattern_reported[(s, p)] = rep
+        if _pattern_events:
+            print(f'[pattern] 已恢复事件快照：{len(_pattern_events)} 条事件'
+                  f'（{data.get("saved_at")} 保存），去重指纹已同步恢复')
+    except Exception as e:
+        print('[pattern] 事件快照恢复失败（按冷启动处理）:', e)
+
+
+_pattern_load_snapshot()
+
+
 def _push_rescan_task():
     async def _rescan():
         global _pattern_ready, _snapshot_done
@@ -218,6 +372,7 @@ def _push_rescan_task():
         await _pattern_scan_once(False)
         _pattern_ready = True
         await _push_startup_snapshot()  # 重推当前机会快照
+        _pattern_save_snapshot()        # 重建后事件/指纹可能变化，同步落盘
     return asyncio.ensure_future(_rescan())
 
 
@@ -230,7 +385,7 @@ async def _pattern_scan_once(push, periods=None):
         sym, name = c['symbol'], c['name']
         for period in periods:
             key = (sym, period)
-            rep = _pattern_reported.setdefault(key, set())
+            rep = _pattern_reported.setdefault(key, _DatedSet())
             try:
                 # 线程池里跑（fetch+算笔是同步阻塞），避免卡住事件循环
                 snap = await asyncio.get_event_loop().run_in_executor(
@@ -281,49 +436,49 @@ def _fmt_time_str(time_val):
         return ''
 
 
-def _trading_elapsed_seconds(t0, now):
-    """两个时间点之间累计的**交易时段**秒数：跨节假日/周末不计（用户要求：
-    24h 必须是交易日的 24h——9/30 的信号假期期间一直有效，直到开市后累计满 24h 交易时长）。"""
+_PATTERN_SCAN_DAYS = 3    # 扫描保留：固定最近 3 个交易日（最大回看档），展示时按用户选择再筛
+_pattern_days_back = 3    # 用户选的展示窗口（2/3 个交易日，不含今天）；矩阵页「回看」按钮控制
+
+
+def _window_start(days_back=None):
+    """事件保留窗口起点：今天不算，往前推 days_back 个交易日，从那天 0 点起。
+    交易日直接查 trading_time 日历（akshare+本地缓存，跨年自动重拉），
+    不做任何夜盘归属/交易时长换算——日历一刀切，零歧义。"""
     import trading_time as tt
-    # 统一为北京时间墙上时刻（交易时段表都是 naive 本地时间）
-    if t0.tzinfo is not None:
-        t0 = t0.replace(tzinfo=None)
-    if now.tzinfo is not None:
-        now = now.replace(tzinfo=None)
-    if (now - t0).total_seconds() > 45 * 86400:   # 超过45个自然日必为历史
-        return float('inf')
-    total = 0.0
-    d = t0.date()
-    days = 0
-    while d <= now.date() and days < 45:
-        for sh, sm, eh, em in tt.SESSIONS:
-            # 时段归属：凌晨段(00:00-02:35)属于前一交易日的夜盘，看前一自然日是否交易日
-            if (sh, sm) == (0, 0):
-                trade_ok = tt.is_trading_day(d - dt.timedelta(days=1))
-            else:
-                trade_ok = tt.is_trading_day(d)
-            if not trade_ok:
-                continue
-            seg_start = dt.datetime.combine(d, dt.time(sh, sm))
-            seg_end = dt.datetime.combine(d, dt.time(eh, em))
-            ov = (min(seg_end, now) - max(seg_start, t0)).total_seconds()
-            if ov > 0:
-                total += ov
-        d += dt.timedelta(days=1)
-        days += 1
-    return total
+    if days_back is None:
+        days_back = _PATTERN_SCAN_DAYS
+    d = dt.date.today()
+    found = 0
+    while found < days_back and (dt.date.today() - d).days < 45:
+        d -= dt.timedelta(days=1)
+        if tt.is_trading_day(d):
+            found += 1
+    return dt.datetime.combine(d, dt.time(0, 0))
+
+
+def _outside_show_window(e):
+    """展示窗口过滤（仅矩阵接口返回时用）：早于用户选的回看起点
+    （2/3 个交易日 0 点）的事件不返回。扫描底仓固定 3 天，与此互不影响。"""
+    try:
+        t = dt.datetime.fromisoformat(str(e.get('trigger_time') or e.get('time') or ''))
+        if t.tzinfo is not None:
+            t = t.replace(tzinfo=None)
+        return t < _window_start(_pattern_days_back)
+    except Exception:
+        return False
 
 
 def _is_stale_structure(time_str):
-    """【仅用于推送区/事件流】累计交易时长超过 PATTERN_CELL_TTL（24h 交易时长 ≈ 2.6 个交易日）的推送视为历史。
+    """【仅用于推送区/事件流】触发时刻早于扫描保留窗口（固定最近 3 个交易日，
+    不含今天，0 点起卡）的推送视为历史——固定 3 天做最大底仓，展示窗口
+    （2/3 天）在矩阵接口返回时再筛，切换无需重扫。
     格子（矩阵）不用此函数——格子上永远实时显示状态机的当前阶段，无任何时间过滤。
-    节假日/周末/夜盘闭市时间不计入（解析失败按新鲜处理）。"""
+    解析失败按新鲜处理。"""
     try:
         t = dt.datetime.fromisoformat(str(time_str))
-        if t.tzinfo is None:
-            t = t.astimezone()
-        now = dt.datetime.now().astimezone()
-        return _trading_elapsed_seconds(t, now) > config.PATTERN_CELL_TTL
+        if t.tzinfo is not None:
+            t = t.replace(tzinfo=None)
+        return t < _window_start(_PATTERN_SCAN_DAYS)
     except Exception:
         return False
 
@@ -456,7 +611,7 @@ def _fade_pattern_cells():
 
 
 async def _push_startup_snapshot():
-    """静默基线扫描收集到的新鲜事件（候选+确认，均已在24h交易时长内）按时间升序统一推送。
+    """静默基线扫描收集到的新鲜事件（候选+确认，均在回看窗口内）按时间升序统一推送。
     不做候选/确认取舍——事件流全量入 deque(100)，矩阵页按页签裁剪（全部30/确认20）。"""
     global _snapshot_done, _snapshot_msgs
     if _snapshot_done:
@@ -511,6 +666,7 @@ async def pattern_loop():
         try:
             now = dt.datetime.now()
             gap = _last_loop_ts is not None and (now - _last_loop_ts).total_seconds() > 240
+            _prune_reported()   # 每天首次进入循环时清一次 30 天前的旧指纹（日期判断，非定时器）
             if trading_time.is_trading_time():
                 if not _pattern_ready:
                     # 启动基线：全级别立即扫一遍（否则 60 分级别要等下一个整点，矩阵空窗太长），
@@ -519,10 +675,12 @@ async def pattern_loop():
                     _pattern_ready = True
                     _baseline_ts = time.time()
                     await _push_startup_snapshot()
+                    _pattern_save_snapshot()
                     print(f'[pattern_loop] {dt.datetime.now():%H:%M} 启动基线扫描完成，进入挂钟对齐节奏')
                 elif gap:
-                    print(f'[pattern_loop] {now:%H:%M} 停摆恢复（间隔超 2 分钟），立即补扫全级别')
+                    print(f'[pattern_loop] {now:%H:%M} 停摆恢复（间隔超 4 分钟），立即补扫全级别')
                     await _pattern_scan_once(True)
+                    _pattern_save_snapshot()
                     # 标记本轮已扫过的级别，避免紧跟的对齐点重复拉同一轮
                     for period in config.PATTERN_PERIODS:
                         iv = _PERIOD_SCAN_MIN.get(period)
@@ -538,6 +696,7 @@ async def pattern_loop():
                             _last_catchup = (now.date().isoformat(), c)
                             print(f'[pattern_loop] {now:%H:%M} 时段收尾扫描（{c//60:02d}:{c%60:02d} 收盘补齐，全级别）')
                             await _pattern_scan_once(True)
+                            _pattern_save_snapshot()
                             break
                     mod = now.hour * 60 + now.minute
                     due = []
@@ -548,6 +707,7 @@ async def pattern_loop():
                             due.append(period)
                     if due:
                         await _pattern_scan_once(True, periods=due)
+                        _pattern_save_snapshot()
                 await asyncio.sleep(30)
             else:
                 # 节假日/非交易时段：启动后只拉一遍基线（矩阵有数据可看），之后零拉取
@@ -563,6 +723,7 @@ async def pattern_loop():
                     # 覆盖休眠期间收盘的最后K线
                     print(f'[pattern_loop] {now:%H:%M} 停摆恢复（非交易时段），补扫一轮全级别')
                     await _pattern_scan_once(True)
+                    _pattern_save_snapshot()
                 await asyncio.sleep(60)   # 非交易时段每分钟只查一次是否开市（不发任何数据请求）
             _last_loop_ts = dt.datetime.now()   # 一轮工作全部完成才更新——gap 度量空闲间隔，
             # 耗时长的扫描不会误判成停摆（否则会级联触发一轮又一轮全扫）
@@ -585,6 +746,11 @@ async def fees_refresh_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 启动自检：关键配置缺失时明确说出来，避免"静默失败跑几天才发现"（2026-10-11）
+    if not os.path.exists(os.path.join(_HERE, 'secret.py')):
+        print('[启动自检] !! 缺少 secret.py（天勤账号配置），行情登录会失败')
+    if not os.path.exists(os.path.join(_HERE, 'data', 'gitee_conf.json')):
+        print('[启动自检] !! 缺少 data/gitee_conf.json（持仓云同步配置），持仓推送会一直失败')
     task = asyncio.create_task(periodic())
     alert_task = asyncio.create_task(alert_loop())
     pattern_task = asyncio.create_task(pattern_loop())
@@ -651,12 +817,34 @@ async def api_pattern_matrix():
     ready=启动基线+快照推送是否已完成（测试/前端可据此等待流稳定）。"""
     return JSONResponse({
         'cells': list(_pattern_cells.values()),
-        'events': list(_pattern_events),
+        'events': [e for e in _pattern_events if not _outside_show_window(e)],
         'periods': list(reversed(config.PATTERN_PERIODS)),   # 倒序：日线在最上（加上后）
         'contracts': config.CONTRACTS,
         'ready': _snapshot_done,
+        'days_back': _pattern_days_back,
         'ts': time.time(),
     })
+
+
+@app.post('/api/pattern_days')
+async def api_pattern_days(request: Request):
+    """矩阵页「回看」窗口设置（2/3 个交易日，不含今天、0 点起卡）。
+    即时生效：服务端扫描始终保留 3 个交易日底仓，此设置只控制接口返回时筛哪个窗口，
+    切换不重扫——页面改完重拉一次矩阵即可（毫秒级）。"""
+    global _pattern_days_back
+    try:
+        raw = await request.json()
+    except Exception:
+        raw = {}
+    days = raw.get('days') if isinstance(raw, dict) else None
+    if days not in (2, 3):
+        return JSONResponse({'ok': False, 'error': 'days 只能是 2 或 3'})
+    days = int(days)
+    changed = days != _pattern_days_back
+    if changed:
+        _pattern_days_back = days
+        _pattern_save_snapshot()
+    return JSONResponse({'ok': True, 'changed': changed, 'days': days})
 
 
 @app.post('/api/pattern_bi_conf')

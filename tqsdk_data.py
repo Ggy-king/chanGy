@@ -265,7 +265,7 @@ class TqData:
                             self._klines[key] = api.get_kline_serial(tq_sym, period_sec, data_length=data_length)
                             self._hist_ok[key] = self._wait_history(api, key, tq_sym, period_sec, data_length)
                             _filled = int(self._klines[key]['open'].notna().sum())
-                            if _filled >= target_ok(data_length):
+                            if _filled >= _target_ok(data_length):
                                 break
                     df = self._klines[key].copy()
                 return self._to_df(df)

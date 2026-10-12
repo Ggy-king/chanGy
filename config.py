@@ -41,6 +41,7 @@ CONTRACT_MAP = {c["symbol"]: c for c in CONTRACTS}
 PATTERN_PERIODS = ['3', '5', '15', '30m', '60']
 # 形态C 幅度过滤：6→7 幅度 > 2 × 5→6 幅度 才报三买候选（控制报警频率）
 PATTERN_RATIO = 2.0
+# （PATTERN_CELL_TTL 已废：事件流回看窗口改为按交易日计，由矩阵页「回看」按钮控制）
 # 矩阵页 fired/conf 状态保留时长（秒），到期自动淡化回 idle（也可手动点格子清除）
 PATTERN_CELL_TTL = 24 * 3600
 

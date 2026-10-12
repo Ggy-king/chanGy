@@ -570,10 +570,10 @@ def _recompute_overview_global(ov):
     g['max_dd'] = max(dd_list) if dd_list else 0
 
 
-def get_quotes():
-    """轻量实时行情：一次请求拉全部品种最新价（新浪hq接口）。
+def get_quotes(syms=None):
+    """轻量实时行情：一次请求拉品种最新价（新浪hq接口），不传则拉全部品种。
     只更新 最新价/涨跌/保证金，不重拉K线、不重算笔和统计。"""
-    syms = [c['symbol'] for c in config.CONTRACTS]
+    syms = list(syms) if syms else [c['symbol'] for c in config.CONTRACTS]
     url = 'https://hq.sinajs.cn/list=' + ','.join('nf_' + s for s in syms)
     r = requests.get(url, headers={'Referer': 'https://finance.sina.com.cn'}, timeout=6)
     r.encoding = 'gbk'
@@ -648,7 +648,9 @@ def pattern_snapshot(symbol, period, reported_keys=None, bi_conf=None):
     返回 {'name', 'bi_count', 'result'}；result = chanlun.pattern.evaluate 输出。"""
     name = config.CONTRACT_MAP[symbol]['name']
     period_sec = _TQ_PERIOD.get(period, 900)
-    df = tq.fetch_kline(symbol, period_sec, data_length=2000)
+    # 1000 根：回看窗口=最近 N 个交易日（用户定稿 2026-10-11），最紧的 3 分级别
+    # 1000 根 ≈ 6-8 个交易日，余量 2 倍+；砍半节省拉数与状态机重放开销
+    df = tq.fetch_kline(symbol, period_sec, data_length=1000)
     if df is None or len(df) == 0:
         raise RuntimeError(f'empty {period} data for {symbol}')
     df = df.reset_index(drop=True)
