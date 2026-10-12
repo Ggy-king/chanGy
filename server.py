@@ -190,12 +190,18 @@ async def do_refresh(broadcast=True):
 
 async def periodic():
     # 启动先拉一次并记录各品种信号基线（不把历史信号当新预警），完成后广播总览
-    try:
-        ov, _ = await engine.refresh_and_detect_all_async()
-        await manager.broadcast({'type': 'overview', 'overview': ov, 'ts': time.time()})
-    except Exception as e:
-        print('initial refresh error:', e)
+    if not _MON['enabled']:
+        print('[监控] 总开关为关：跳过启动基线拉取（预警/总览停用，看盘不受影响）')
+    else:
+        try:
+            ov, _ = await engine.refresh_and_detect_all_async()
+            await manager.broadcast({'type': 'overview', 'overview': ov, 'ts': time.time()})
+        except Exception as e:
+            print('initial refresh error:', e)
     while True:
+        if not _MON['enabled']:
+            await asyncio.sleep(3)   # 总开关关闭：空转零网络请求
+            continue
         now = dt.datetime.now()
         nxt = now.replace(minute=(now.minute // 15) * 15, second=20, microsecond=0)
         if nxt <= now:
@@ -215,6 +221,7 @@ async def alert_loop():
     await asyncio.sleep(30)
     while True:
         try:
+            # 价格预警不归监控总开关管（用户定稿 2026-10-12）：看盘配套，永远跑
             if not trading_time.is_trading_time():
                 await asyncio.sleep(10)
                 continue
@@ -654,6 +661,25 @@ _last_catchup = None       # (日期, 收盘分钟) 防同一次收盘重复收�
 _baseline_ts = 0.0         # 基线完成时刻（刚跑完基线就无需收尾，数据相同）
 _last_loop_ts = None       # 上一轮循环时刻（检测停摆：合盖休眠超 4 分钟 → 恢复后立即补扫）
 
+# ============ 监控总开关（用户定稿 2026-10-12，语义 10-12 修正）============
+# 只管"形态监控"：pattern_loop（矩阵卡片）+ periodic（总览预警信号）。
+# 价格预警(alert_loop)与手续费刷新(fees)是看盘配套，不归它管、永远运行。
+# 开机保持关闭则形态监控不启动；运行时可在监控页设置切换，看盘不受影响。
+_MON_FILE = os.path.join(_HERE, 'data', 'monitor_switch.json')
+def _monitor_enabled():
+    try:
+        with open(_MON_FILE, encoding='utf-8') as f:
+            return bool(json.load(f).get('enabled', True))
+    except Exception:
+        return True
+_MON = {'enabled': _monitor_enabled()}
+def _monitor_save():
+    try:
+        with open(_MON_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'enabled': _MON['enabled']}, f)
+    except Exception as e:
+        print('[监控开关] 保存失败:', e)
+
 
 async def pattern_loop():
     """形态监视主循环（§5.2/§5.4 + 用户节奏要求）：
@@ -672,6 +698,9 @@ async def pattern_loop():
     await asyncio.sleep(15)   # 等服务与其他初始化就绪
     while True:
         try:
+            if not _MON['enabled']:
+                await asyncio.sleep(3)   # 总开关关闭：不扫描不拉行情，看盘不受影响
+                continue
             now = dt.datetime.now()
             gap = _last_loop_ts is not None and (now - _last_loop_ts).total_seconds() > 240
             _prune_reported()   # 每天首次进入循环时清一次 30 天前的旧指纹（日期判断，非定时器）
@@ -745,6 +774,7 @@ async def fees_refresh_loop():
     特殊行情交易所调费率快；避开启动重活——首次行情基线+形态基线扫描那时已完成，
     akshare 拉取在线程池里跑，不卡事件循环；失败沿用旧缓存）。"""
     await asyncio.sleep(180)
+    # 手续费不归监控总开关管（用户定稿 2026-10-12）：看盘配套，永远跑
     try:
         await asyncio.get_event_loop().run_in_executor(None, lambda: fees.load(force=True))
         print('[fees] 启动刷新完成（手续费/保证金）')
@@ -761,6 +791,8 @@ async def lifespan(app: FastAPI):
         print('[启动自检] !! 缺少 data/gitee_conf.json（持仓云同步配置），持仓推送会一直失败')
     else:
         threading.Thread(target=_sync_contracts_to_gitee, daemon=True).start()   # 后台执行，启动不等网络
+    if not _MON['enabled']:
+        print('[监控] 总开关为关：本次启动不扫描/不预警/不拉行情（看盘不受影响）；可在监控页设置里开启')
     task = asyncio.create_task(periodic())
     alert_task = asyncio.create_task(alert_loop())
     pattern_task = asyncio.create_task(pattern_loop())
@@ -807,6 +839,22 @@ async def asset_popup_cards_js():
     return _page('popup_cards.js')
 
 
+@app.get('/favicon.svg')
+async def asset_favicon_svg():
+    return _page('favicon.svg')
+
+
+@app.get('/favicon.png')
+async def asset_favicon_png():
+    return _page('favicon.png')
+
+
+@app.get('/positions_core.js')
+async def asset_positions_core_js():
+    """移动端持仓共享逻辑层（/m 与 APK 离线壳共用，PC 端不动，2026-10-12 用户定稿）"""
+    return _page('positions_core.js')
+
+
 @app.get('/m')
 async def page_m_list():
     return _page('m_list.html')
@@ -844,6 +892,7 @@ async def api_pattern_matrix():
         'contracts': config.CONTRACTS,
         'ready': _snapshot_done,
         'days_back': _pattern_days_back,
+        'mon_enabled': _MON['enabled'],
         'ts': time.time(),
     })
 
@@ -1132,6 +1181,21 @@ async def api_positions_update(request: Request):
     return JSONResponse({'ok': True, 'positions': positions})
 
 
+@app.post('/api/monitor_switch')
+async def api_monitor_switch(request: Request):
+    """监控总开关（用户定稿 2026-10-12）：关=四个循环空转零网络请求，只剩看盘；持久化到 data/。"""
+    p = await request.json()
+    _MON['enabled'] = bool(p.get('enabled'))
+    _monitor_save()
+    state_txt = '开' if _MON['enabled'] else '关'
+    print('[监控] 总开关 → ' + state_txt + ('' if _MON['enabled'] else '（扫描/预警/手续费刷新全部停用，看盘不受影响）'))
+    try:
+        await manager.broadcast({'type': 'monitor_state', 'enabled': _MON['enabled']})
+    except Exception:
+        pass
+    return JSONResponse({'ok': True, 'enabled': _MON['enabled']})
+
+
 @app.post('/api/positions/delete')
 async def api_positions_delete(request: Request):
     """平仓删除：记录移入 history.json（简报：止盈/止损/保本 + 盈亏，选填；
@@ -1147,7 +1211,11 @@ async def api_positions_delete(request: Request):
             return JSONResponse({'error': '未找到该持仓'}, status_code=404)
         now = dt.datetime.now()
         try:
-            opened = dt.datetime.fromisoformat(rec.get('open_iso') or now.isoformat())
+            opened = dt.datetime.fromisoformat(str(rec.get('open_iso') or '') or now.isoformat())
+            if opened.tzinfo is not None:
+                # 手机端 open_iso 是 UTC 带时区格式（new Date().toISOString()），转本地 naive，
+                # 否则 now-opened 报 "naive and offset-aware" TypeError → 500 → 前端静默失败
+                opened = opened.astimezone().replace(tzinfo=None)
         except Exception:
             opened = now
         # 空简报（结果和盈亏都空）= 试验单，纯删除不进 history
@@ -1431,13 +1499,112 @@ async def ws_endpoint(ws: WebSocket):
 
 
 if __name__ == '__main__':
+    # ============ 启动命令行（用户定稿 2026-10-12）：↑↓ 选择 + 回车确认；-y 全默认 ============
+    import sys as _sys
+
+    _ASK = _sys.stdin.isatty() and not ('-y' in _sys.argv[1:] or '--yes' in _sys.argv[1:])
+
+    _C, _Y, _G, _R, _B, _D, _RST = '\033[36m', '\033[33m', '\033[32m', '\033[31m', '\033[1m', '\033[2m', '\033[0m'
+
+    def _mask(u):
+        u = str(u)
+        return u[:3] + '****' + u[-2:] if len(u) > 7 else u[0] + '****'
+
+    def _load_accounts():
+        """secret.py 只存数据；本函数负责读取与兼容（新 ACCOUNTS / 旧 TQ_USER）"""
+        try:
+            import secret
+            accs = getattr(secret, 'ACCOUNTS', None)
+            if accs:
+                return [(a.get('name') or a['user'], a['user'], a['pwd']) for a in accs]
+            return [('main', secret.TQ_USER, secret.TQ_PASS)]
+        except ImportError:
+            return []
+
+    def _pick(title, options, default_idx):
+        """↑↓ 移动 + 回车确认（原生 termios，零依赖）；非交互环境（管道/自启）直接用默认"""
+        if not _ASK:
+            return default_idx
+        import termios, tty
+        fd = _sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        sel = max(0, min(default_idx, len(options) - 1))
+
+        def _draw(first):
+            if not first:
+                print(f'\x1b[{len(options)}A', end='')   # 光标上移重画
+            for i, o in enumerate(options):
+                cur, hl = ('❯ ', _C + _B) if i == sel else ('  ', _D)
+                print(f'  {cur}{hl}{o}{_RST}\x1b[K')
+
+        print(title)
+        try:
+            tty.setcbreak(fd)
+            print('\x1b[?25l', end='')   # 隐藏光标
+            _draw(True)
+            while True:
+                ch = _sys.stdin.read(1)
+                if ch == '\x1b':
+                    seq = _sys.stdin.read(2)
+                    if seq == '[A':
+                        sel = (sel - 1) % len(options)
+                    elif seq == '[B':
+                        sel = (sel + 1) % len(options)
+                elif ch in ('\r', '\n'):
+                    return sel
+                elif ch == '\x03':
+                    raise KeyboardInterrupt
+                _draw(False)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            print('\x1b[?25h', end='')
+
+    print()
+    print(f'  {_B}⚡ 缠论预警 · 监控服务{_RST}')
+    print(f'  {_D}{"─" * 48}{_RST}')
+
+    # ---- ① 天勤账户（先选账户，用户定稿 2026-10-12）----
+    accs = _load_accounts()
+    acc_name = ''
+    if not accs:
+        print(f'  {_C}①{_RST} {_B}天勤账户{_RST}   {_R}⚠ 未找到 secret.py —— 行情登录会失败{_RST}')
+    else:
+        _LAST_ACC = os.path.join(_HERE, 'data', 'last_account.json')
+        last_user = ''
+        try:
+            with open(_LAST_ACC, encoding='utf-8') as f:
+                last_user = json.load(f).get('user', '')
+        except Exception:
+            pass
+        default_i = next((i for i, a in enumerate(accs) if a[1] == last_user), 0)
+        opts = [f'👤 {name}   {_mask(user)}' for name, user, _p in accs]
+        idx = _pick(f'  {_C}①{_RST} {_B}天勤账户{_RST} {_D}(↑↓ 移动，回车确认){_RST}', opts, default_i)
+        name, user, pwd = accs[idx]
+        acc_name = name
+        import tqsdk_data as _tq
+        _tq.set_account(user, pwd)
+        try:
+            with open(_LAST_ACC, 'w', encoding='utf-8') as f:
+                json.dump({'name': name, 'user': user}, f)
+        except Exception:
+            pass
+        print(f'  {_C}①{_RST} 账户 → {_G}{name}{_RST} {_D}({_mask(user)}){_RST}')
+
+    # ---- ② 监控服务 ----
+    mon_opts = ['🔔 开启   （扫描 · 矩阵卡片 · 总览信号）',
+                '🌙 关闭   （只剩看盘；价格预警/手续费不受影响）']
+    idx = _pick(f'  {_C}②{_RST} {_B}监控服务{_RST} {_D}(↑↓ 移动，回车确认){_RST}', mon_opts, 0 if _MON['enabled'] else 1)
+    _MON['enabled'] = (idx == 0)
+    _monitor_save()
+    print(f'  {_C}②{_RST} 监控 → ' + (_G + '🔔 开启' if _MON['enabled'] else _D + '🌙 关闭（价格预警/手续费/看盘不受影响）') + _RST)
+
+    print(f'  {_D}{"─" * 48}{_RST}')
     ip = lan_ip()
-    print('=' * 56)
-    print('  缠论多品种预警服务已启动')
-    print(f'  电脑总览： http://localhost:{PORT}/pc')
-    print(f'  手机列表： http://{ip}:{PORT}/m   （手机连同一 WiFi）')
-    print('  Ctrl+C 停止')
-    print('=' * 56)
+    mon_txt = (_Y + '🔔 开' if _MON['enabled'] else _D + '🌙 关') + _RST
+    print(f'  🚀 {_B}启动中{_RST} → {_C}http://localhost:{PORT}/pc{_RST}')
+    print(f'     📱 手机列表  http://{ip}:{PORT}/m   （手机连同一 WiFi）')
+    print(f'     🔔 监控: {mon_txt}   👤 账户: {acc_name or "（未配置）"}   {_D}Ctrl+C 退出{_RST}')
+    print(f'  {_D}{"─" * 48}{_RST}')
     # 预初始化天勤连接（后台线程，不阻塞启动）
     def _init_tq():
         try:
@@ -1445,9 +1612,11 @@ if __name__ == '__main__':
         except Exception as e:
             print(f'[TqData] 导入数据源模块失败: {e}')
             return
+        if not accs:
+            return
         try:
             tq.TqData()._ensure_api()
-            print('[TqData] 天勤连接预初始化完成')
+            print(f'[TqData] 天勤连接预初始化完成（账户: {acc_name}）')
         except tq.TqAuthError as e:
             # 致命认证错误：明确提示用户改 secret.py 后重启，不会静默重试
             print(f'[TqData] 预初始化失败（致命 - 不会自动重试）: {e}')

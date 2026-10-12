@@ -130,7 +130,7 @@ select{appearance:none;-webkit-appearance:none;
 
 </style>
 <script src="/popup_cards.js"></script>
-</head>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" sizes="32x32" href="/favicon.png"></head>
 <body>
 <header>
   <a href="/pc" class="btn" style="text-decoration:none;">‹ 返回</a>
@@ -143,6 +143,9 @@ select{appearance:none;-webkit-appearance:none;
 </header>
 
 <!-- 右上角预警弹卡容器 + 声音分类设置面板（弹卡容器由 popup_cards.js 按需创建） -->
+<div id="monOffBar" style="display:none;position:fixed;top:0;left:0;right:0;z-index:200;background:#3a1d20;color:#ef5350;
+  border-bottom:1px solid #ef5350;padding:7px 16px;font-size:12.5px;text-align:center;">
+  ⛔ 形态监控已停用——矩阵/卡片不再更新；价格预警、手续费、看盘均不受影响。⚙ 设置里可重新开启。</div>
 <div id="sndPanel" style="display:none;position:fixed;top:52px;right:16px;z-index:130;background:#1e222d;
      border:1px solid #f0b90b66;border-radius:12px;padding:13px 15px;width:260px;box-shadow:0 12px 36px #000d;">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -169,6 +172,16 @@ select{appearance:none;-webkit-appearance:none;
       </label>
     </div>
     <div style="font-size:10.5px;color:#565a66;margin-top:5px;line-height:1.5;">A类橙 / B类紫，从监控页点进去时画在 K 线上，与中枢无关。</div>
+  </div>
+  <div style="border-top:1px solid #2a2e39;margin-top:11px;padding-top:10px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-size:12px;color:#ef5350;font-weight:700;">监控服务</span>
+      <label style="cursor:pointer;display:flex;align-items:center;gap:7px;" title="关=停止扫描/预警/手续费刷新，零网络请求，只剩看盘；下次启动保持关闭则监控不启动">
+        <input type="checkbox" id="monTgl" onchange="monSwitch(this.checked)">
+        <span id="monTxt" style="font-size:11.5px;color:#9aa0b0;">开</span>
+      </label>
+    </div>
+    <div style="font-size:10.5px;color:#565a66;margin-top:5px;line-height:1.5;">关=只停形态监控（矩阵/卡片）；价格预警、手续费、看盘不受影响；状态持久化，重启仍生效。</div>
   </div>
 </div>
 
@@ -308,7 +321,10 @@ function zoneQuery(m){
   if(!m||m.p1==null||m.p2==null) return '';
   const t1=m.t1||m.time||m.first_time;
   if(!t1) return '';
-  return '&szp='+encodeURIComponent([m.p1,m.p2,m.p3??'',t1,m.kind||'',m.side||''].join('|'));
+  // 格子没有 kind 字段，从 state 推导（conf_a/watch_a/cand_a→A，trig_b/cand_b→B）
+  const kind=m.kind||(String(m.state||'').includes('_a')?'A':(String(m.state||'').includes('_b')?'B':''));
+  if(!kind) return '';
+  return '&szp='+encodeURIComponent([m.p1,m.p2,m.p3??'',t1,kind,m.side||''].join('|'));
 }
 function go(sym,period,cell){location.href='/pc/detail?sym='+sym+'&period='+period+zoneQuery(cell);}
 function cellClick(sym,period){go(sym,period,CELLS[sym+'|'+period]);}
@@ -527,6 +543,8 @@ function connect(){
       if(changed&&evIsFresh(m)){beepFor(m);flashTitle(m.text);notify(m);showPatternPopup(m,true);}
     }else if(m.type==='pattern_state'){
       applyCell(m.cell);
+    }else if(m.type==='monitor_state'){
+      paintMon(m.enabled);   // 总开关被切换（含服务器侧），横幅与设置按钮实时同步
     }
   };
 }
@@ -546,6 +564,15 @@ function paintStructVis(){
   const t=$('structVisTxt'); if(t) t.textContent=on?'开':'关';
   const c=$('structVisTgl'); if(c) c.checked=on;
 }
+function paintMon(on){
+  const t=$('monTxt'); if(t) t.textContent=on?'开':'关';
+  const c=$('monTgl'); if(c) c.checked=on;
+  const bar=$('monOffBar'); if(bar) bar.style.display=on?'none':'block';
+}
+function monSwitch(on){
+  fetch('/api/monitor_switch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:on})})
+    .then(r=>r.json()).then(d=>paintMon(d.enabled)).catch(()=>paintMon(!on));
+}
 function structVisChange(v){
   try{localStorage.setItem('cl_struct_visible',v?'1':'0');}catch(e){}
   paintStructVis();
@@ -557,6 +584,7 @@ function structVisChange(v){
   paintStructVis();
   syncBiConf();
   try{setTab(localStorage.getItem('cl_evt_tab')==='conf'?'conf':'all');}catch(e){}   // 恢复上次选的页签
+  fetch('/api/pattern_matrix').then(r=>r.json()).then(d=>paintMon(d.mon_enabled!==false)).catch(()=>{});
   const r=await fetch('/api/pattern_matrix');
   const d=await r.json();
   PERIODS=d.periods||[];CONTRACTS=d.contracts||[];

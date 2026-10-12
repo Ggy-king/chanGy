@@ -574,7 +574,9 @@ def get_quotes(syms=None):
     """轻量实时行情：一次请求拉品种最新价（新浪hq接口），不传则拉全部品种。
     只更新 最新价/涨跌/保证金，不重拉K线、不重算笔和统计。"""
     syms = list(syms) if syms else [c['symbol'] for c in config.CONTRACTS]
-    url = 'https://hq.sinajs.cn/list=' + ','.join('nf_' + s for s in syms)
+    # 新浪接口只认大写代码（2026-10-12 PVC 预警不触发事故：nf_v2701 返回空，nf_V2701 正常）
+    lookup = {s.lower(): s for s in syms}
+    url = 'https://hq.sinajs.cn/list=' + ','.join('nf_' + s.upper() for s in syms)
     r = requests.get(url, headers={'Referer': 'https://finance.sina.com.cn'}, timeout=6)
     r.encoding = 'gbk'
     out = {}
@@ -582,7 +584,7 @@ def get_quotes(syms=None):
         m = re.match(r'var hq_str_nf_(\w+)="(.*)"', line.strip())
         if not m:
             continue
-        sym, f = m.group(1), m.group(2).split(',')
+        sym, f = lookup.get(m.group(1).lower(), m.group(1).lower()), m.group(2).split(',')
         if len(f) < 11 or not f[8]:
             continue  # 非交易时段个别品种可能返回空
         try:

@@ -119,6 +119,12 @@ class TqAuthError(Exception):
     """致命错误：天勤认证失败（密码错/账号失效）。不应重试，需用户修改 secret.py 后重启服务。"""
 
 
+# 启动选定的账号（server 命令行选择后注入；None=回落 secret.py 首个账户）
+_ACC = {'user': None, 'pwd': None}
+def set_account(user, pwd):
+    _ACC['user'], _ACC['pwd'] = user, pwd
+
+
 class TqData:
     """单例长连接：全局一个TqApi，WebSocket 重连由 TqSdk 内部处理（指数退避 10s→640s）。
 
@@ -167,15 +173,21 @@ class TqData:
                 pass
         self._api = None
         self._klines = {}
-        # 凭证放本地 secret.py（已 .gitignore，不入库）；
-        # 首次使用参考模板 secret.py.local
-        try:
-            import secret
-            user, pwd = secret.TQ_USER, secret.TQ_PASS
-        except ImportError:
-            raise RuntimeError(
-                '缺少 secret.py：请复制项目根目录的 secret.py.local 为 secret.py，'
-                '填入天勤账号密码（该文件不入库）')
+        # 账号来源：启动命令行选择后由 server 注入（set_account）；未注入则回落 secret.py
+        # （secret.py 只存数据，逻辑一律在外部——2026-10-12 用户定稿）
+        user, pwd = _ACC['user'], _ACC['pwd']
+        if not user:
+            try:
+                import secret
+                accs = getattr(secret, 'ACCOUNTS', None)
+                if accs:
+                    user, pwd = accs[0]['user'], accs[0]['pwd']
+                else:
+                    user, pwd = secret.TQ_USER, secret.TQ_PASS
+            except ImportError:
+                raise RuntimeError(
+                    '缺少 secret.py：请复制项目根目录的 secret.py.local 为 secret.py，'
+                    '填入天勤账号密码（该文件不入库）')
         # 创建新连接 —— 区分认证失败（致命）vs 网络等瞬时错误（可重试）
         try:
             self._api = TqApi(auth=TqAuth(user, pwd))

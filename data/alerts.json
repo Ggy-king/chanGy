@@ -1,1 +1,13 @@
-[]
+[
+  {
+    "id": "1791783563675",
+    "symbol": "CF2701",
+    "name": "棉花",
+    "price": 15900.0,
+    "direction": "up",
+    "created_at": "2026-10-12 13:39:23",
+    "triggered": false,
+    "triggered_at": null,
+    "triggered_price": null
+  }
+]

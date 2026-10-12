@@ -111,11 +111,21 @@
   .sheet .btns button{flex:1;border:none;border-radius:10px;padding:11px 0;font-size:14px;cursor:pointer;}
   .btn-cancel{background:var(--card2);color:var(--t1);}
   .btn-ok{background:var(--gold);color:#241A05;font-weight:700;}
+  /* 平仓简报：止盈/止损/保本 = 原生 radio+label（纯 CSS 选中态，零 JS 依赖） */
+  #mpcResults .mpc-r{position:absolute;opacity:0;width:0;height:0;}
+  #mpcResults label{flex:1;text-align:center;padding:9px 0;border-radius:9px;
+    border:1px solid var(--line);background:var(--app);color:var(--t1);
+    font-size:13.5px;cursor:pointer;}
+  #mpcResults input:checked+label{background:var(--gold);border-color:var(--gold);
+    color:#241A05;font-weight:700;}
+  /* 平仓简报：止盈/止损/保本 选中态（!important 压过按钮内联样式，否则点了没反馈） */
+  #mpcResults button.sel{background:var(--gold)!important;color:#241A05!important;
+    border-color:var(--gold)!important;font-weight:700;}
   #toast{position:fixed;left:50%;bottom:100px;transform:translateX(-50%);background:#1A212D;color:var(--t1);
     border:1px solid rgba(245,184,61,.4);border-radius:10px;padding:9px 16px;font-size:12.5px;z-index:300;
     opacity:0;transition:opacity .25s;pointer-events:none;max-width:82%;text-align:center;}
   #toast.show{opacity:1;}
-</style></head>
+</style><script src="positions_core.js"></script></head>
 <body>
 <!-- 离线兜底页（APK 连不上电脑时自动加载）：纯本地渲染秒开，三 tab 结构与主页面一致。
      持仓走 Gitee 直连全功能；预警/留言依赖电脑 WS，离线为只读空态，重连后回主界面。 -->
@@ -123,7 +133,7 @@
   <div id="views">
     <section class="view">
       <div class="app-header">
-        <div class="h-row1"><div class="h-title">缠论预警</div></div>
+        <div class="h-row1"><div class="h-title">缠论预警</div><span style="font-size:10px;color:#565a66;font-family:var(--mono);margin-left:8px;">v1.1</span></div>
         <div class="conn"><span class="cdot"></span><span class="ctxt">离线模式 · 未连电脑</span></div>
       </div>
       <div class="content">
@@ -134,7 +144,7 @@
     <section class="view">
       <div class="app-header">
         <div class="h-row1">
-          <div class="ph-l"><div class="h-title">持仓</div><div class="ph-count" id="posCnt">0 / 4</div></div>
+          <div class="ph-l"><div class="h-title">持仓</div><div class="ph-count" id="posCnt">0 / 4</div><span style="font-size:10px;color:#565a66;font-family:var(--mono);margin-left:8px;">v1.3</span></div>
           <div class="h-row1">
             <div class="icon-btn" onclick="posLoad()" style="margin-right:9px;">⟳</div>
             <button class="btn-add" onclick="posFormOpen()">＋ 添加</button>
@@ -200,34 +210,13 @@
   </div>
 </div>
 
-<div id="posCloseOv" class="sheet-mask">
-  <div class="sheet">
-    <b style="font-size:15px;">平仓 · 交易简报</b>
-    <p id="mpcInfo" style="margin:12px 0;font-size:12.5px;line-height:1.9;color:var(--t2);"></p>
-    <div id="mpcResults" style="display:flex;gap:9px;margin-bottom:12px;">
-      <button data-v="止盈" onclick="mpcSel(this)" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--line);background:var(--app);color:var(--t1);cursor:pointer;font-size:13.5px;">止盈</button>
-      <button data-v="止损" onclick="mpcSel(this)" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--line);background:var(--app);color:var(--t1);cursor:pointer;font-size:13.5px;">止损</button>
-      <button data-v="保本" onclick="mpcSel(this)" style="flex:1;padding:9px 0;border-radius:9px;border:1px solid var(--line);background:var(--app);color:var(--t1);cursor:pointer;font-size:13.5px;">保本</button>
-    </div>
-    <input id="mpcPnl" placeholder="盈亏金额，如 +800 或 -300（选填）" style="width:100%;background:var(--app);border:1px solid var(--line);color:var(--t1);border-radius:9px;padding:10px 12px;font-size:13.5px;">
-    <div class="btns">
-      <button class="btn-cancel" onclick="document.getElementById('posCloseOv').style.display='none'">取消</button>
-      <button class="btn-ok" onclick="posDelConfirm()">确认平仓</button>
-    </div>
-  </div>
-</div>
+<!-- 平仓简报弹层由 positions_core.js 注入 -->
 
 <script>
 const GH={owner:'ggy-king',repo:'chan-gy-data',branch:'master',token:'你的Gitee私人令牌'};
-const POS_EXIT={'二买':'二卖','二卖':'二买','三买':'三卖','三卖':'三买'};
-const POS_LIMIT=4;
+/* POS_EXIT/POS_LIMIT/POS_PNAME/posLabel/periodLabel/b64enc/b64dec/_delPend 由共享层 positions_core.js 提供 */
 let POS_SYMS=[["jd2612", "鸡蛋"], ["UR2701", "尿素"], ["MA2611", "甲醇"], ["jm2701", "焦煤"], ["CF2701", "棉花"], ["SA2701", "纯碱"], ["SR2701", "白糖"], ["v2701", "PVC"], ["CJ2701", "红枣"], ["SP2611", "纸浆"], ["RU2701", "橡胶"], ["lh2611", "生猪"], ["AP2701", "苹果"], ["pg2611", "液化气"], ["RB2701", "螺纹钢"], ["NI2611", "沪镍"], ["PK2611", "花生"]];   // 仅离线兜底；正常启动会被云端 contracts.json 覆盖
-const POS_PNAME={'30':'30秒','3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分','daily':'日线'};
-let POSITIONS=[], posEditId=null, posDelId=null, _toastTimer=null, _curTab=0;
-function posLabel(v){ v=v||''; return v.startsWith('二')?('A类'+v):v.startsWith('三')?('B类'+v):v; }
-function periodLabel(p){ return POS_PNAME[p]||p+'分'; }
-function b64enc(str){ return btoa(unescape(encodeURIComponent(str))); }
-function b64dec(b){ return new TextDecoder().decode(Uint8Array.from(atob(b),c=>c.charCodeAt(0))); }
+let POSITIONS=[], posEditId=null, _toastTimer=null, _curTab=0;
 function ghApi(path){ return `https://gitee.com/api/v5/repos/${GH.owner}/${GH.repo}/contents/${path}`; }
 async function ghGet(path){
   const r=await fetch(ghApi(path)+'?access_token='+GH.token+'&_='+Date.now());
@@ -457,58 +446,13 @@ async function posFormSubmit(){
 function posEdit(id){ posFormOpen(id); }
 function posDel(id){
   const rec=POSITIONS.find(x=>x.id===id); if(!rec) return;
-  const now=new Date();
-  const opened=rec.open_iso?new Date(rec.open_iso):now;
-  const hold=Math.max(0,Math.round((now-opened)/60000));
-  const hm=hold>=60?`${Math.floor(hold/60)}小时${hold%60}分`:`${hold}分钟`;
-  document.getElementById('mpcInfo').innerHTML=`<b style="color:var(--t1);">${rec.name}（${rec.symbol}）</b> ${periodLabel(rec.period)}<br>
-    进场 <b style="color:var(--t1);">${posLabel(rec.entry)}</b> → 离场 <b style="color:var(--t1);">${posLabel(rec.exit)}</b><br>
-    开仓 ${rec.open_time} ${rec.weekday} · 持仓 <b style="color:var(--gold);">${hm}</b><br>
-    <span style="font-size:11px;">简报全部选填，直接确认就是平仓删除</span>`;
-  document.querySelectorAll('#mpcResults button').forEach(x=>x.classList.remove('sel'));
-  document.getElementById('mpcPnl').value='';
-  posDelId=id;
-  document.getElementById('posCloseOv').style.display='flex';
+  PosCore.open(id, rec, {get:(p)=>ghGet(p), put:(p,d,m)=>ghPut(p,d,m)}, {   // 箭头晚绑定：运行期取最新 ghGet/ghPut   // 晚绑定：测试可替换 ghGet/ghPut
+    bgJob:_bgJob, getPositions:()=>POSITIONS, toast,
+    removeLocal(pid){ _delPend.add(pid); POSITIONS=POSITIONS.filter(x=>x.id!==pid); posRender(POSITIONS); posLocalSave(); },
+    done(pid){ _delPend.delete(pid); }
+  });
 }
-function mpcSel(b){
-  document.querySelectorAll('#mpcResults button').forEach(x=>x.classList.remove('sel'));
-  b.classList.add('sel');
-}
-const _delPend=new Set();
-async function posDelConfirm(){
-  if(!posDelId) return;
-  const selB=document.querySelector('#mpcResults button.sel');
-  const result=selB?selB.dataset.v:'';
-  const pnl=document.getElementById('mpcPnl').value.trim();
-  const id=posDelId; posDelId=null;
-  const rec=POSITIONS.find(x=>x.id===id);
-  _delPend.add(id);
-  POSITIONS=POSITIONS.filter(x=>x.id!==id);
-  posRender(POSITIONS); posLocalSave();
-  document.getElementById('posCloseOv').style.display='none';
-  toast('已平仓');
-  const now=new Date();
-  const t=`${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-  _bgJob(async()=>{
-    const d=await ghGet('positions.json');
-    const list=d.data.positions||[];
-    const r=list.find(x=>x.id===id);
-    if(result||pnl){   // 空简报=试验单，纯删除不进 history
-      const src=r||rec;
-      const opened=src&&src.open_iso?new Date(src.open_iso):now;
-      const hold=Math.max(0,Math.round((now-opened)/60000));
-      let hist=[];
-      try{ const h=await ghGet('history.json'); hist=h.data.history||[]; }catch(e){}
-      hist.unshift({...src, close_result:result, close_pnl:pnl,
-        close_time:t, close_iso:now.toISOString?now.toISOString():String(now),
-        weekday_close:'周'+'日一二三四五六'[now.getDay()], hold_min:hold});
-      await ghPut('history.json', {history:hist}, '平仓简报 '+(src?src.name:'')+' '+t);
-    }
-    const left=list.filter(x=>x.id!==id);
-    await ghPut('positions.json', {positions:left}, '平仓删除 '+(r?r.name:'')+' '+t);
-    _delPend.delete(id);
-  },'平仓');
-}
+
 /* 秒开：先渲染本地缓存，再静默拉远端；预警/留言为离线空态不请求任何远端 */
 posRenderCache();
 posLoad();
