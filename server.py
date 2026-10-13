@@ -1243,6 +1243,8 @@ async def api_positions_add(request: Request):
                'open_time': now.strftime('%m-%d %H:%M'), 'weekday': _POS_WEEKDAYS[now.weekday()],
                'open_iso': now.isoformat(timespec='seconds'), 'note': str(p.get('note', '') or '')[:200],
                'result': '', 'pnl': ''}
+        if p.get('entry_fp'):   # 进场时的活跃结构指纹（持仓卡"回调笔延伸中"判定用，2026-10-13）
+            rec['entry_fp'] = str(p['entry_fp'])[:120]
         positions.append(rec)
         _positions_save(positions)
     _POS_DIRTY['positions.json'] = True

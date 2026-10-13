@@ -1524,7 +1524,7 @@ function showAlertPopup(alert){
   PopupCards.push({
     fp:'price_'+alert.id,
     tone:isUp?'up':'down',
-    title:isUp?'▲ 涨破预警':'▼ 跌破预警',
+    title:(isUp?'▲ 涨破预警 · ':'▼ 跌破预警 · ')+(alert.name||alert.symbol),
     info:alert.name+'（'+alert.symbol+'）<br>'+
       '预警价：'+alert.price+'　触发价：'+alert.triggered_price+'<br>'+
       '时间：'+alert.triggered_at
@@ -1534,11 +1534,18 @@ function showAlertPopup(alert){
 
 function showPatternPopup(m){
   const long=(m.side||'long')==='long';
+  const st=(m.pattern||'').indexOf('CONF')>=0?'确认':(m.pattern||'').indexOf('TRIG')>=0?'触发':'候选';
+  const kd=(m.kind==='A'?'A类':'B类')+(long?'买点':'卖点');
+  const pl={'3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分'}[m.period]||m.period||'';
   PopupCards.push({
     fp:m.fingerprint,
-    tone:long?'up':'down',
-    title:(m._upd?'🔔 延续触发 · ':'')+(m.kind==='A'?'A类·背驰V反':'B类·三买卖点')+(long?'（多）':'（空）'),
-    info:(m.text||'')+'<br>价 <b>'+m.price+'</b>　触发 '+(m.trigger_time||'').replace('T',' '),
+    tone:(m.kind==='B')?(long?'gold':'purple'):(long?'up':'down'),   // 4色对齐矩阵图例（2026-10-13）
+    title:(m.name||m.symbol||'')+' '+pl,   // 品种+级别置顶大字（2026-10-13 定稿）
+    info:'<b class="pp-main">'+kd+' · '+st+'</b>'+
+      (m.bi_formed?'<span class="pp-pill pp-g">✅已成笔</span>':'')+
+      (m._upd?'<span class="pp-pill pp-b">🔔延续</span>':'')+
+      '<br>价 <b>'+m.price+'</b>　触发 '+String(m.trigger_time||m.time||'').replace('T',' ').slice(5,16)+
+      '<br><span class="pp-txt">'+(m.text||'')+'</span>',
     onClick:()=>location.href='/pc/matrix'
   });
   playAlertSound();

@@ -117,6 +117,35 @@
 .posCard .ops button:hover{border-color:#f0b90b;color:#f0b90b;}
 .posCard .ops button.pc{color:#ff7b7b;background:rgba(255,92,92,.08);border-color:rgba(255,92,92,.4);}
 .posCard .ops button.pc:hover{border-color:#ff7b7b;color:#ff7b7b;}
+/* ===== 持仓状态区（v2 2026-10-13：迷你矩阵行——格子的实时状态原样上卡，级别行+含义标注） ===== */
+.posCard .pstat{border-top:1px dashed #2a2e39;margin-top:9px;padding-top:8px;}
+.pstat .phead{display:flex;justify-content:space-between;font-size:9.5px;color:#787b86;letter-spacing:1.5px;margin-bottom:6px;}
+.pstat .pbig{font-size:13.5px;font-weight:800;margin-bottom:7px;}
+.pstat .pbig.warn{color:#ef5350;}
+.pstat .pbig.up{color:#4a9eff;}
+.pstat .pbig.cont{color:#f0b90b;}
+.pstat .pbig.idle{color:#787b86;font-weight:600;font-size:12px;}
+.pstat .prow{display:flex;align-items:center;gap:8px;padding:4px 9px;border-radius:8px;margin-bottom:4px;
+  background:#1a1f2b;border:1px solid transparent;}
+.pstat .prow.warn{background:rgba(239,83,80,.10);border-color:rgba(239,83,80,.4);}
+.pstat .prow.up{background:rgba(74,158,255,.10);border-color:rgba(74,158,255,.4);}
+.pstat .plv{font-size:11px;font-weight:700;color:#d1d4dc;flex:none;width:32px;}
+.pstat .pmean{margin-left:auto;font-size:11px;font-weight:800;flex:none;}
+.pstat .pmean.warn{color:#ef5350;}
+.pstat .pmean.up{color:#4a9eff;}
+.pstat .pmean.updim{color:#4a9eff;opacity:.65;font-weight:600;}
+.pstat .pmean.dim{color:#9aa0b0;font-weight:600;}
+.pc-st{display:inline-block;font-size:11px;font-weight:800;padding:2px 8px;border-radius:7px;border:2px solid;line-height:1.35;}
+.pc-st.none{border:1px dashed #3a3f4d;color:#56606f;font-weight:600;}
+.pc-st.watch{border-style:dashed;border-width:1px;border-color:#56606f;color:#9aa3b2;font-weight:700;}
+.pc-st.cand.a.long{border-color:#ef5350;color:#ef5350;}
+.pc-st.cand.a.short{border-color:#26a69a;color:#26a69a;}
+.pc-st.cand.b.long{border-color:#f0b90b;color:#f0b90b;}
+.pc-st.cand.b.short{border-color:#b388ff;color:#b388ff;}
+.pc-st.conf.a.long{background:rgba(239,83,80,.85);border-color:#ffb3ad;color:#fff;}
+.pc-st.conf.a.short{background:rgba(38,166,154,.85);border-color:#a7e8e0;color:#fff;}
+.pc-st.conf.b.long{background:rgba(240,185,11,.9);border-color:#ffd97a;color:#131722;}
+.pc-st.conf.b.short{background:rgba(179,136,255,.9);border-color:#d9c2ff;color:#131722;}
 #pcResults button.sel{border-color:#f0b90b !important;color:#f0b90b !important;font-weight:700;background:#f0b90b14 !important;}
 #posForm{border-top:1px solid #2a2e39;padding:10px 13px;display:flex;flex-direction:column;gap:7px;}
 #posForm .pf-row{display:flex;align-items:center;gap:9px;font-size:12.5px;}
@@ -484,11 +513,17 @@ function notify(m){
    多卡叠叠乐各自 12 秒；延续触发原位刷新重新计时；卡片多时弹卡区可滚动 */
 function showPatternPopup(m,isUpdate){
   const long=(m.side||'long')==='long';
+  const st=(m.pattern||'').indexOf('CONF')>=0?'确认':(m.pattern||'').indexOf('TRIG')>=0?'触发':'候选';
+  const kd=(m.kind==='A'?'A类':'B类')+(long?'买点':'卖点');
   PopupCards.push({
     fp:m.fingerprint,
-    tone:long?'up':'down',
-    title:((m.bi_formed?'✅ 已成笔 · ':isUpdate?'🔔 延续触发 · ':'')+(m.kind==='A'?'A类·背驰V反':'B类·三买卖点')+(long?'（多）':'（空）')),
-    info:(m.bi_formed?'回调笔已上图，进场确认<br>':'')+(m.text||'')+'<br>价 <b>'+m.price+'</b>　触发 '+(m.trigger_time||'').replace('T',' ')+(m.formed_time?('　成笔 '+m.formed_time):''),
+    tone:(m.kind==='B')?(long?'gold':'purple'):(long?'up':'down'),   // 4色对齐矩阵图例（2026-10-13）
+    title:(m.name||m.symbol||'')+' '+(P_LAB[m.period]||m.period||''),   // 品种+级别置顶大字（2026-10-13 定稿）
+    info:'<b class="pp-main">'+kd+' · '+st+'</b>'+                        // 买卖点+状态突出标注
+      (m.bi_formed?'<span class="pp-pill pp-g">✅已成笔</span>':'')+
+      (isUpdate?'<span class="pp-pill pp-b">🔔延续</span>':'')+
+      '<br>价 <b>'+m.price+'</b>　触发 '+String(m.trigger_time||m.time||'').replace('T',' ').slice(5,16)+
+      '<br><span class="pp-txt">'+(m.text||'')+'</span>',
     onClick:()=>{location.href='/pc/detail?sym='+encodeURIComponent(m.symbol);}
   });
 }
@@ -543,14 +578,17 @@ function connect(){
       renderStream();
     }else if(m.type==='pattern_alert'){
       const changed=upsertEvent(m);renderStream();
-      if(changed&&m.first!==false&&evIsFresh(m)){beepFor(m);flashTitle(m.text);notify(m);showPatternPopup(m,false);}
+      if(changed&&m.first!==false&&evIsFresh(m)){beepFor(m);flashTitle(m.text);notify(m);showPatternPopup(m,false);posPopups(m);}
+      if(POSITIONS.length)renderPos();
     }else if(m.type==='pattern_alert_update'){
       const changed=upsertEvent(m);renderStream();
       // 延续触发：内容有实质变化（触发时刻/价格变了）也响铃+弹卡；同刻重复推送不重复吵；
       // 补发的陈旧事件只进流不提醒（evIsFresh）；成笔补报是刚发生的 inherently 新鲜 → 绕过时效闸门
-      if(changed&&(m.bi_formed||evIsFresh(m))){beepFor(m);flashTitle(m.text.replace(/<[^>]+>/g,''));notify(m);showPatternPopup(m,true);}
+      if(changed&&(m.bi_formed||evIsFresh(m))){beepFor(m);flashTitle(m.text.replace(/<[^>]+>/g,''));notify(m);showPatternPopup(m,true);posPopups(m);}
+      if(POSITIONS.length)renderPos();
     }else if(m.type==='pattern_state'){
       applyCell(m.cell);
+      if(POSITIONS.length)renderPos();   // 持仓状态区跟随格子实时刷新（升级标记可逆）
     }else if(m.type==='monitor_state'){
       paintMon(m.enabled);   // 总开关被切换（含服务器侧），横幅与设置按钮实时同步
     }
@@ -641,6 +679,79 @@ async function loadPositions(){
     renderPos(); posCountText();
   }catch(e){}
 }
+/* ---------- 持仓离场/升级状态（2026-10-13 定稿）：全部从矩阵格子 CELLS 与事件流 EVTS 推导 ----------
+   设计文档：docs/持仓离场预警系统设计.md。零新增服务端逻辑——升级检测=读引擎对更大级别的现成评估。
+   离场：本级别反向侧 conf_a/trig_b；升级：更大级别同向 conf_a/trig_b（确认/触发才标，实时可逆）；
+   延续：进场结构指纹仍活跃 = 回调笔延伸中（防没走完）。 */
+const P_RANK={'3':3,'5':5,'15':15,'30m':30,'60':60};
+const P_LAB={'3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分'};
+function posIsLong(p){return (p.entry||'').includes('买');}
+const ST_TXT={'conf_a':'确认','cand_a':'候选','cand_b':'候选','trig_b':'触发','watch_a':'观察','gone_b':'作废'};
+function posCellChip(c){
+  const st=c.state||'idle';
+  if(st==='idle'||!c.side) return '<span class="pc-st none">无信号</span>';
+  const kind=st.indexOf('_a')>=0?'a':'b', side=c.side||'long';
+  if(st==='watch_a'||st==='gone_b')
+    return '<span class="pc-st watch">'+(kind==='a'?'A类观察':'B类'+ST_TXT[st])+'</span>';
+  const cls='pc-st '+((st==='conf_a'||st==='trig_b')?'conf':'cand')+' '+kind+' '+side;
+  return '<span class="'+cls+'">'+(kind==='a'?'A类':'B类')+ST_TXT[st]+(side==='long'?'(多)':'(空)')+'</span>';
+}
+function posStatHtml(p){
+  const long=posIsLong(p), exitSide=long?'short':'long';
+  const myRank=P_RANK[p.period]||0;
+  const own=CELLS[p.symbol+'|'+p.period]||{state:'idle',symbol:p.symbol,period:p.period};
+  const bigger=Object.keys(CELLS).map(k=>CELLS[k])
+    .filter(c=>c.symbol===p.symbol&&(P_RANK[c.period]||0)>myRank&&c.state&&c.state!=='idle')
+    .sort((a,b)=>(P_RANK[a.period]||0)-(P_RANK[b.period]||0));
+  const rowFor=(c,lvl)=>{
+    const st=c.state||'idle', sameDir=c.side===(long?'long':'short');
+    let mean='',cls='';
+    if(!sameDir&&c.side){   // 反向侧
+      if(lvl===p.period){   // 本级别反向 = 平仓方向
+        if(st==='conf_a'){mean='⚠ 离场预警';cls='warn';}
+        else if(st==='trig_b'){mean='⛔ 无条件全平';cls='warn';}
+        else mean='平仓观察';
+      }else mean='反向结构';
+    }else if(sameDir){
+      if(lvl===p.period) mean='同向'+(ST_TXT[st]||'');
+      else if(st==='conf_a'||st==='trig_b'){mean='⬆ 可升级';cls='up';}
+      else{mean='升级观察';cls='updim';}
+    }else mean='暂无离场信号';
+    return `<div class="prow ${cls}"><span class="plv">${P_LAB[lvl]||lvl}</span>${posCellChip(c)}<span class="pmean ${cls||'dim'}">${mean}</span></div>`;
+  };
+  const rows=rowFor(own,p.period)+bigger.map(c=>rowFor(c,c.period)).join('');
+  const ex=own.side===exitSide?own.state:null;
+  const upB=bigger.find(c=>c.side===(long?'long':'short')&&(c.state==='conf_a'||c.state==='trig_b'));
+  const cont=!!(p.entry_fp&&own.fp===p.entry_fp&&own.side===(long?'long':'short')
+    &&(own.state==='conf_a'||own.state==='trig_b'||own.state==='cand_a'||own.state==='cand_b'));
+  let big,bigCls;
+  if(ex==='conf_a'){big='⚠ 离场预警 · A类'+(long?'卖':'买')+'点确认';bigCls='warn';}
+  else if(ex==='trig_b'){big='⛔ 无条件全平 · B类'+(long?'卖':'买')+'点触发';bigCls='warn';}
+  else if(upB){big='⬆ 可升级 → '+(P_LAB[upB.period]||upB.period);bigCls='up';}
+  else if(cont){big='⟳ 回调笔延伸中 · 防没走完';bigCls='cont';}
+  else{big='● 监控中 · 暂无离场信号';bigCls='idle';}
+  return `<div class="pstat"><div class="phead"><span>持仓监控 · 实时</span><span>${P_LAB[p.period]||p.period} ${long?'多单':'空单'}</span></div>`+
+    `<div class="pbig ${bigCls}">${big}</div>`+rows+'</div>';
+}
+/* 持仓弹卡（离场/升级，持仓专属蓝色；确认/触发级事件才弹） */
+function posPopups(m){
+  if(!POSITIONS.length||!isConf(m))return;
+  POSITIONS.forEach(p=>{
+    const long=posIsLong(p), exitSide=long?'short':'long', side=(m.side||'long');
+    const det=()=>{location.href='/pc/detail?sym='+encodeURIComponent(m.symbol);};
+    if(m.symbol===p.symbol&&m.period===p.period&&side===exitSide){
+      PopupCards.push({fp:'posx_'+m.fingerprint,tone:'pos',onClick:det,
+        title:'📌 离场预警 · '+p.name+' '+p.symbol+'（'+(P_LAB[p.period]||p.period)+'持仓）',
+        info:(m.kind==='A'?'A类':'B类')+(long?'卖点':'买点')+(m.kind==='A'?'确认':'触发（无条件全平）')+(m.bi_formed?' · 已成笔':'')+'<br>价 <b>'+m.price+'</b>　'+fmtT(m.trigger_time||m.time)});
+    }
+    const r=P_RANK[m.period]||0;
+    if(m.symbol===p.symbol&&r>(P_RANK[p.period]||0)&&side===(long?'long':'short')){
+      PopupCards.push({fp:'posu_'+m.fingerprint,tone:'pos',onClick:det,
+        title:'📌 可升级 · '+p.name+' → '+(P_LAB[m.period]||m.period),
+        info:'更大级别同向'+(m.kind==='A'?'A类确认':'B类触发')+'，本级别卖点后可留底仓过户'+(P_LAB[m.period]||m.period)+'<br>价 <b>'+m.price+'</b>　'+fmtT(m.trigger_time||m.time)});
+    }
+  });
+}
 function renderPos(){
   const st=$('posCards');
   if(!POSITIONS.length){ st.innerHTML='<div class="empty">暂无持仓<br>点上方「+ 添加」录入</div>'; return; }
@@ -672,6 +783,7 @@ function renderPos(){
       <div class="r2"><span>进场</span><b class="sig ${long?'buy':'sell'}">${posLabel(p.entry)}</b>
         <span class="arr">→</span><span>离场</span><b class="sig ${long?'sell':'buy'}">${posLabel(p.exit)}</b></div>
       ${xtra?`<div class="xtra">${xtra}</div>`:''}
+      ${posStatHtml(p)}
       <div class="foot">${durHtml}
         <div class="ops"><button onclick="posEdit('${p.id}')">编辑</button><button class="pc" onclick="posDel('${p.id}')">平仓</button></div></div></div>`;
     st.appendChild(div);
@@ -716,6 +828,10 @@ function pfDeriveExit(){ $('pfExit').value=POS_EXIT[$('pfEntry').value]||$('pfEn
 async function posSubmit(){
   const body={symbol:$('pfSymbol').value, period:$('pfPeriod').value,
               entry:$('pfEntry').value, exit:$('pfExit').value, note:$('pfNote').value.trim()};
+  if(!posEditId){   // 新增：记录进场时的活跃结构指纹 → 持仓卡"回调笔延伸中"判定用（2026-10-13）
+    const c0=CELLS[body.symbol+'|'+body.period];
+    if(c0&&c0.fp&&c0.side===((body.entry||'').includes('买')?'long':'short')) body.entry_fp=c0.fp;
+  }
   const url=posEditId?'/api/positions/update':'/api/positions/add';
   if(posEditId) body.id=posEditId;
   $('pfSubmit').disabled=true;
