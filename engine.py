@@ -17,7 +17,7 @@ sys.path.insert(0, _HERE)
 
 import akshare as ak
 from chanlun import merge_klines, find_fenxing, build_bi, build_zs
-from chanlun.pattern import evaluate as pattern_evaluate
+from chanlun.pattern import evaluate as pattern_evaluate, _effective_bis
 import config, fees
 import tqsdk_data as tq
 
@@ -676,4 +676,11 @@ def pattern_snapshot(symbol, period, reported_keys=None, bi_conf=None):
         conf.update({k: v for k, v in bi_conf.items() if k in conf})
     bi_list = build_bi(top_fx, bottom_fx, merged, **conf)
     result = pattern_evaluate(bi_list, merged, reported_keys)
-    return {'name': name, 'bi_count': len(bi_list), 'result': result}
+    # 图上实时笔（黄线画法）= 完成笔 + 进行中笔（同向延伸/反向新笔，跨度够就画）——
+    # 成笔判定按"最新笔"算（用户定稿 2026-10-13：黄线出来就算成笔，不等锁死确认）
+    eff = _effective_bis(bi_list, merged)
+    return {'name': name, 'bi_count': len(bi_list), 'result': result,
+            'bi_tail': [{'d': b['direction'],
+                         'st': str(b.get('start_datetime') or ''),
+                         'en': str(b.get('end_datetime') or ''),
+                         'sp': float(b.get('start_price'))} for b in eff]}

@@ -57,6 +57,9 @@
   .evt:hover{filter:brightness(1.25);}
   .evt .r1{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#787b86;}
   .evt .r1 .kind{font-weight:800;padding:1px 8px;border-radius:9px;font-size:10.5px;}
+  /* 成笔状态徽标（2026-10-13 定稿）：未成笔=灰描边（提前报的预判）；已成笔=金底加粗（图上画出回调笔） */
+  .evt .r1 .bif{font-size:10px;padding:1px 7px;border-radius:9px;margin-left:6px;border:1px solid #3a3f4d;color:#7c8190;flex:none;}
+  .evt .r1 .bif.on{background:rgba(240,185,11,.16);border-color:#f0b90b;color:#f0b90b;font-weight:800;}
   .evt.A.long .kind{background:rgba(239,83,80,.25);color:#ef5350;}
   .evt.A.short .kind{background:rgba(38,166,154,.25);color:#26a69a;}
   .evt.B.long .kind{background:rgba(240,185,11,.22);color:#f0b90b;}
@@ -330,10 +333,10 @@ function go(sym,period,cell){location.href='/pc/detail?sym='+sym+'&period='+peri
 function cellClick(sym,period){go(sym,period,CELLS[sym+'|'+period]);}
 
 /* ---------- 事件流（用户定稿 2026-10-08：候选/确认无优先级纯时间序；
-   「全部」30 条、「确认」20 条两个页签；延续触发原卡片更新，保留首次时间） ---------- */
+   「全部」50 条、「确认」40 条两个页签（2026-10-13 上限调整）；延续触发原卡片更新，保留首次时间） ---------- */
 let EVTS=[];          // 事件仓库（旧→新）
 let TAB='all';
-const CAP={all:30,conf:20};
+const CAP={all:50,conf:40};
 const isConf=m=>(m.pattern||'').includes('CONF')||(m.pattern||'').includes('TRIG');
 const evKey=m=>m.fingerprint||('k_'+m.pattern+m.symbol+m.period+m.time);
 
@@ -374,7 +377,8 @@ function upsertEvent(m){
   const i=EVTS.findIndex(x=>evKey(x)===k);
   if(i>=0){
     m.first_time=(EVTS[i].first_time||EVTS[i].time);   // 保留首次时间
-    if(EVTS[i].time===m.time&&EVTS[i].price===m.price){EVTS[i]=m;return false;}  // 无变化
+    // 成笔状态不锁存：跟随服务端每轮按"图上最新笔"重算的结果（延伸/被吃实时反映）
+    if(EVTS[i].time===m.time&&EVTS[i].price===m.price&&!!EVTS[i].bi_formed===!!m.bi_formed){EVTS[i]=m;return false;}  // 无变化
     EVTS[i]=m;
   }else{
     m.first_time=m.first_time||m.time;
@@ -396,14 +400,18 @@ function cardEl(m){
   const sub=m.kind==='A'
     ?(m.snapshot?'观察中，破位即报警':('3→4跨 <b>'+(m.bi_span??'?')+'</b> 笔'))
     :('幅度 <b>'+(m.ratio??'?')+'</b>×');
-  // 主时间=触发时刻（端点K线完结）；延续更新的卡片：时间前加"延续"小字 + 显示首次成立时间
+  // 主时间=触发时刻（端点K线完结）；延续更新的卡片：时间前加"延续"小字；
+  // 成笔状态（2026-10-13 用户定稿，替代原"首次时间"字段）：未成笔=灰（提前报的预判），已成笔=金粗（图上画出回调笔）
   const cont=!!(m.first_time&&m.first_time!==trigT(m));
   const contTag=cont&&`<span class="mut" style="font-size:10px;margin-right:3px;color:#e8b339">延续</span>`||'';
-  const first=cont&&` <span class="mut" style="font-size:10px">首${fmtT(m.first_time)}</span>`||'';
+  const confCard=isConf(m)||(m.state==='conf_a'||m.state==='trig_b');
+  const bif=confCard?(m.bi_formed
+    ?`<span class="bif on">已成笔</span>`
+    :`<span class="bif">未成笔</span>`):'';
   div.className='evt '+cls;
   div.dataset.fp=evKey(m);
   div.onclick=()=>location.href='/pc/detail?sym='+encodeURIComponent(m.symbol)+'&period='+encodeURIComponent(m.period||'15')+zoneQuery(m);
-  div.innerHTML=`<div class="r1"><span class="kind">${kind}</span><span>${contTag}${fmtT(trigT(m))}${first}</span></div>
+  div.innerHTML=`<div class="r1"><span class="kind">${kind}</span><span>${contTag}${fmtT(trigT(m))}</span>${bif}</div>
     <div class="r2">${m.name} <span class="mut" style="font-size:11px">${periodLabel(m.period)}</span>
       <span style="float:right;color:${long?'#ef5350':'#26a69a'}">${long?'▲多':'▼空'}</span></div>
     <div class="r3">${m.price??''}</div>
@@ -479,8 +487,8 @@ function showPatternPopup(m,isUpdate){
   PopupCards.push({
     fp:m.fingerprint,
     tone:long?'up':'down',
-    title:(isUpdate?'🔔 延续触发 · ':'')+(m.kind==='A'?'A类·背驰V反':'B类·三买卖点')+(long?'（多）':'（空）'),
-    info:(m.text||'')+'<br>价 <b>'+m.price+'</b>　触发 '+(m.trigger_time||'').replace('T',' '),
+    title:((m.bi_formed?'✅ 已成笔 · ':isUpdate?'🔔 延续触发 · ':'')+(m.kind==='A'?'A类·背驰V反':'B类·三买卖点')+(long?'（多）':'（空）')),
+    info:(m.bi_formed?'回调笔已上图，进场确认<br>':'')+(m.text||'')+'<br>价 <b>'+m.price+'</b>　触发 '+(m.trigger_time||'').replace('T',' ')+(m.formed_time?('　成笔 '+m.formed_time):''),
     onClick:()=>{location.href='/pc/detail?sym='+encodeURIComponent(m.symbol);}
   });
 }
@@ -539,8 +547,8 @@ function connect(){
     }else if(m.type==='pattern_alert_update'){
       const changed=upsertEvent(m);renderStream();
       // 延续触发：内容有实质变化（触发时刻/价格变了）也响铃+弹卡；同刻重复推送不重复吵；
-      // 补发的陈旧事件只进流不提醒（evIsFresh）
-      if(changed&&evIsFresh(m)){beepFor(m);flashTitle(m.text);notify(m);showPatternPopup(m,true);}
+      // 补发的陈旧事件只进流不提醒（evIsFresh）；成笔补报是刚发生的 inherently 新鲜 → 绕过时效闸门
+      if(changed&&(m.bi_formed||evIsFresh(m))){beepFor(m);flashTitle(m.text.replace(/<[^>]+>/g,''));notify(m);showPatternPopup(m,true);}
     }else if(m.type==='pattern_state'){
       applyCell(m.cell);
     }else if(m.type==='monitor_state'){

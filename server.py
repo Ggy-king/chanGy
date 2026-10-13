@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 缠论多品种预警 · 本地双向服务
 - 一个端口(8000)：
@@ -256,14 +256,22 @@ _PATTERN_LABEL = {'30': '30秒', '1': '1分', '3': '3分', '5': '5分', '15': '1
 _CELL_RANK = {'conf_a': 5, 'trig_b': 4, 'cand_a': 3, 'cand_b': 2, 'watch_a': 1, 'gone_b': 0, 'idle': 0}
 _pattern_cells = {}      # (symbol, period) -> cell dict（矩阵页全量状态）
 _pattern_reported = {}   # (symbol, period) -> set(结构指纹)，进程内去重
-_pattern_events = deque(maxlen=100)  # 事件流全部历史（客户端按页签裁：全部30/确认20）
+_pattern_events = deque(maxlen=100)  # 事件流全部历史（客户端按页签裁：全部50/确认40）
 _pattern_ready = False   # 首轮静默：只建基线不推送（§5.2）
 _snapshot_done = False   # 启动机会快照只推一次
 _snapshot_msgs = []      # 静默基线扫描期间收集的新鲜事件（快照用）
 
 # 笔六开关：监控跟随详情页⚙面板（localStorage cl_bi_conf），进矩阵页时前端同步过来。
 # 变更后静默重扫全量（~18s/85单元）并重推机会快照；调试期频繁改动也只在实际进页面时才触发。
+# 持久化到 data/pattern_bi_conf.json：重启后立即用上次的笔配置（否则监控用默认配置算笔，
+# 与用户详情页图上黄线（自定义配置，笔数差一倍）对不上——成笔判定全错位（2026-10-13）。
+_PATTERN_BI_CONF_FILE = os.path.join(_HERE, 'data', 'pattern_bi_conf.json')
 _pattern_bi_conf = dict(engine.BI_CONF_DEFAULT)
+try:
+    with open(_PATTERN_BI_CONF_FILE, encoding='utf-8') as _f:
+        _pattern_bi_conf.update(json.load(_f))
+except Exception:
+    pass
 
 
 def _coerce_bi_conf(raw):
@@ -404,7 +412,8 @@ async def _pattern_scan_once(push, periods=None):
             except Exception:
                 continue   # 掐线重连窗口/空数据 → 跳过该单元本轮，下轮自然恢复
             try:
-                await _apply_pattern(sym, name, period, snap['result'], push)
+                await _apply_pattern(sym, name, period, snap['result'], push,
+                                     snap.get('bi_tail'))
             except Exception as e:
                 print(f'[pattern] apply {sym} {period} error:', e)
     _fade_pattern_cells()
@@ -528,6 +537,31 @@ def _pick_active(result):
     return best[1] if best else None
 
 
+# ---- 成笔判定（2026-10-13 用户定稿）：确认/触发卡的 未成笔/已成笔 徽标，
+# 按"图上最新笔"判（engine.pattern_snapshot 的 bi_tail = 完成笔+进行中笔，
+# 与详情页黄线画法一致）——黄线画出来就算成笔，不等锁死确认；延伸/被吃跟着最新状态走。
+
+
+def _bi_formed_in_tail(bi_tail, side, t3, p2):
+    """图上成笔判定（用户定稿 2026-10-13：按最新的笔算，图上能画出来就是成立）。
+    回调笔特征 = 起点时刻不早于结构锚 t3 且 起点价越过 p2（A类的回调笔起点=
+    突破笔端点必破 p2；B类回调笔起点=7 点本身，p2=6 恒成立）。
+    t3 之后、突破之前可能有同方向的震荡笔（起点价不越 p2）→ 用起点价排除。
+    时间匹配与 merged 坐标无关 → 重启后历史卡照样能翻转。"""
+    a3 = str(t3 or '')
+    if not a3 or p2 is None:
+        return False
+    try:
+        p2f = float(p2)
+    except (TypeError, ValueError):
+        return False
+    if side == 'long':    # 回调向下笔，起点=突破高点 > p2
+        return any(b.get('d') == 'down' and str(b.get('st') or '') >= a3
+                   and float(b.get('sp')) > p2f for b in (bi_tail or []))
+    return any(b.get('d') == 'up' and str(b.get('st') or '') >= a3
+               and float(b.get('sp')) < p2f for b in (bi_tail or []))
+
+
 async def _upsert_event_card(msg):
     """事件卡片：同指纹已存在 → 原位更新（保留首次时间，时间线刷新，广播 update 类型）；
     不存在 → 新建。端点没变化不广播（进行中笔每轮重评会重复产出同一事件）。
@@ -539,8 +573,9 @@ async def _upsert_event_card(msg):
         for j in sorted(dup_idx[1:], reverse=True):
             del _pattern_events[j]
         old = _pattern_events[dup_idx[0]]
-        if old.get('time') == msg.get('time') and old.get('price') == msg.get('price'):
-            return                     # 端点没变，无需更新
+        if old.get('time') == msg.get('time') and old.get('price') == msg.get('price') \
+                and bool(old.get('bi_formed')) == bool(msg.get('bi_formed')):
+            return                     # 端点没变且成笔状态没变，无需更新
         msg['first_time'] = old.get('first_time') or old.get('time')
         msg['type'] = 'pattern_alert_update'
         _pattern_events[dup_idx[0]] = msg
@@ -553,7 +588,7 @@ async def _upsert_event_card(msg):
     await manager.broadcast(msg)
 
 
-async def _apply_pattern(sym, name, period, result, push):
+async def _apply_pattern(sym, name, period, result, push, bi_tail=None):
     key = (sym, period)
     old = _pattern_cells.get(key)
     now = time.time()
@@ -570,6 +605,8 @@ async def _apply_pattern(sym, name, period, result, push):
                 _trig = str(dt.datetime.fromisoformat(str(ev['time'])) + dt.timedelta(seconds=_psec))
             except Exception:
                 _trig = str(ev.get('time') or '')
+            _conf = 'CONF' in ev['pattern'] or 'TRIG' in ev['pattern']   # 确认/触发卡：带成笔状态
+            _formed = _conf and _bi_formed_in_tail(bi_tail, side, ev.get('t3'), ev.get('p2'))
             msg = {'type': 'pattern_alert', 'pattern': ev['pattern'],
                    'kind': 'A' if ev['pattern'].startswith('VREV') else 'B',
                    'side': 'long' if 'LONG' in ev['pattern'] or 'BUY' in ev['pattern'] else 'short',
@@ -579,6 +616,7 @@ async def _apply_pattern(sym, name, period, result, push):
                    'p1': ev['p1'], 'p2': ev['p2'], 'p3': ev['p3'],
                    't1': ev.get('t1'), 't2': ev.get('t2'), 't3': ev.get('t3'),
                    'bi_span': ev.get('bi_span'), 'ratio': ev.get('ratio'),
+                   'bi_formed': bool(_formed),
                    'brief': _pattern_brief(ev['pattern'], ev),
                    # 指纹带 symbol|period（2026-10-12）：纯 pattern|p1|p2 会让不同周期/品种
                    # 的同锚结构撞车（实测甲醇3分与15分同指纹互相覆盖事件卡，卡片"消失"）
@@ -588,7 +626,23 @@ async def _apply_pattern(sym, name, period, result, push):
             if push:
                 await _upsert_event_card(msg)
             else:
-                _snapshot_msgs.append(msg)   # 基线期收集，首轮扫描完成后由快照统一推送
+                # 基线期（push=False）：重发事件若已有卡片 → 静默原位更新（不广播不响铃）。
+                # 否则会被 _push_startup_snapshot 按"指纹已存在"丢弃——重启后成笔翻转
+                # 与延续时间全部丢失，卡片永久卡在旧状态（2026-10-13 纸浆/VC 卡死事故）。
+                dup = next((m for m in _pattern_events
+                            if m.get('fingerprint') == msg['fingerprint']), None)
+                if dup is not None:
+                    if (dup.get('bi_formed') != msg.get('bi_formed')
+                            or dup.get('time') != msg.get('time')
+                            or dup.get('price') != msg.get('price')):
+                        msg['first_time'] = dup.get('first_time') or dup.get('time')
+                        for _i, _m in enumerate(_pattern_events):
+                            if _m is dup:
+                                _pattern_events[_i] = msg
+                                break
+                        manager.remember_replace(msg)
+                else:
+                    _snapshot_msgs.append(msg)   # 全新事件：收集后由快照统一推送
 
     # —— 2) 格子状态推导（§9.3 消退/钉住规则；历史告警在 _pick_active 内已过滤）——
     act = _pick_active(result)
@@ -627,7 +681,7 @@ def _fade_pattern_cells():
 
 async def _push_startup_snapshot():
     """静默基线扫描收集到的新鲜事件（候选+确认，均在回看窗口内）按时间升序统一推送。
-    不做候选/确认取舍——事件流全量入 deque(100)，矩阵页按页签裁剪（全部30/确认20）。"""
+    不做候选/确认取舍——事件流全量入 deque(100)，矩阵页按页签裁剪（全部50/确认40）。"""
     global _snapshot_done, _snapshot_msgs
     if _snapshot_done:
         return
@@ -933,6 +987,11 @@ async def api_pattern_bi_conf(request: Request):
     if new_json == old_json:
         return JSONResponse({'ok': True, 'changed': False})
     _pattern_bi_conf = new_conf
+    try:   # 持久化：重启后监控直接用上次的笔配置，与详情页图上黄线保持一致
+        with open(_PATTERN_BI_CONF_FILE, 'w', encoding='utf-8') as f:
+            json.dump(new_conf, f, ensure_ascii=False)
+    except Exception:
+        pass
     _pattern_cells.clear()
     _pattern_reported.clear()
     _push_rescan_task()
@@ -1099,6 +1158,35 @@ def _bg_sync():
     threading.Thread(target=run, daemon=True).start()
 
 
+def _history_pull_merge(force=False):
+    """拉取远端 history.json 并按 id 合并进本地（2026-10-13）。
+    根因修复：此前 PC 从不回拉 history.json，本地缓存陈旧；PC 端平仓时会把
+    陈旧本地 history 整体推上 Gitee，覆盖掉手机端写入的记录（保本简报丢失）。"""
+    conf = _gitee_conf()
+    if not (conf.get('token') and conf.get('owner')):
+        return
+    try:
+        api, conf = _gitee_api('history.json')
+        r = requests.get(api, params={'access_token': conf['token'],
+                                      'ref': conf.get('branch', 'master')}, timeout=8)
+        if r.status_code != 200:
+            return
+        d = r.json()
+        if not isinstance(d, dict) or not d.get('sha'):
+            return
+        if not force and d['sha'] == _GITEE_SHA.get('history.json'):
+            return
+        remote = json.loads(base64.b64decode(d['content']).decode()).get('history', [])
+        with _POS_LOCK:
+            local = _history_load()
+            rids = {x.get('id') for x in remote}
+            merged = [x for x in local if x.get('id') not in rids] + remote
+            _history_save(merged)
+        _GITEE_SHA['history.json'] = d['sha']
+    except Exception:
+        pass
+
+
 def _gitee_pull_if_stale():
     """限频拉取远端 positions（手机端改动回灌电脑端）；本地有未推变更时跳过。"""
     if _POS_DIRTY['positions.json'] or time.time() - _LAST_PULL[0] < 8:
@@ -1123,6 +1211,7 @@ def _gitee_pull_if_stale():
         _GITEE_SHA[remote] = sha
     except Exception:
         pass
+    _history_pull_merge()   # history.json 同步回灌（手机端平仓简报→电脑可见)
 
 
 @app.get('/api/positions')
@@ -1170,7 +1259,7 @@ async def api_positions_update(request: Request):
         rec = next((x for x in positions if x['id'] == pid), None)
         if rec is None:
             return JSONResponse({'error': '未找到该持仓'}, status_code=404)
-        for k in ('entry', 'exit', 'note', 'result', 'pnl'):
+        for k in ('entry', 'exit', 'note', 'result', 'pnl', 'period'):
             if k in p:
                 rec[k] = str(p[k])[:200]
         if 'entry' in p:
@@ -1204,6 +1293,7 @@ async def api_positions_delete(request: Request):
     pid = str(p.get('id', ''))
     result = str(p.get('close_result', '') or '')
     pnl = str(p.get('close_pnl', '') or '')
+    _history_pull_merge(force=True)   # 写前强拉远端合并，防止陈旧本地 history 推送覆盖手机记录
     with _POS_LOCK:
         positions = _positions_load()
         rec = next((x for x in positions if x['id'] == pid), None)

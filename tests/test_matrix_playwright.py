@@ -79,7 +79,7 @@ with sync_playwright() as p:
         renderStream() ''')
     pg.wait_for_timeout(1200)                   # 让在途的快照推送先落地
     n_all = pg.evaluate('document.querySelectorAll("#stream .evt").length')
-    assert n_all <= 30, f'默认页签超过30条: {n_all}'
+    assert n_all <= 50, f'默认页签超过50条: {n_all}'
     # 同指纹再推（延续触发，端点变化）→ 原卡片原位更新，不新增；重触后置顶
     # （单次 evaluate 原子执行，避免 WS 消息插队影响断言）
     res = pg.evaluate('''() => {
@@ -96,6 +96,27 @@ with sync_playwright() as p:
     assert res['first'] == 'f1', f'更新后的卡片应置顶: {res}'
     assert '甲醇' in res['firstTxt'] and '2510' in res['firstTxt'], res['firstTxt']
     print('ok - 事件流插入+同指纹原卡片更新置顶(不另开新卡):', res['firstTxt'][:40])
+
+    # ===== 3.5 成笔状态徽标（2026-10-13 定稿：未成笔=灰 / 已成笔=金粗，替代首次时间） =====
+    badge = pg.evaluate('''() => {
+        upsertEvent({ trigger_time:new Date().toISOString(), kind:'A', side:'long', pattern:'VREV_CONF_LONG', fingerprint:'f3',
+            symbol:'SA2701', name:'纯碱', period:'5', price:1000.0, time:'2026-10-06 09:30',
+            p1:995, p2:1002, p3:990, ts:Date.now()/1000, text:'纯碱 5分 A类确认', bi_formed:false});
+        renderStream();
+        const el=[...document.querySelectorAll('#stream .evt')].find(e=>e.dataset.fp==='f3');
+        const before=el.querySelector('.bif');
+        upsertEvent({ trigger_time:new Date().toISOString(), kind:'A', side:'long', pattern:'VREV_CONF_LONG', fingerprint:'f3',
+            symbol:'SA2701', name:'纯碱', period:'5', price:1000.0, time:'2026-10-06 09:30',
+            p1:995, p2:1002, p3:990, ts:Date.now()/1000, text:'纯碱 5分 A类确认', bi_formed:true});
+        renderStream();
+        const el2=[...document.querySelectorAll('#stream .evt')].find(e=>e.dataset.fp==='f3');
+        const after=el2.querySelector('.bif');
+        return {before: before&&before.textContent, beforeOn: before&&before.classList.contains('on'),
+                after: after&&after.textContent, afterOn: after&&after.classList.contains('on')};
+    }''')
+    assert badge['before'] == '未成笔' and not badge['beforeOn'], badge
+    assert badge['after'] == '已成笔' and badge['afterOn'], badge
+    print('ok - 成笔徽标: 未成笔(灰) → 已成笔(金粗)')
 
     # ===== 4. 格子点击跳详情页 =====
     href = pg.evaluate('''() => { const a = '/pc/detail?sym=MA2611&period=15';
