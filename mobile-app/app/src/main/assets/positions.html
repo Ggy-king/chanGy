@@ -415,13 +415,13 @@ async function posFormSubmit(){
   if(posEditId){
     const eid=posEditId; posEditId=null;
     const rec=POSITIONS.find(x=>x.id===eid);
-    if(rec){ Object.assign(rec,{entry:c.entry,exit:c.exit,note:c.note}); rec._dirty=true; posRender(POSITIONS); posLocalSave(); }
+    if(rec){ Object.assign(rec,{period:c.period,entry:c.entry,exit:c.exit,note:c.note}); rec._dirty=true; posRender(POSITIONS); posLocalSave(); }
     posFormClose(); toast('已保存');
     _bgJob(async()=>{
       const d=await ghGet('positions.json');
       const list=d.data.positions||[];
       const r=list.find(x=>x.id===eid);
-      if(r) Object.assign(r,{entry:c.entry,exit:c.exit,note:c.note});
+      if(r) Object.assign(r,{period:c.period,entry:c.entry,exit:c.exit,note:c.note});
       await ghPut('positions.json',{positions:list},'持仓修改 '+t);
       if(rec) rec._dirty=false;
     },'保存');

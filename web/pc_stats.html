@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>交易统计 · chanGy</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#131722;color:#d1d4dc;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh;}
+header{display:flex;align-items:center;gap:12px;padding:10px 20px;background:#1e222d;border-bottom:1px solid #2a2e39;position:sticky;top:0;z-index:10;}
+header h1{font-size:17px;font-weight:800;}
+header h1 span{color:#f0b90b;}
+.mut{color:#787b86;font-size:12px;}
+.sp{flex:1;}
+.btn{border:1px solid #2a2e39;background:#2a2e39;color:#d1d4dc;border-radius:8px;padding:6px 12px;
+  font-size:12.5px;cursor:pointer;text-decoration:none;display:inline-block;}
+.btn:hover{border-color:#f0b90b;color:#f0b90b;}
+main{max-width:1080px;margin:0 auto;padding:16px 16px 60px;display:flex;flex-direction:column;gap:14px;}
+/* 宣言条 */
+.oath{background:linear-gradient(135deg,rgba(240,185,11,.14),rgba(240,185,11,.04));border:1px solid rgba(240,185,11,.45);
+  border-radius:12px;padding:12px 18px;font-size:13.5px;line-height:1.8;}
+.oath b{color:#f0b90b;}
+.warnbar{background:rgba(240,185,11,.10);border:1px dashed rgba(240,185,11,.5);border-radius:10px;
+  padding:8px 16px;font-size:12.5px;color:#f0b90b;}
+/* 区块 */
+.sec{background:#161b22;border:1px solid #2a2e39;border-radius:14px;padding:14px 18px;}
+.sec h2{font-size:14px;margin-bottom:12px;letter-spacing:1px;}
+.sec h2 .sub{font-weight:400;font-size:11px;color:#787b86;margin-left:8px;letter-spacing:0;}
+/* 纪律指标 */
+.disc{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;}
+.dcard{background:#0d1117;border:1px solid #2a2e39;border-radius:10px;padding:11px 14px;}
+.dcard .k{font-size:11px;color:#787b86;margin-bottom:5px;}
+.dcard .v{font-size:21px;font-weight:800;}
+.dcard .s{font-size:11px;color:#9aa0b0;margin-top:5px;line-height:1.6;}
+.dcard.gold{border-color:rgba(240,185,11,.5);}
+.dcard.gold .v{color:#f0b90b;}
+/* 结果指标 */
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;}
+.mcard{background:#0d1117;border:1px solid #2a2e39;border-radius:10px;padding:10px 13px;}
+.mcard .k{font-size:10.5px;color:#787b86;margin-bottom:4px;}
+.mcard .v{font-size:18px;font-weight:800;}
+.v.pos{color:#ef5350;} .v.neg{color:#26a69a;} .v.dim{color:#9aa0b0;}
+/* 图表 */
+.charts{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+@media(max-width:800px){.charts{grid-template-columns:1fr;}}
+.chartbox{background:#0d1117;border:1px solid #2a2e39;border-radius:10px;padding:10px;}
+.chartbox .t{font-size:11px;color:#787b86;margin-bottom:6px;}
+canvas{width:100%;height:180px;display:block;}
+/* 结论 */
+.concl{display:flex;flex-direction:column;gap:9px;}
+.citem{background:#0d1117;border-left:3px solid #4a9eff;border-radius:8px;padding:10px 14px;font-size:13px;line-height:1.9;}
+.citem b{color:#4a9eff;}
+.citem.good{border-left-color:#ef5350;} .citem.good b{color:#ef5350;}
+.citem.bad{border-left-color:#26a69a;} .citem.bad b{color:#26a69a;}
+/* 明细表 */
+table{width:100%;border-collapse:collapse;font-size:12.5px;}
+th{color:#787b86;font-weight:600;text-align:left;padding:6px 8px;border-bottom:1px solid #2a2e39;font-size:11px;}
+td{padding:7px 8px;border-bottom:1px solid #22262f;}
+tr:hover td{background:#1a1f2b;}
+td.pos{color:#ef5350;font-weight:700;} td.neg{color:#26a69a;font-weight:700;}
+.tag{padding:1px 8px;border-radius:9px;font-size:10.5px;border:1px solid #3a3f4d;color:#9aa0b0;}
+.tag.止盈{background:rgba(239,83,80,.15);border-color:#ef5350;color:#ef5350;font-weight:700;}
+.tag.止损{background:rgba(38,166,154,.12);border-color:#26a69a;color:#26a69a;font-weight:700;}
+.tag.保本{background:rgba(240,185,11,.12);border-color:#f0b90b;color:#f0b90b;}
+</style>
+</head>
+<body>
+<header>
+  <h1>📊 交易<span>统计</span></h1>
+  <span class="mut">纪律的镜子，不是赚钱的记分牌</span>
+  <span class="sp"></span>
+  <a class="btn" href="/pc/matrix">← 矩阵</a>
+</header>
+<main id="main">
+  <div class="oath" id="oath"></div>
+  <div class="warnbar" id="warnbar" style="display:none;"></div>
+
+  <div class="sec">
+    <h2>🛡 纪律指标<span class="sub">——这才是你要天天看的数字，钱只是它们的影子</span></h2>
+    <div class="disc" id="disc"></div>
+  </div>
+
+  <div class="sec">
+    <h2>💰 结果指标<span class="sub">——看一眼就好，别盯着它做单</span></h2>
+    <div class="metrics" id="metrics"></div>
+  </div>
+
+  <div class="sec">
+    <h2>📈 图表</h2>
+    <div class="charts">
+      <div class="chartbox"><div class="t">累计盈亏（按平仓时间）</div><canvas id="cCurve" height="180"></canvas></div>
+      <div class="chartbox"><div class="t">结果分布（笔数与合计盈亏）</div><canvas id="cDist" height="180"></canvas></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <h2>🧾 账本的结论<span class="sub">——规则自动生成，随你的数据走；样本不够它会自己承认</span></h2>
+    <div class="concl" id="concl"></div>
+  </div>
+
+  <div class="sec">
+    <h2>📋 明细<span class="sub" id="tblCap"></span></h2>
+    <table>
+      <thead><tr><th>平仓时间</th><th>品种</th><th>级别</th><th>类型</th><th>持仓时长</th><th>结果</th><th>盈亏</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const P_LAB={'3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分'};
+const fmtT=t=>t?String(t).replace('T',' ').slice(5,16):'—';
+
+function parseRec(x){
+  let pnl=null;
+  try{const v=parseFloat(x.close_pnl??x.pnl);if(!isNaN(v))pnl=v;}catch(e){}
+  const result=x.close_result||x.result||'未填';
+  let open=null,close=null;
+  try{open=datetime(x.open_iso);}catch(e){}
+  try{close=datetime('2026-'+x.close_time);}catch(e){}
+  let hold=null;
+  if(open&&close)hold=Math.round((close-open).total_seconds/360)/10;
+  return {pnl,result,hold,sym:x.symbol,name:x.name,period:x.period,entry:x.entry,
+          closeTime:x.close_time||'',closeIso:x.close_iso||''};
+  function datetime(s){
+    if(!s)return null;
+    const d=new Date(s.includes('T')?s:'2026-'+s);
+    return isNaN(d)?null:(s.includes('T')?new Date(d.getTime()+8*3600000):d);
+  }
+}
+Number.prototype.toFixed1=function(){return this.toFixed(1);};
+
+(async function(){
+  let H=[];
+  try{const r=await fetch('/api/positions/history');const d=await r.json();H=d.history||[];}catch(e){}
+  const R=H.map(parseRec);
+  const N=R.length;
+  /* 宣言 */
+  $('oath').innerHTML='<b>本页是纪律的镜子，不是记分牌。</b>你唯一需要盯的数字是"是否按体系办事"——'+
+    '止损是守规则（不是失败），简报是留证据，绿灯持仓是本事。钱只是这些动作的影子。'+
+    '<span class="mut">数据源：Gitee 云端 history.json（含手机端），每次打开自动拉最新。</span>';
+  if(N===0){
+    $('warnbar').style.display='block';
+    $('warnbar').textContent='还没有平仓记录——第一笔简报产生后这里开始生长。';
+    return;
+  }
+  /* 样本量 */
+  if(N<10){
+    $('warnbar').style.display='block';
+    $('warnbar').textContent='⚠ 样本量不足（'+N+'/10）：以下所有结论仅供参考，先攒样本，别急着给体系下判决。';
+  }
+  /* 基础量 */
+  const pnls=R.filter(r=>r.pnl!==null).map(r=>r.pnl);
+  const wins=pnls.filter(v=>v>0),losses=pnls.filter(v=>v<0);
+  const net=pnls.reduce((a,b)=>a+b,0);
+  const winRate=(wins.length+losses.length)?Math.round(wins.length/(wins.length+losses.length)*100):null;
+  const avgWin=wins.length?wins.reduce((a,b)=>a+b,0)/wins.length:null;
+  const avgLoss=losses.length?Math.abs(losses.reduce((a,b)=>a+b,0)/losses.length):null;
+  const plRatio=(avgWin&&avgLoss)?(avgWin/avgLoss):null;
+  const maxW=pnls.length?Math.max(...pnls):null, maxL=pnls.length?Math.min(...pnls):null;
+  const holds=R.filter(r=>r.hold!==null).map(r=>r.hold);
+  /* 纪律指标 */
+  const filled=R.filter(r=>r.result!=='未填').length;
+  const stops=R.filter(r=>r.result==='止损').length;
+  const hWin=R.filter(r=>r.pnl>0&&r.hold!==null).map(r=>r.hold);
+  const hLoss=R.filter(r=>r.pnl<0&&r.hold!==null).map(r=>r.hold);
+  const avgH=a=>a.length?(a.reduce((x,y)=>x+y,0)/a.length).toFixed(1)+'h':'—';
+  const shortR=R.filter(r=>r.hold!==null&&r.hold<3);
+  const shortWin=shortR.filter(r=>r.pnl>0).length;
+  const disc=[
+    {k:'简报完整率',v:Math.round(filled/N*100)+'%',s:'每次平仓老老实实写简报，账本才配当镜子。缺的每一笔都是未来的盲区。',gold:true},
+    {k:'认错离场',v:stops+' 次',s:'每一笔止损都是体系在替你止血——这是守规则的表现，不是失败。',gold:true},
+    {k:'止盈单平均持仓',v:avgH(hWin),s:'对比下面止损单的平均持仓',gold:true},
+    {k:'止损单平均持仓',v:avgH(hLoss),s:hWin.length&&hLoss.length?(parseFloat(avgH(hWin))>parseFloat(avgH(hLoss))?'拿得久的在赚钱——账本支持"别提前下车"':'样本还看不出规律'):'样本不足'},
+  ];
+  $('disc').innerHTML=disc.map(d=>'<div class="dcard'+(d.gold?' gold':'')+'"><div class="k">'+d.k+'</div><div class="v">'+d.v+'</div><div class="s">'+d.s+'</div></div>').join('');
+  /* 结果指标 */
+  const mets=[
+    {k:'总笔数',v:N,cls:''},
+    {k:'净盈亏',v:(net>=0?'+':'')+net,cls:net>=0?'pos':'neg'},
+    {k:'胜率（有盈亏的）',v:winRate===null?'—':winRate+'%',cls:''},
+    {k:'平均盈利',v:avgWin===null?'—':'+'+avgWin.toFixed(0),cls:'pos'},
+    {k:'平均亏损',v:avgLoss===null?'—':'-'+avgLoss.toFixed(0),cls:'neg'},
+    {k:'盈亏比',v:plRatio===null?'—':plRatio.toFixed(1)+':1',cls:plRatio&&plRatio>=1.5?'pos':''},
+    {k:'最大单笔盈利',v:maxW===null?'—':'+'+maxW,cls:'pos'},
+    {k:'最大单笔亏损',v:maxL===null?'—':''+maxL,cls:'neg'},
+  ];
+  $('metrics').innerHTML=mets.map(d=>'<div class="mcard"><div class="k">'+d.k+'</div><div class="v '+(d.v==='—'?'dim':d.cls)+'">'+d.v+'</div></div>').join('');
+  /* 结论（规则生成，带数据引用） */
+  const C=[];
+  if(plRatio&&wins.length&&losses.length){
+    const need=Math.round(avgLoss/(avgWin+avgLoss)*100);
+    C.push({t:'盈亏比 <b>'+plRatio.toFixed(1)+':1</b>（平均盈 +'+avgWin.toFixed(0)+' / 平均亏 -'+avgLoss.toFixed(0)+
+      '）。这个结构下你只需要 <b>'+need+'%</b> 的胜率就能打平，目前 '+(winRate??'—')+
+      '%——<b>少亏大亏、让利润奔跑</b>比提高胜率重要得多。',c:'good'});
+  }
+  if(hWin.length&&hLoss.length){
+    const w=(hWin.reduce((a,b)=>a+b,0)/hWin.length).toFixed(1),l=(hLoss.reduce((a,b)=>a+b,0)/hLoss.length).toFixed(1);
+    if(parseFloat(w)>parseFloat(l))
+      C.push({t:'止盈单平均持仓 <b>'+w+'h</b> > 止损单 <b>'+l+'h</b>——拿得住的单子在赚钱。'+
+        '你昨晚说"从没拿过这么久"，账本说：<b>正是那两笔拿最久的，贡献了全部利润的大头。</b>',c:'good'});
+  }
+  if(shortR.length){
+    C.push({t:'持仓 <b>3 小时以内</b>的单子共 '+shortR.length+' 笔，止盈 '+shortWin+' 笔——'+
+      (shortWin===0?'<b>小级别快进快出目前一笔赚的都没有</b>，全是摩擦。次级别的"看起来要跌"不是信号。':'小级别偶有盈利，但期望值明显低于拿得住的单子。'),c:shortWin===0?'bad':''});
+  }
+  const big=R.filter(r=>['15','30m','60'].includes(r.period)),small=R.filter(r=>['3','5'].includes(r.period));
+  const netOf=a=>a.reduce((s,r)=>s+(r.pnl||0),0);
+  if(big.length&&small.length){
+    const nb=netOf(big),ns=netOf(small);
+    C.push({t:'级别对比：30分及以上净 <b>'+(nb>=0?'+':'')+nb+'</b>（'+big.length+'笔），3/5分净 <b>'+(ns>=0?'+':'')+ns+'</b>（'+small.length+'笔）——'+
+      (nb>ns?'<b>你的利润长在大级别上，别再去小级别找卖点。</b>':'目前小级别反而占优（样本小，别急着下结论）。'),c:nb>ns?'good':'bad'});
+  }
+  const miss=N-filled;
+  if(miss>0)C.push({t:'有 <b>'+miss+' 笔</b>没有写简报——数据缺口就是纪律缺口，以后每笔了结走完简报再关弹窗。',c:''});
+  if(N<10)C.push({t:'样本 '+N+' 笔，还太薄。<b>现在的任务不是让曲线好看，是把简报填满、把规则走完</b>，攒到 30 笔以上这份账本才有判决资格。',c:''});
+  $('concl').innerHTML=C.map(c=>'<div class="citem '+c.c+'">'+c.t+'</div>').join('');
+  /* 图表 */
+  const sorted=R.filter(r=>r.pnl!==null).sort((a,b)=>(a.closeIso||a.closeTime||'').localeCompare(b.closeIso||b.closeTime||''));
+  drawCurve(sorted);
+  drawDist(R);
+  /* 明细 */
+  $('tblCap').textContent='（'+N+' 笔，按平仓时间倒序）';
+  $('tbody').innerHTML=R.slice().sort((a,b)=>(b.closeIso||b.closeTime||'').localeCompare(a.closeIso||a.closeTime||''))
+    .map(r=>'<tr><td>'+fmtT(r.closeTime)+'</td><td>'+r.name+'</td><td>'+(P_LAB[r.period]||r.period)+'</td><td>'+posL(r.entry)+'</td>'+
+      '<td>'+(r.hold===null?'—':r.hold+'h')+'</td><td><span class="tag '+r.result+'">'+r.result+'</span></td>'+
+      '<td class="'+(r.pnl==null?'':r.pnl>=0?'pos':'neg')+'">'+(r.pnl===null?'—':(r.pnl>=0?'+':'')+r.pnl)+'</td></tr>').join('');
+})();
+function posL(v){v=v||'';return v.startsWith('二')?('A类'+v):v.startsWith('三')?('B类'+v):v;}
+function drawCurve(rows){
+  const cv=$('cCurve'),ctx=cv.getContext('2d');
+  cv.width=cv.clientWidth*2;cv.height=360;ctx.scale(2,2);
+  const W=cv.clientWidth,H=180;
+  if(!rows.length){ctx.fillStyle='#56606f';ctx.fillText('暂无盈亏数据',20,60);return;}
+  let cum=0;const pts=rows.map(r=>{cum+=r.pnl;return cum;});
+  const min=Math.min(0,...pts),max=Math.max(0,...pts);
+  const pad=30,x0=pad,y0=H-24,gy=H-24-((0-min)/(max-min||1))*(H-48);
+  ctx.strokeStyle='#2a2e39';ctx.beginPath();ctx.moveTo(x0,gy);ctx.lineTo(W-8,gy);ctx.stroke();
+  ctx.fillStyle='#787b86';ctx.font='10px sans-serif';ctx.fillText('0',6,gy+3);
+  ctx.strokeStyle=pts[pts.length-1]>=0?'#ef5350':'#26a69a';ctx.lineWidth=2;ctx.beginPath();
+  pts.forEach((v,i)=>{
+    const x=x0+(W-x0-12)*(i/Math.max(1,pts.length-1));
+    const y=y0-((v-min)/(max-min||1))*(H-48);
+    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+  });
+  ctx.stroke();
+  ctx.fillStyle='#d1d4dc';ctx.font='12px sans-serif';
+  ctx.fillText('累计 '+(pts[pts.length-1]>=0?'+':'')+pts[pts.length-1],x0+4,16);
+}
+function drawDist(R){
+  const cv=$('cDist'),ctx=cv.getContext('2d');
+  cv.width=cv.clientWidth*2;cv.height=360;ctx.scale(2,2);
+  const W=cv.clientWidth,H=180;
+  const cats=['止盈','止损','保本','未填'];
+  const data=cats.map(c=>{
+    const g=R.filter(r=>r.result===c);
+    return {c,n:g.length,sum:g.reduce((s,r)=>s+(r.pnl||0),0)};
+  });
+  const maxN=Math.max(1,...data.map(d=>d.n));
+  const bw=52,gap=(W-cats.length*bw)/(cats.length+1);
+  data.forEach((d,i)=>{
+    const x=gap+i*(bw+gap),h=d.n/maxN*(H-70),y=H-30-h;
+    const col=d.c==='止盈'?'#ef5350':d.c==='止损'?'#26a69a':d.c==='保本'?'#f0b90b':'#56606f';
+    ctx.fillStyle=col;ctx.fillRect(x,y,bw,h);
+    ctx.fillStyle='#d1d4dc';ctx.font='11px sans-serif';
+    ctx.fillText(d.n+'笔',x+8,y-5);
+    ctx.fillStyle='#787b86';
+    ctx.fillText(d.c+(d.sum?' '+(d.sum>=0?'+':'')+d.sum:''),x-4,H-12);
+  });
+}
+</script>
+</body>
+</html>

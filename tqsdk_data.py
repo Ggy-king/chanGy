@@ -94,7 +94,10 @@ _PRODUCT_MAP = {
 
 def to_tq_symbol(symbol):
     """CF2701 -> CZCE.CF701, RB2701 -> SHFE.rb2701, jm2701 -> DCE.jm2701
-    郑商所用3位月份，其他交易所用4位月份"""
+    郑商所必须用3位代码：数据源合约库只认3位（4位报 non-existent instrument，
+    2026-10-14 实测），年份由"最近的未来"推断（CF701 在 2026 年 10 月=CF2701）。
+    代价：数据源会把同名 2017 年死合约的历史拼进序列——由 _to_df 的间隙过滤切除，
+    这里勿改回 4 位（会全品种 non-existent）。"""
     m = re.match(r'([A-Za-z]+)(\d+)', symbol)
     if not m:
         return symbol
@@ -359,6 +362,15 @@ class TqData:
         df['datetime'] = pd.to_datetime(df['datetime'], unit='ns', utc=True).dt.tz_convert('Asia/Shanghai')
         df = df[['datetime', 'open', 'high', 'low', 'close', 'volume']].dropna(subset=['open'])
         df = df[df['open'] > 0].reset_index(drop=True)
+        # 间隙过滤（2026-10-14 CF701/SR701 事故）：郑商所 3 位代码会让数据源把
+        # 同名 2017 年死合约的历史（如 CF2701 序列里混入 2016-2017 的 780 根）
+        # 拼在当前合约数据前面，形成唯一的巨大时间空洞。取最后一个 >30 天间隙
+        # 之后的段 = 当前合约自己的连续数据。正常休市/节假日间隙远小于 30 天。
+        if len(df) > 1:
+            gaps = df['datetime'].diff().dt.total_seconds()
+            big = gaps[gaps > 30 * 86400]
+            if len(big):
+                df = df.iloc[big.index[-1]:].reset_index(drop=True)
         return df
 
     def close(self):

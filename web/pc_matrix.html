@@ -172,6 +172,7 @@ select{appearance:none;-webkit-appearance:none;
   <button class="btn" id="muteBtn" onclick="toggleMute()">🔊 提示音开</button>
   <button class="btn" onclick="sndPanelToggle()" title="声音分类设置：确认/触发与候选分开调音">♪ 设置</button>
   <button class="btn" id="posBtn" onclick="togglePosPanel()">持仓 <span id="posCountHdr" class="mut" style="font-size:11px"></span></button>
+  <a class="btn" style="text-decoration:none;color:#4a9eff;border-color:#4a9eff66" href="/pc/stats" target="_blank">📊 统计</a>
 </header>
 
 <!-- 右上角预警弹卡容器 + 声音分类设置面板（弹卡容器由 popup_cards.js 按需创建） -->
@@ -222,6 +223,7 @@ select{appearance:none;-webkit-appearance:none;
   <div id="posPanelHead">
     <span>持仓状态</span><span class="mut" id="posCount" style="font-weight:400;font-size:11.5px"></span>
     <span style="flex:1"></span>
+    <a class="btn" style="padding:2px 9px;color:#4a9eff;border-color:#4a9eff66" href="/pc/positions" target="_blank">🚗 驾驶舱</a>
     <button class="btn" style="padding:2px 9px" onclick="posFormOpen()">+ 添加</button>
     <button class="btn" style="padding:2px 9px" onclick="togglePosPanel()">×</button>
   </div>
@@ -518,7 +520,7 @@ function showPatternPopup(m,isUpdate){
   PopupCards.push({
     fp:m.fingerprint,
     tone:(m.kind==='B')?(long?'gold':'purple'):(long?'up':'down'),   // 4色对齐矩阵图例（2026-10-13）
-    title:(m.name||m.symbol||'')+' '+(P_LAB[m.period]||m.period||''),   // 品种+级别置顶大字（2026-10-13 定稿）
+    title:(m.name||m.symbol||'')+' '+({'3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分'}[m.period]||m.period||''),   // 品种+级别置顶大字（2026-10-13 定稿；顶层作用域不可用 IIFE 内 P_LAB）
     info:'<b class="pp-main">'+kd+' · '+st+'</b>'+                        // 买卖点+状态突出标注
       (m.bi_formed?'<span class="pp-pill pp-g">✅已成笔</span>':'')+
       (isUpdate?'<span class="pp-pill pp-b">🔔延续</span>':'')+
@@ -578,17 +580,31 @@ function connect(){
       renderStream();
     }else if(m.type==='pattern_alert'){
       const changed=upsertEvent(m);renderStream();
-      if(changed&&m.first!==false&&evIsFresh(m)){beepFor(m);flashTitle(m.text);notify(m);showPatternPopup(m,false);posPopups(m);}
-      if(POSITIONS.length)renderPos();
+      if(changed&&m.first!==false&&evIsFresh(m)){
+        // 弹卡第一位、各步独立容错（2026-10-13 修复：响铃后某步抛错会连坐弹卡不出现）
+        // 持仓相关经 window 调用（posPopups/posRefreshIfAny 在尾部 IIFE 内，顶层不可直接引用）
+        try{showPatternPopup(m,false);}catch(e){console.error('[弹卡]',e);}
+        try{beepFor(m);}catch(e){}
+        try{flashTitle(m.text);}catch(e){}
+        try{notify(m);}catch(e){}
+        try{window.posPopups&&window.posPopups(m);}catch(e){console.error('[持仓弹卡]',e);}
+      }
+      try{window.posRefreshIfAny&&window.posRefreshIfAny();}catch(e){}
     }else if(m.type==='pattern_alert_update'){
       const changed=upsertEvent(m);renderStream();
       // 延续触发：内容有实质变化（触发时刻/价格变了）也响铃+弹卡；同刻重复推送不重复吵；
       // 补发的陈旧事件只进流不提醒（evIsFresh）；成笔补报是刚发生的 inherently 新鲜 → 绕过时效闸门
-      if(changed&&(m.bi_formed||evIsFresh(m))){beepFor(m);flashTitle(m.text.replace(/<[^>]+>/g,''));notify(m);showPatternPopup(m,true);posPopups(m);}
-      if(POSITIONS.length)renderPos();
+      if(changed&&(m.bi_formed||evIsFresh(m))){
+        try{showPatternPopup(m,true);}catch(e){console.error('[弹卡]',e);}
+        try{beepFor(m);}catch(e){}
+        try{flashTitle((m.text||'').replace(/<[^>]+>/g,''));}catch(e){}   // text 缺失不再连坐
+        try{notify(m);}catch(e){}
+        try{window.posPopups&&window.posPopups(m);}catch(e){console.error('[持仓弹卡]',e);}
+      }
+      try{window.posRefreshIfAny&&window.posRefreshIfAny();}catch(e){}
     }else if(m.type==='pattern_state'){
       applyCell(m.cell);
-      if(POSITIONS.length)renderPos();   // 持仓状态区跟随格子实时刷新（升级标记可逆）
+      try{window.posRefreshIfAny&&window.posRefreshIfAny();}catch(e){}   // 持仓状态区跟随格子实时刷新（升级标记可逆）
     }else if(m.type==='monitor_state'){
       paintMon(m.enabled);   // 总开关被切换（含服务器侧），横幅与设置按钮实时同步
     }
@@ -752,6 +768,7 @@ function posPopups(m){
     }
   });
 }
+function posRefreshIfAny(){ if(POSITIONS.length) renderPos(); }   // 顶层 WS 处理器经 window 调用（IIFE 作用域桥接）
 function renderPos(){
   const st=$('posCards');
   if(!POSITIONS.length){ st.innerHTML='<div class="empty">暂无持仓<br>点上方「+ 添加」录入</div>'; return; }
@@ -898,8 +915,8 @@ function pcSel(b){
   document.addEventListener('mouseup',()=>{ if(dragging){ dragging=false; posSavePos(); } });
 })();
 
-  // 暴露给 inline onclick（本块在 IIFE 内，函数默认局部）
-  Object.assign(window,{togglePosPanel,loadPositions,renderPos,posFormOpen,posFormClose,pfDeriveExit,posSubmit,posDel,posDelConfirm,pcSel,posSavePos,posEdit});
+  // 暴露给 inline onclick 与顶层 WS 处理器（本块在 IIFE 内，函数默认局部）
+  Object.assign(window,{togglePosPanel,loadPositions,renderPos,posFormOpen,posFormClose,pfDeriveExit,posSubmit,posDel,posDelConfirm,pcSel,posSavePos,posEdit,posPopups,posRefreshIfAny});
   window.__matrixReady=true;
 })();
 </script>

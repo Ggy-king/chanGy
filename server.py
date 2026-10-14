@@ -362,14 +362,19 @@ def _pattern_load_snapshot():
             data = json.load(f)
         if data.get('days_back') in (2, 3):
             _pattern_days_back = int(data['days_back'])   # 重启后窗口设置不丢
+        _ok_syms = {c['symbol'] for c in config.CONTRACTS}
         for ev in data.get('events', []):
-            fp = str(ev.get('fingerprint') or '')
             sym = str(ev.get('symbol') or '')
+            if sym and sym not in _ok_syms:
+                continue   # 合约换月后旧合约历史事件不复活（2026-10-14 生猪2611→2701 残留事故）
+            fp = str(ev.get('fingerprint') or '')
             if sym and fp and not fp.startswith(sym + '|'):
                 ev['fingerprint'] = f'{sym}|{ev.get("period", "")}|{fp}'   # 旧快照指纹迁移（2026-10-12 加前缀）
             _pattern_events.append(ev)
         for k, fps in (data.get('reported') or {}).items():
             s, _, p = k.rpartition('|')
+            if s and s not in _ok_syms:
+                continue   # 旧合约去重指纹同步丢弃
             rep = _DatedSet(fps)
             rep._dates = dict((data.get('reported_dates') or {}).get(k, {}))
             _pattern_reported[(s, p)] = rep
@@ -881,6 +886,18 @@ async def page_pc_detail():
     return _page('pc_detail.html')
 
 
+@app.get('/pc/positions')
+async def page_pc_positions():
+    """持仓驾驶舱（2026-10-14）：持有许可灯+实时判决，独立页面常开大字显示。"""
+    return _page('pc_positions.html')
+
+
+@app.get('/pc/stats')
+async def page_pc_stats():
+    """交易统计监督页（2026-10-14）：纪律指标为主、结果指标为辅，自动生成账本结论。"""
+    return _page('pc_stats.html')
+
+
 @app.get('/struct_zone.js')
 async def asset_struct_zone_js():
     """结构区间浮层模块（详情页引用；独立于中枢，2026-10-12 用户定稿）"""
@@ -1178,10 +1195,18 @@ def _history_pull_merge(force=False):
             return
         remote = json.loads(base64.b64decode(d['content']).decode()).get('history', [])
         with _POS_LOCK:
-            local = _history_load()
-            rids = {x.get('id') for x in remote}
-            merged = [x for x in local if x.get('id') not in rids] + remote
-            _history_save(merged)
+            if _POS_DIRTY.get('history.json'):
+                # 本地有未推送变更 → 并集合并（保护本地新记录不被远端覆盖）。
+                # 注意并集无法传播别处做的"删除"：云端删掉的记录若本地还有（非脏），
+                # 走下面的远端权威分支才会跟着删。
+                local = _history_load()
+                rids = {x.get('id') for x in remote}
+                merged = [x for x in local if x.get('id') not in rids] + remote
+                _history_save(merged)
+            else:
+                # 本地无未推送变更 → 远端权威，整体采纳（云端删除/修改都能同步到本地；
+                # 2026-10-14 鸡蛋记录事故：云端删了本地并集保留，统计里永远阴魂不散）
+                _history_save(remote)
         _GITEE_SHA['history.json'] = d['sha']
     except Exception:
         pass
@@ -1261,7 +1286,7 @@ async def api_positions_update(request: Request):
         rec = next((x for x in positions if x['id'] == pid), None)
         if rec is None:
             return JSONResponse({'error': '未找到该持仓'}, status_code=404)
-        for k in ('entry', 'exit', 'note', 'result', 'pnl', 'period'):
+        for k in ('entry', 'exit', 'note', 'result', 'pnl', 'period', 'price'):
             if k in p:
                 rec[k] = str(p[k])[:200]
         if 'entry' in p:
@@ -1332,6 +1357,7 @@ async def api_positions_delete(request: Request):
 
 @app.get('/api/positions/history')
 async def api_positions_history():
+    _history_pull_merge()   # 手机端简报先回灌，统计页看到的就是全量最新
     return JSONResponse({'history': _history_load()})
 
 
