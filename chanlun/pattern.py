@@ -108,6 +108,23 @@ def _left_confirm_zone(merged, fx_k, fx_side):
     return not (float(lows[n - 1]) > level)          # 回到区间内 → 重新显示
 
 
+# 反向中枢否定（用户 2026-10-14 提出，做成开关由监控页⚙设置面板控制，默认关）：
+# A类结构成立后，若 3' 之后连续三笔重叠成枢、且重叠区完全脱离原结构区间
+# （空头：重叠区最低 > 顶1'；多头：重叠区最高 < 底1'），且期间没有任何笔端点
+# 突破背驰点 3' → 原结构作废（不可借"回到确认区"复活）。破背驰点走原有逻辑。
+OPP_ZS_KILL = False
+
+
+def _dead_by_opposite_zs(tail, p1, side):
+    """反向中枢否定判定：tail 最近三笔的重叠区是否完全脱离原结构区间——
+    空头：重叠区最低价 > 顶1'（新中枢整个在上方）；多头：重叠区最高价 < 底1'。
+    若期间价格曾破背驰点 3'，调用方已先走原有逻辑，不会进到这里。"""
+    w = tail[-3:]
+    lo = max(min(x['start_price'], x['end_price']) for x in w)
+    hi = min(max(x['start_price'], x['end_price']) for x in w)
+    return lo > p1 if side == 'short' else hi < p1
+
+
 def _idle():
     return {'state': 'idle', 'struct': None, 'fired': []}
 
@@ -144,7 +161,24 @@ def _eval_a_long(bi_list, merged, reported):
     since_fire, last_fire = False, None       # A候选: (struct, ev, is_new, fire_i)
     since_conf, last_conf = False, None       # A确认: (struct, ev, is_new)
     events = []                               # 本轮新产生的事件（调用方负责推送）
+    # 反向中枢否定追踪（开关 OPP_ZS_KILL，多头镜像）：struct_ctx=当前结构；
+    # dead_tail=3'之后的笔；p3_broken=期间破过背驰点（破则走原有逻辑）
+    struct_ctx, dead_tail, p3_broken = None, [], False
     for i, b in enumerate(bi_list):
+        # 反向中枢否定：3' 之后连续三笔重叠且重叠区完全脱离结构区间（重叠区最高 < 底1'），
+        # 且期间未破背驰点 → 原结构作废（机器重新算）。先破背驰点 → 走原有逻辑，不否定。
+        if OPP_ZS_KILL and struct_ctx is not None and not p3_broken:
+            if b['end_price'] < struct_ctx['p3']:
+                p3_broken = True
+            else:
+                dead_tail.append(b)
+                # 三笔重叠必须全是**已确认笔**（用户定稿 2026-10-14，多头镜像）：
+                # 窗口取 dead_tail[-4:-1]，第四笔只做确认不进窗口。
+                if len(dead_tail) >= 4 and _dead_by_opposite_zs(dead_tail[:-1], struct_ctx['p1'], 'long'):
+                    struct_ctx = None
+                    state, struct = 'idle', None
+                    since_fire, since_conf = False, False
+                    last_fire, last_conf = None, None
         if b['direction'] == 'down':
             if state == 'watch' and b['end_price'] < struct['p3']:
                 state, struct = 'idle', None      # 新低 → 旧结构作废，立即重建检查（§3.4）
@@ -175,6 +209,7 @@ def _eval_a_long(bi_list, merged, reported):
                     struct['anchor_i'] = i
                     state = 'watch'
                     since_fire = since_conf = False
+                    struct_ctx, dead_tail, p3_broken = struct, [], False  # 新结构 → 追踪重置
         else:                                          # 向上笔完成
             # 确认阶段的结束由 _left_confirm_zone 门控判定（价格向上离开=结束，跌回来=恢复显示）
             if state == 'watch' and b['end_price'] > struct['p2']:
@@ -211,7 +246,26 @@ def _eval_a_short(bi_list, merged, reported):
     since_fire, last_fire = False, None       # A候选: (struct, ev, is_new, fire_i)
     since_conf, last_conf = False, None       # A确认: (struct, ev, is_new)
     events = []
+    # 反向中枢否定追踪（开关 OPP_ZS_KILL，监控页⚙设置面板控制）：struct_ctx=当前结构；
+    # dead_tail=3'之后的笔；p3_broken=期间破过背驰点（破则走原有逻辑，不再适用本规则）
+    struct_ctx, dead_tail, p3_broken = None, [], False
     for i, b in enumerate(bi_list):
+        # 反向中枢否定：3' 之后连续三笔重叠且重叠区完全脱离结构区间（重叠区最低 > 顶1'），
+        # 且期间未破背驰点 → 原结构作废（不可借"回到确认区"复活，机器重新算）。
+        # 先破背驰点 → 走原有逻辑（多空重新判定），不否定。
+        if OPP_ZS_KILL and struct_ctx is not None and not p3_broken:
+            if b['end_price'] > struct_ctx['p3']:
+                p3_broken = True
+            else:
+                dead_tail.append(b)
+                # 三笔重叠必须全是**已确认笔**（用户定稿 2026-10-14）：第四笔出现才确认
+                # 第三笔的端点，最新完成笔的端点还可能被延伸/回退修订，不参与判定。
+                # 即窗口取 dead_tail[-4:-1]：第四笔只做确认，自身不进重叠窗口。
+                if len(dead_tail) >= 4 and _dead_by_opposite_zs(dead_tail[:-1], struct_ctx['p1'], 'short'):
+                    struct_ctx = None
+                    state, struct = 'idle', None
+                    since_fire, since_conf = False, False
+                    last_fire, last_conf = None, None
         if b['direction'] == 'up':
             if state == 'watch' and b['end_price'] > struct['p3']:
                 state, struct = 'idle', None          # 新高 → 旧结构作废，立即重建检查
@@ -240,6 +294,7 @@ def _eval_a_short(bi_list, merged, reported):
                     struct['anchor_i'] = i
                     state = 'watch'
                     since_fire = since_conf = False
+                    struct_ctx, dead_tail, p3_broken = struct, [], False  # 新结构 → 追踪重置
         else:                                          # 向下笔完成
             # 确认阶段的结束由 _left_confirm_zone 门控判定（价格向下离开=结束，涨回来=恢复显示）
             if state == 'watch' and b['end_price'] < struct['p2']:

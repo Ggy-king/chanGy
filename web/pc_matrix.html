@@ -199,20 +199,28 @@ select{appearance:none;-webkit-appearance:none;
   <div style="border-top:1px solid #2a2e39;margin-top:11px;padding-top:10px;">
     <div style="display:flex;justify-content:space-between;align-items:center;">
       <span style="font-size:12px;">详情页结构区间</span>
-      <label style="cursor:pointer;display:flex;align-items:center;gap:7px;" title="从监控页点卡片/格子进详情页时，图上画一块该结构的区间色带（A类橙/B类紫）；关=详情页保持干净">
-        <input type="checkbox" id="structVisTgl" onchange="structVisChange(this.checked)">
-        <span id="structVisTxt" style="font-size:11.5px;color:#9aa0b0;">开</span>
-      </label>
+      <div style="display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;" title="从监控页点卡片/格子进详情页时，图上画一块该结构的区间色带（A类橙/B类紫）；关=详情页保持干净">
+        <button id="structVisOff" onclick="structVisChange(false)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">关</button>
+        <button id="structVisOn" onclick="structVisChange(true)" style="background:#2c3140;color:#f0b90b;border:none;padding:5px 11px;font-size:12px;cursor:pointer;font-weight:700;">开</button>
+      </div>
     </div>
     <div style="font-size:10.5px;color:#565a66;margin-top:5px;line-height:1.5;">A类橙 / B类紫，从监控页点进去时画在 K 线上，与中枢无关。</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:9px;">
+      <span style="font-size:12px;">反向中枢否定</span>
+      <div style="display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;" title="A类结构成立后，若反向走出三笔重叠的新中枢（三笔都必须是已确认笔）、且完全脱离原结构区间（空头：新中枢在原区间上方；多头：在下方），且期间未破背驰点 → 原结构作废、机器重新计算。切换会触发一次静默重扫（约18秒）">
+        <button id="oppKillOff" onclick="oppKillChange(false)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">关</button>
+        <button id="oppKillOn" onclick="oppKillChange(true)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">开</button>
+      </div>
+    </div>
+    <div style="font-size:10.5px;color:#565a66;margin-top:5px;line-height:1.5;">实验性规则：用于否定"价格反向脱离结构区间并在上方/下方形成新中枢"的老结构。开关状态服务端保存，所有端生效。</div>
   </div>
   <div style="border-top:1px solid #2a2e39;margin-top:11px;padding-top:10px;">
     <div style="display:flex;justify-content:space-between;align-items:center;">
       <span style="font-size:12px;color:#ef5350;font-weight:700;">监控服务</span>
-      <label style="cursor:pointer;display:flex;align-items:center;gap:7px;" title="关=停止扫描/预警/手续费刷新，零网络请求，只剩看盘；下次启动保持关闭则监控不启动">
-        <input type="checkbox" id="monTgl" onchange="monSwitch(this.checked)">
-        <span id="monTxt" style="font-size:11.5px;color:#9aa0b0;">开</span>
-      </label>
+      <div style="display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;" title="关=停止扫描/预警/手续费刷新，零网络请求，只剩看盘；下次启动保持关闭则监控不启动">
+        <button id="monOff" onclick="monSwitch(false)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">关</button>
+        <button id="monOn" onclick="monSwitch(true)" style="background:#2c3140;color:#f0b90b;border:none;padding:5px 11px;font-size:12px;cursor:pointer;font-weight:700;">开</button>
+      </div>
     </div>
     <div style="font-size:10.5px;color:#565a66;margin-top:5px;line-height:1.5;">关=只停形态监控（矩阵/卡片）；价格预警、手续费、看盘不受影响；状态持久化，重启仍生效。</div>
   </div>
@@ -621,14 +629,17 @@ function syncBiConf(){
 }
 
 /* ---------- 详情页结构区间开关（用户定稿 2026-10-12）：存本机，详情页画色带前读它 ---------- */
+function paintSeg(onId,offId,on){
+  const o=document.getElementById(onId), f=document.getElementById(offId);
+  if(o){o.style.background=on?'#2c3140':'#1e222d';o.style.color=on?'#f0b90b':'#787b86';o.style.fontWeight=on?'700':'400';}
+  if(f){f.style.background=!on?'#2c3140':'#1e222d';f.style.color=!on?'#f0b90b':'#787b86';f.style.fontWeight=!on?'700':'400';}
+}
 function paintStructVis(){
   let on=true; try{on=localStorage.getItem('cl_struct_visible')!=='0';}catch(e){}
-  const t=$('structVisTxt'); if(t) t.textContent=on?'开':'关';
-  const c=$('structVisTgl'); if(c) c.checked=on;
+  paintSeg('structVisOn','structVisOff',on);
 }
 function paintMon(on){
-  const t=$('monTxt'); if(t) t.textContent=on?'开':'关';
-  const c=$('monTgl'); if(c) c.checked=on;
+  paintSeg('monOn','monOff',on);
   const bar=$('monOffBar'); if(bar) bar.style.display=on?'none':'block';
 }
 function monSwitch(on){
@@ -639,12 +650,21 @@ function structVisChange(v){
   try{localStorage.setItem('cl_struct_visible',v?'1':'0');}catch(e){}
   paintStructVis();
 }
+/* ---------- 反向中枢否定开关（服务端持久化，切换触发静默重扫） ---------- */
+function paintOppKill(on){
+  paintSeg('oppKillOn','oppKillOff',on);
+}
+function oppKillChange(on){
+  fetch('/api/pattern_flags',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({opp_zs_kill:on})})
+    .then(r=>r.json()).then(d=>paintOppKill(!!d.opp_zs_kill)).catch(()=>paintOppKill(!on));
+}
 
 /* ---------- 启动 ---------- */
 (async function(){
   paintMute();
   paintStructVis();
   syncBiConf();
+  fetch('/api/pattern_flags').then(r=>r.json()).then(d=>paintOppKill(!!d.opp_zs_kill)).catch(()=>{});
   try{setTab(localStorage.getItem('cl_evt_tab')==='conf'?'conf':'all');}catch(e){}   // 恢复上次选的页签
   fetch('/api/pattern_matrix').then(r=>r.json()).then(d=>paintMon(d.mon_enabled!==false)).catch(()=>{});
   const r=await fetch('/api/pattern_matrix');

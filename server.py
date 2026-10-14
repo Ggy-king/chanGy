@@ -104,6 +104,7 @@ class _TeeLog:
 sys.stdout = _TeeLog(sys.stdout)
 sys.stderr = _TeeLog(sys.stderr)
 from chanlun.pattern import fingerprint as pattern_fingerprint
+import chanlun.pattern as _pattern_mod
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
 PORT = 8000
@@ -270,6 +271,15 @@ _pattern_bi_conf = dict(engine.BI_CONF_DEFAULT)
 try:
     with open(_PATTERN_BI_CONF_FILE, encoding='utf-8') as _f:
         _pattern_bi_conf.update(json.load(_f))
+except Exception:
+    pass
+
+# 反向中枢否定开关（2026-10-14，监控页⚙声音设置面板控制，默认关）：
+# 开=A类结构被反向脱离区间的新中枢否定后作废重算；持久化 data/pattern_flags.json
+_PATTERN_FLAGS_FILE = os.path.join(_HERE, 'data', 'pattern_flags.json')
+try:
+    with open(_PATTERN_FLAGS_FILE, encoding='utf-8') as _f:
+        _pattern_mod.OPP_ZS_KILL = bool(json.load(_f).get('opp_zs_kill'))
 except Exception:
     pass
 
@@ -1013,6 +1023,38 @@ async def api_pattern_bi_conf(request: Request):
     _pattern_reported.clear()
     _push_rescan_task()
     return JSONResponse({'ok': True, 'changed': True, 'conf': new_conf})
+
+
+@app.get('/api/pattern_flags')
+async def api_pattern_flags_get():
+    """反向中枢否定开关当前状态（矩阵页⚙设置面板启动时读取）。"""
+    return JSONResponse({'opp_zs_kill': bool(_pattern_mod.OPP_ZS_KILL)})
+
+
+@app.post('/api/pattern_flags')
+async def api_pattern_flags(request: Request):
+    """反向中枢否定开关（用户定稿 2026-10-14）。
+    开=A类结构被反向脱离区间的新中枢否定后作废重算；关=保持原有逻辑。
+    变更时与笔配置同步同款：清空基线 → 静默重扫全量（85单元约18秒）→ 重推机会快照；
+    持久化到 data/pattern_flags.json，重启后保持。"""
+    try:
+        raw = await request.json()
+    except Exception:
+        raw = {}
+    new = bool(raw.get('opp_zs_kill'))
+    old = bool(_pattern_mod.OPP_ZS_KILL)
+    if new == old:
+        return JSONResponse({'ok': True, 'changed': False, 'opp_zs_kill': new})
+    _pattern_mod.OPP_ZS_KILL = new
+    try:
+        with open(_PATTERN_FLAGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'opp_zs_kill': new}, f, ensure_ascii=False)
+    except Exception:
+        pass
+    _pattern_cells.clear()
+    _pattern_reported.clear()
+    _push_rescan_task()
+    return JSONResponse({'ok': True, 'changed': True, 'opp_zs_kill': new})
 
 
 # ==================== 持仓状态（监控页/详情页/手机端，2026-10-09） ====================
