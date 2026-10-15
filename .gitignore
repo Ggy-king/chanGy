@@ -51,3 +51,16 @@ mobile-app/*.iml
 
 # ===== Gitee 凭据（切勿入库）=====
 data/gitee_conf.json
+
+# ===== data/ 本机运行时状态（2026-10-15 定稿：自动重建、无跨机意义，不入云）=====
+# 注意：这几个文件此前已被 git 跟踪，只加 ignore 不会立即生效于"已跟踪"状态，
+# 它们仍会出现在 git status 里；彻底移出 GitHub 需要 git rm --cached（用户暂不执行）
+data/pattern_snapshot.json   # 形态监控事件流快照：每轮扫描重写，重启自动重建
+data/fees_cache.json         # 手续费缓存：启动自动联网刷新
+data/.stats_cache.json       # 统计页缓存：自动重建
+data/trading_days_cache.json # 交易日历缓存：自动从新浪重建
+data/last_account.json       # 本机选的天勤账户记忆
+data/monitor_switch.json     # 本机监控总开关状态
+data/pattern_flags.json      # 本机反向中枢开关
+data/pattern_bi_conf.json    # 笔六开关：每台机器浏览器各自推送，git 同步会互相覆盖
+data/history.json.bak        # history 同步合并备份残留
