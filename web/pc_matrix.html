@@ -79,9 +79,14 @@
 #posPanelHead{display:flex;align-items:center;gap:8px;padding:9px 13px;border-bottom:1px solid #2a2e39;
   cursor:move;font-weight:700;font-size:13.5px;user-select:none;}
 #posCards{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:9px;}
+#posPanel.wide{width:768px;max-height:96vh;}   /* 3~4 个持仓：加宽两列（1、2 左列，3、4 右列）；
+  高度上限同步放宽（88vh 是单列时代定的，装不下两行卡会截底），超出 96vh 才内部滚动 */
+#posPanel.wide #posCards{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:repeat(2,auto);
+  grid-auto-flow:column;align-items:start;gap:9px;}
 #posCards .empty{color:#787b86;font-size:12.5px;text-align:center;padding:26px 0;}
 /* 持仓卡（与移动端同款：金色信息带，交易级别+进场时间双主角） */
-.posCard{position:relative;background:#161C26;border:1px solid #2a2e39;border-radius:14px;overflow:hidden;display:flex;}
+.posCard{position:relative;background:#161C26;border:1px solid #2a2e39;border-radius:14px;overflow:hidden;
+  display:flex;flex-shrink:0;}   /* 禁止压缩：面板放不下就滚动，绝不把卡内文字挤叠 */
 .posCard .pbar{width:5px;flex-shrink:0;background:#f0b90b;}
 .posCard.long .pbar{background:#ef5350;}
 .posCard.short .pbar{background:#26a69a;}
@@ -422,7 +427,7 @@ function upsertEvent(m){
   }else{
     m.first_time=m.first_time||m.time;
     EVTS.push(m);
-    if(EVTS.length>200)EVTS=EVTS.slice(-200);
+    if(EVTS.length>300)EVTS=EVTS.slice(-300);   // 与服务端 deque(300) 容量同步
   }
   return true;
 }
@@ -791,6 +796,8 @@ function posPopups(m){
 function posRefreshIfAny(){ if(POSITIONS.length) renderPos(); }   // 顶层 WS 处理器经 window 调用（IIFE 作用域桥接）
 function renderPos(){
   const st=$('posCards');
+  const pn=$('posPanel');
+  if(POSITIONS.length>=3){pn.classList.add('wide');}else{pn.classList.remove('wide');}   // 3~4 仓：两列加宽
   if(!POSITIONS.length){ st.innerHTML='<div class="empty">暂无持仓<br>点上方「+ 添加」录入</div>'; return; }
   st.innerHTML='';
   POSITIONS.forEach(p=>{

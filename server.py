@@ -257,7 +257,49 @@ _PATTERN_LABEL = {'30': '30秒', '1': '1分', '3': '3分', '5': '5分', '15': '1
 _CELL_RANK = {'conf_a': 5, 'trig_b': 4, 'cand_a': 3, 'cand_b': 2, 'watch_a': 1, 'gone_b': 0, 'idle': 0}
 _pattern_cells = {}      # (symbol, period) -> cell dict（矩阵页全量状态）
 _pattern_reported = {}   # (symbol, period) -> set(结构指纹)，进程内去重
-_pattern_events = deque(maxlen=100)  # 事件流全部历史（客户端按页签裁：全部50/确认40）
+# 事件流容量规划（用户定稿 2026-10-15）：容量必须 ≥ 两个交易日的推送量。
+# 曾用 100 时 3 天窗口的转移事件总数已顶满（~100），FIFO 挤压 + 形态A全量重放复活
+# 造成入队序与触发时间序脱节——焦煤5分确认卡（触发时间居中）反被当"最老"挤掉
+# （2026-10-15 事故）。定稿双保险：
+#   1) 容量 300（观测单日 ~60-100 条，两日 ~140-200，300 给足余量，正常永远满不了）；
+#   2) 真满员时按触发时间淘汰最老卡（不是 FIFO）——与展示语义自洽：
+#      页面只看回看窗口，最老的卡本来就接近自然淡出，中间的卡永远安全。
+# _event_day_stats 每日统计真实推送量（存快照），一周后按"两日峰值"回检容量。
+# 客户端 EVTS 裁剪上限需同步 ≥ 此值（pc_matrix.html）。
+_EVENT_CAP = 300
+_pattern_events = deque()   # 满员淘汰由 _evict_oldest_event 手动执行（按触发时间）
+_event_day_stats = {}     # 'YYYY-MM-DD' -> 当日新入流事件条数（存快照持久化）
+_event_stat_day = None
+
+
+def _count_event_push():
+    """每日推送量统计（容量规划用）：新卡片入流时调用，跨天时打印前一日总量。"""
+    global _event_stat_day
+    d = dt.date.today().isoformat()
+    _event_day_stats[d] = _event_day_stats.get(d, 0) + 1
+    if _event_stat_day is not None and _event_stat_day != d:
+        print(f'[事件流统计] {_event_stat_day} 新事件 {_event_day_stats.get(_event_stat_day, 0)} 条'
+              f'（容量=两个交易日推送量，当前上限 300）')
+    _event_stat_day = d
+    if len(_event_day_stats) > 15:   # 只留最近两周，防无限增长
+        for k in sorted(_event_day_stats)[:-15]:
+            _event_day_stats.pop(k, None)
+
+
+def _evict_oldest_event():
+    """满员淘汰（用户定稿 2026-10-15）：按触发时间删最老卡，不按入队序 FIFO。
+    Why: 形态A重放会把被挤掉的老卡复活插到队尾，入队序早已不代表新旧；
+    按触发时间淘汰与展示语义自洽——最老的卡最接近回看窗口边缘，本就该先走。"""
+    if len(_pattern_events) < _EVENT_CAP:
+        return
+    oldest = min(_pattern_events, key=lambda m: str(m.get('trigger_time') or m.get('time') or ''))
+    for i, m in enumerate(_pattern_events):
+        if m is oldest:
+            del _pattern_events[i]
+            break
+    print(f"[事件流] 容量 {_EVENT_CAP} 满，按触发时间淘汰最老卡："
+          f"{oldest.get('symbol')} {oldest.get('period')} {oldest.get('pattern')} "
+          f"{oldest.get('trigger_time')}")
 _pattern_ready = False   # 首轮静默：只建基线不推送（§5.2）
 _snapshot_done = False   # 启动机会快照只推一次
 _snapshot_msgs = []      # 静默基线扫描期间收集的新鲜事件（快照用）
@@ -351,6 +393,7 @@ def _pattern_save_snapshot():
             'saved_at': dt.datetime.now().isoformat(timespec='seconds'),
             'days_back': _pattern_days_back,
             'events': list(_pattern_events),
+            'day_stats': dict(_event_day_stats),   # 每日推送量统计（容量规划回检用）
             'reported': {f'{s}|{p}': sorted(rep) for (s, p), rep in _pattern_reported.items()},
             'reported_dates': {f'{s}|{p}': dict(getattr(rep, '_dates', {}))
                                for (s, p), rep in _pattern_reported.items()},
@@ -364,7 +407,7 @@ def _pattern_save_snapshot():
 
 
 def _pattern_load_snapshot():
-    global _pattern_days_back
+    global _pattern_days_back, _event_day_stats, _event_stat_day
     try:
         if not os.path.exists(_PATTERN_SNAPSHOT_FILE):
             return
@@ -372,6 +415,10 @@ def _pattern_load_snapshot():
             data = json.load(f)
         if data.get('days_back') in (2, 3):
             _pattern_days_back = int(data['days_back'])   # 重启后窗口设置不丢
+        if isinstance(data.get('day_stats'), dict):       # 每日推送量统计恢复（跨天打印不丢历史日）
+            _event_day_stats = {k: v for k, v in data['day_stats'].items() if isinstance(v, int) and v > 0}
+            if _event_day_stats:
+                _event_stat_day = sorted(_event_day_stats)[-1]
         _ok_syms = {c['symbol'] for c in config.CONTRACTS}
         for ev in data.get('events', []):
             sym = str(ev.get('symbol') or '')
@@ -401,6 +448,14 @@ _pattern_load_snapshot()
 def _push_rescan_task():
     async def _rescan():
         global _pattern_ready, _snapshot_done
+        if not _MON['enabled']:
+            # 总开关关闭（用户 2026-10-14 bug 报告）：打开监控页会同步本机笔配置并走到这里，
+            # 关就是关——只保存配置并标记待重建，绝不拉数；下次开启监控时 pattern_loop
+            # 见 _pattern_ready=False 自动重建基线（顺带解决"关监控还偷偷重扫 18 秒"）
+            _pattern_ready = False
+            _snapshot_done = False
+            print('[pattern] 总开关为关：跳过静默重扫（配置已保存，开启监控时自动重建基线）')
+            return
         _pattern_ready = False          # 静默重建基线（新配置下历史指纹全部作废）
         _snapshot_done = False
         await _pattern_scan_once(False)
@@ -598,6 +653,8 @@ async def _upsert_event_card(msg):
         await manager.broadcast(msg)
         return
     msg['first_time'] = msg.get('time')
+    _evict_oldest_event()
+    _count_event_push()
     _pattern_events.append(msg)
     manager.remember(msg)
     await manager.broadcast(msg)
@@ -713,6 +770,8 @@ async def _push_startup_snapshot():
     for msg in seen.values():
         if any(m.get('fingerprint') == msg.get('fingerprint') for m in _pattern_events):
             continue   # 事件流已有同指纹卡片，不重复入队
+        _evict_oldest_event()
+        _count_event_push()
         _pattern_events.append(msg)
         manager.remember(msg)
         await manager.broadcast(msg)
@@ -1401,6 +1460,170 @@ async def api_positions_delete(request: Request):
 async def api_positions_history():
     _history_pull_merge()   # 手机端简报先回灌，统计页看到的就是全量最新
     return JSONResponse({'history': _history_load()})
+
+
+# ==================== 持仓出场提示（三个价，2026-10-14 定稿） ====================
+# 规则文档：持仓出场逻辑-止盈规则说明（用户与外部 AI 对话定稿，本系统口径优先）。
+# 口径对齐：中枢=本级别笔中枢（chanlun/zs.py），延伸=关 → [ZD,ZG] 成枢后固定（与文档一致，
+# 也与用户图上 cl_zs_conf 约定一致）；三买确认=本级别回调笔不回中枢（与形态C _eval_c_long
+# 同口径，文档写"次级别回抽"按系统实现落到本级别回调笔）。次级别信号一律=噪音。
+_BIG_LEVEL = {'3': '5', '5': '15', '15': '30m', '30m': '60', '60': 'daily'}
+
+
+def _exit_hint(symbol, period, entry, entry_price):
+    """三个价提示（纯提示性接口，不做任何推送/持久化）：
+    硬止损 / 保本价 / 移动止盈锚 + 中枢与离开状态 + 判决 + 升级迹象。"""
+    import pandas as pd
+    from chanlun.zs import build_zs
+    is_long = '买' in (entry or '')
+    out = {'symbol': symbol, 'period': period, 'entry': entry, 'long': is_long,
+           'has_zs': False, 'entry_price': float(entry_price) if entry_price else None}
+    try:
+        out['name'] = config.CONTRACT_MAP[symbol]['name']
+    except KeyError:
+        out['error'] = 'unknown symbol'
+        return out
+    period_sec = engine._TQ_PERIOD.get(period, 900)
+    try:
+        df = engine.tq.fetch_kline(symbol, period_sec, data_length=1000)
+    except Exception as e:
+        out['error'] = f'fetch: {e}'
+        return out
+    if df is None or len(df) == 0:
+        out['error'] = 'empty data'
+        return out
+    df = df.reset_index(drop=True)
+    if df['datetime'].dt.tz is None:
+        df['datetime'] = pd.to_datetime(df['datetime'])
+    df = df.dropna(subset=['open', 'high', 'low', 'close'])
+    if len(df) > 1:
+        _last = df['datetime'].iloc[-1]
+        _now = pd.Timestamp.now(tz=_last.tz) if _last.tzinfo else pd.Timestamp.now()
+        if (_now - _last).total_seconds() < period_sec:
+            df = df.iloc[:-1]
+    merged = engine.merge_klines(df)
+    top_fx, bottom_fx = engine.find_fenxing(merged)
+    conf = dict(engine.BI_CONF_DEFAULT)
+    conf.update({k: v for k, v in _pattern_bi_conf.items() if k in conf})
+    bis = engine.build_bi(top_fx, bottom_fx, merged, **conf)
+    zss = build_zs(bis, zs_extend=False, zs_merge=False, zs_first_bi=False)
+    px = round(float(df['close'].iloc[-1]), 1)
+    out['last_price'] = px
+    if not bis:
+        out['error'] = 'no bis'
+        return out
+
+    # —— 无中枢：MD §9"真空"——锚保持挂最近中枢上沿；连中枢都没有=等本级别中枢形成
+    if not zss:
+        hard = min(b['end_price'] for b in bis) if is_long else max(b['end_price'] for b in bis)
+        out.update({'verdict': 'warn',
+                    'verdict_txt': '本级别尚无中枢——锚无处可挂，先按硬止损防守，等中枢形成',
+                    'hard': round(hard, 1), 'hard_src': '窗口极值·估',
+                    'anchor': None, 'anchor_prev': None, 'zs': None, 'prev_zs': None,
+                    'leave': {'state': 'in_zs', 'amp': 0.0, 'mult': 0.0,
+                              'reached_2x': False, 'pullback': ''},
+                    'upgrade': {'pens': 0, 'overlap': False}})
+        return out
+
+    z = zss[-1]
+    prev = zss[-2] if len(zss) >= 2 else None
+    x_w = max(z['high'] - z['low'], 1e-9)
+    # 三买后上方成新中枢（多）/三卖后下方成新中枢（空）：锚取新枢边界，硬止损取原枢边界
+    prev_edge = (prev['high'] if is_long else prev['low']) if prev else None
+    moved = bool(prev and ((is_long and z['low'] > prev['high'])
+                           or ((not is_long) and z['high'] < prev['low'])))
+    anchor = z['high'] if is_long else z['low']
+    anchor_prev = prev_edge if moved else None
+    hard, hard_src = None, ''
+    if '三' in (entry or ''):
+        hard = prev_edge if moved else anchor
+        hard_src = '原中枢' + ('上沿' if is_long else '下沿')
+    else:   # 二买/二卖：硬止损 = 一买低点/一卖高点 = 进入笔起点
+        src_z = (prev or z) if moved else z   # moved=True 蕴含 prev 非空
+        bi_in = src_z['bi_in']
+        if bi_in is not None and bi_in >= 0:
+            hard = bis[bi_in]['start_price']
+            hard_src = '一' + ('买低点' if is_long else '卖高点')
+    if hard is None:   # 兜底：回看窗口极值（估）
+        hard = min(b['end_price'] for b in bis) if is_long else max(b['end_price'] for b in bis)
+        hard_src = '窗口极值·估'
+    hard = float(hard)
+
+    # —— 离开与回抽（MD §5/§8：离开幅度相对 X；回抽判定用本级别回调笔）——
+    leave = {'state': 'in_zs', 'amp': 0.0, 'mult': 0.0, 'reached_2x': False, 'pullback': ''}
+    if z['bi_out'] is not None and z['bi_out'] >= 0:
+        lb = bis[z['bi_out']]
+        amp = (lb['end_price'] - z['high']) if (is_long and lb['direction'] == 'up') else \
+              (z['low'] - lb['end_price']) if ((not is_long) and lb['direction'] == 'down') else None
+        if amp is None or amp <= 0:
+            leave['state'] = 'break'        # 反向离开=结构已坏
+        else:
+            leave.update({'state': 'left', 'amp': round(amp, 1),
+                          'mult': round(amp / x_w, 2), 'reached_2x': amp >= 2 * x_w})
+            pull = next((b for b in bis[z['bi_out'] + 1:]
+                         if b['direction'] == ('down' if is_long else 'up')), None)
+            if pull is None:
+                leave['pullback'] = 'wait'   # 离开后尚无回调笔——等回抽确认
+            elif (pull['end_price'] < z['high']) if is_long else (pull['end_price'] > z['low']):
+                leave['pullback'] = 'fail'   # 回抽重回中枢——离开失败（保本）
+            else:
+                leave['pullback'] = 'hold'   # 回抽不破——三买/三卖确认，锚上移生效
+
+    # —— 判决（MD §13 枚举；前端用实时 quotes 复算同一套阈值）——
+    def _verdict(p):
+        if (is_long and p < hard) or ((not is_long) and p > hard):
+            return 'stop', f'已破硬止损（{hard_src} {hard}）——无条件止损'
+        if leave['state'] == 'break':
+            return 'take', '价格反向离开中枢——结构已坏，止盈离场'
+        if leave.get('pullback') == 'fail':
+            return 'breakeven', '回抽重回中枢——本级别离开失败，保本走（挂成本价）'
+        if (is_long and p < anchor) or ((not is_long) and p > anchor):
+            return 'take', ('跌破' if is_long else '涨破') + '移动止盈锚（中枢' + ('上沿' if is_long else '下沿') + '）——止盈离场'
+        if leave.get('pullback') == 'wait':
+            return 'warn', '离开后回抽中——等回抽不破中枢' + ('上沿' if is_long else '下沿') + '（三' + ('买' if is_long else '卖') + '确认）'
+        if (is_long and p < anchor + 0.25 * x_w) or ((not is_long) and p > anchor - 0.25 * x_w):
+            return 'warn', '贴近中枢边界——警戒测试锚位，未破不动'
+        return 'hold', '中枢边界完好——持有许可，现在卖出=违反体系'
+
+    v_key, v_txt = _verdict(px)
+
+    # —— 升级迹象（MD §11/§13）：中枢笔数（延伸段数）+ 相邻中枢重合=扩张/升级嫌疑 + 大级别参照 ——
+    big = None
+    big_p = _BIG_LEVEL.get(period)
+    if big_p:
+        try:
+            bs = engine.get_live(symbol, big_p)
+            bz = (bs.get('zs') or [])
+            if bz:
+                b = bz[-1]
+                big = {'period': big_p, 'high': b['high'], 'low': b['low'],
+                       'pos': 'in' if b['low'] <= px <= b['high'] else ('above' if px > b['high'] else 'below')}
+        except Exception:
+            big = None
+    upgrade = {'pens': z['end_bi'] - z['begin_bi'] + 1, 'overlap': False, 'big': big}
+    if prev:
+        # 延伸=关时相邻会出现完全同区间的重复枢（已知特性），那是延伸不算扩张；
+        # 扩张嫌疑 = 有重合但区间不完全相同（MD §10/§11 升级迹象，仅提示不动作）
+        same = abs(z['high'] - prev['high']) < 1e-9 and abs(z['low'] - prev['low']) < 1e-9
+        upgrade['overlap'] = (z['low'] <= prev['high'] and z['high'] >= prev['low']) and not same
+        upgrade['prev'] = {'high': prev['high'], 'low': prev['low']}
+
+    out.update({
+        'has_zs': True,
+        'zs': {'high': z['high'], 'low': z['low'], 'x': round(x_w, 1)},
+        'prev_zs': {'high': prev['high'], 'low': prev['low']} if prev else None,
+        'anchor': round(anchor, 1), 'anchor_prev': round(anchor_prev, 1) if anchor_prev else None,
+        'hard': round(hard, 1), 'hard_src': hard_src,
+        'leave': leave, 'verdict': v_key, 'verdict_txt': v_txt,
+        'upgrade': upgrade,
+    })
+    return out
+
+
+@app.get('/api/exit_hint')
+def api_exit_hint(symbol: str, period: str, entry: str = '', price: float = 0):
+    """持仓出场提示（提示性：前端约 60s 拉一次；现价判决由前端用 /api/quotes 实时复算同一套阈值）。"""
+    return JSONResponse(_exit_hint(symbol, period, entry, price))
 
 
 @app.get('/api/overview')

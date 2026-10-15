@@ -30,7 +30,7 @@ CONTRACTS = [
     {"symbol": "pg2611", "name": "液化气", "exchange": "DCE"},
     {"symbol": "RB2701", "name": "螺纹钢", "exchange": "SHFE"},
     {"symbol": "NI2611", "name": "沪镍",   "exchange": "SHFE"},
-    {"symbol": "PK2611", "name": "花生",   "exchange": "CZCE"},
+    # {"symbol": "PK2611", "name": "花生",   "exchange": "CZCE"},
 ]
 
 # 方便按代码索引
