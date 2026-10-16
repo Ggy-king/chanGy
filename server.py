@@ -809,6 +809,98 @@ def _monitor_save():
         print('[监控开关] 保存失败:', e)
 
 
+# ============ 收盘战报（用户 2026-10-15：每个时段收盘后终端打印当日小结，续启动菜单的仪式感）============
+_SESSION_LABEL = {690: '上午盘', 900: '日盘', 1380: '夜盘', 150: '夜盘尾场'}
+
+def _print_session_report(close_min):
+    """时段收盘战报：当日事件统计 + 确认/触发清单 + 持仓判决 + 今日平仓记录。
+    由 pattern_loop 的收尾扫描分支调用（收盘+3分钟，数据含最后一根K线后打印）。"""
+    C, Y, G, R, B, D, RST = '\033[96m', '\033[33m', '\033[32m', '\033[91m', '\033[1m', '\033[2m', '\033[0m'
+    today = dt.date.today().isoformat()
+    label = _SESSION_LABEL.get(close_min, f'{close_min // 60:02d}:{close_min % 60:02d}')
+
+    # —— 当日事件统计 ——
+    new_n = _event_day_stats.get(today, 0)
+    flow_n = len(_pattern_events)
+    trig = [m for m in _pattern_events
+            if str(m.get('trigger_time') or '').startswith(today)
+            and ('CONF' in (m.get('pattern') or '') or 'TRIG' in (m.get('pattern') or ''))]
+    trig.sort(key=lambda m: str(m.get('trigger_time') or ''))
+
+    # —— 持仓判决（与前端同一套格子推导，终端简版）——
+    pos_lines = []
+    try:
+        for p in _positions_load():
+            long = '买' in (p.get('entry') or '')
+            my_side = 'long' if long else 'short'
+            cell = _pattern_cells.get((p.get('symbol'), p.get('period'))) or {}
+            st, side = cell.get('state') or 'idle', cell.get('side')
+            opp = bool(side) and side != my_side
+            if opp and st == 'conf_a':
+                mark, mc = '⚠ 离场预警（反向A类确认）', R
+            elif opp and st == 'trig_b':
+                mark, mc = '⛔ 反向触发（无条件全平）', R
+            elif opp and st in ('cand_a', 'cand_b'):
+                mark, mc = '🟡 反向候选（观察）', Y
+            elif st in ('conf_a', 'trig_b'):
+                mark, mc = '⬆ 同向确认（可升级关注）', G
+            elif st in ('cand_a', 'cand_b', 'watch_a'):
+                mark, mc = '🟢 结构延续中', G
+            else:
+                mark, mc = '🟢 监控中', G
+            lv = {'3': '3分', '5': '5分', '15': '15分', '30m': '30分', '60': '60分'}.get(p.get('period'), p.get('period'))
+            pos_lines.append(f'     · {p.get("name")} {lv} {"多单" if long else "空单"}'
+                             f'（{str(p.get("open_time") or "")[:11]}进场）  {mc}{mark}{RST}')
+        if not pos_lines:
+            pos_lines.append(f'     {D}（当前无持仓）{RST}')
+    except Exception as e:
+        pos_lines.append(f'     {D}（持仓读取失败: {e}）{RST}')
+
+    # —— 今日平仓记录（history.json 同步数据）——
+    close_lines = []
+    try:
+        with open(_HISTORY_FILE, encoding='utf-8') as f:
+            hist = json.load(f).get('history', [])
+        for h in hist:
+            if not str(h.get('close_iso') or '').startswith(today):
+                continue
+            pnl = str(h.get('close_pnl') or '')
+            pc = G if pnl.startswith('+') else (R if pnl.startswith('-') else D)
+            close_lines.append(f'     · {h.get("name")} {h.get("entry")}→{h.get("exit") or "平仓"}'
+                               f'  {h.get("close_result")}  {pc}{pnl}{RST}  {D}{h.get("close_time")}{RST}')
+        close_lines.reverse()   # 最近的在前
+    except Exception:
+        pass
+
+    print(f'\n  {B}{"═" * 52}{RST}')
+    print(f'  📊 {B}{today[5:]} {label}收盘战报{RST}')
+    print(f'  {D}{"─" * 52}{RST}')
+    print(f'  今日新事件 {B}{new_n}{RST} 张 │ 事件流 {B}{flow_n}{RST}/300 │ 确认·触发 {B}{len(trig)}{RST} 条')
+    if trig:
+        for m in trig[-8:]:
+            tt = str(m.get('trigger_time') or '')[11:16]
+            kind = 'A类' if m.get('kind') == 'A' else 'B类'
+            sd = '空头' if m.get('side') == 'short' else '多头'
+            pn = (m.get('pattern') or '')
+            if kind == 'A类':
+                name = '确认' if 'CONF' in pn else '触发'
+            else:
+                name = ('三买' if 'BUY' in pn else '三卖') + ('确认' if 'CONF' in pn else '触发')
+            print(f'     · {m.get("name")} {m.get("period")} {kind}{sd}{name}  {D}{tt}{RST}')
+    else:
+        print(f'     {D}（今日暂无确认/触发）{RST}')
+    print(f'  🚗 持仓 {len(pos_lines)} 笔：' if pos_lines and pos_lines[0] != f'     {D}（当前无持仓）{RST}' else '  🚗 持仓：')
+    for ln in pos_lines:
+        print(ln)
+    print(f'  📋 今日平仓：')
+    if close_lines:
+        for ln in close_lines[:6]:
+            print(ln)
+    else:
+        print(f'     {D}（今日无平仓记录）{RST}')
+    print(f'  {D}{"═" * 52}{RST}\n')
+
+
 async def pattern_loop():
     """形态监视主循环（§5.2/§5.4 + 用户节奏要求）：
     交易时段每 30s 醒来检查挂钟——3 分级别每 3 分钟、5 分每 5 分钟、15/30/60 各按自己的
@@ -862,6 +954,10 @@ async def pattern_loop():
                             print(f'[pattern_loop] {now:%H:%M} 时段收尾扫描（{c//60:02d}:{c%60:02d} 收盘补齐，全级别）')
                             await _pattern_scan_once(True)
                             _pattern_save_snapshot()
+                            try:
+                                _print_session_report(c)   # 收盘战报（数据含最后一根K线后再打印）
+                            except Exception as e:
+                                print('[收盘战报] 打印失败:', e)
                             break
                     mod = now.hour * 60 + now.minute
                     due = []
@@ -1657,7 +1753,13 @@ async def api_simulate(sym: str, side: str = 'buy'):
 
 @app.get('/api/backtest')
 async def api_backtest(sym: str = 'ALL', months: int = 1):
-    return JSONResponse(backtest.run_backtest(sym, months))
+    # 空/未知品种兜成 ALL（页面下拉未就绪时点击不再 500）；异常转 JSON 错误消息（2026-10-16）
+    if not sym or sym not in config.CONTRACT_MAP:
+        sym = 'ALL'
+    try:
+        return JSONResponse(backtest.run_backtest(sym, months))
+    except Exception as e:
+        return JSONResponse({'error': f'回测失败：{e}'})
 
 
 def _smart_markers(sym, period):
@@ -2040,4 +2142,17 @@ if __name__ == '__main__':
             print(f'[TqData] 预初始化失败（首次请求时会自动重试）: {e}')
     import threading as _th
     _th.Thread(target=_init_tq, daemon=True).start()
-    uvicorn.run(app, host='0.0.0.0', port=PORT, log_level='warning')
+    try:
+        uvicorn.run(app, host='0.0.0.0', port=PORT, log_level='warning')
+    finally:
+        # 优雅退出（用户 2026-10-15）：Ctrl+C / 正常关闭都打印收尾横幅并落盘事件快照
+        try:
+            _pattern_save_snapshot()
+        except Exception:
+            pass
+        _G2, _D2, _RST2, _B2 = '\033[32m', '\033[2m', '\033[0m', '\033[1m'
+        print(f'\n  {_D2}{"─" * 48}{_RST2}')
+        print(f'  👋 {_B2}正在退出{_RST2}  事件快照已保存：'
+              f'{_G2}{len(_pattern_events)} 条{_RST2}（下次启动自动恢复）')
+        print(f'     账户: {acc_name or "（未配置）"}   {_D2}今天辛苦了，再见{_RST2}')
+        print(f'  {_D2}{"─" * 48}{_RST2}')

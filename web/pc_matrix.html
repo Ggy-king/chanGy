@@ -169,6 +169,10 @@ select{appearance:none;-webkit-appearance:none;
 <script src="/popup_cards.js"></script>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" sizes="32x32" href="/favicon.png"></head>
 <body>
+<!-- 监控停用横幅：页面最顶端窄条（显示时把页头整体下推，不遮挡任何按钮） -->
+<div id="monOffBar" style="display:none;flex:none;background:#3a1d20;color:#ef5350;
+  border-bottom:1px solid #ef5350;padding:5px 16px;font-size:12px;text-align:center;">
+  ⛔ 形态监控已停用——矩阵/卡片不再更新；价格预警、手续费、看盘均不受影响。⚙ 设置里可重新开启。</div>
 <header>
   <a href="/pc" class="btn" style="text-decoration:none;">‹ 返回</a>
   <h1>形态<span>监控矩阵</span></h1>
@@ -181,9 +185,6 @@ select{appearance:none;-webkit-appearance:none;
 </header>
 
 <!-- 右上角预警弹卡容器 + 声音分类设置面板（弹卡容器由 popup_cards.js 按需创建） -->
-<div id="monOffBar" style="display:none;position:fixed;top:0;left:0;right:0;z-index:200;background:#3a1d20;color:#ef5350;
-  border-bottom:1px solid #ef5350;padding:7px 16px;font-size:12.5px;text-align:center;">
-  ⛔ 形态监控已停用——矩阵/卡片不再更新；价格预警、手续费、看盘均不受影响。⚙ 设置里可重新开启。</div>
 <div id="sndPanel" style="display:none;position:fixed;top:52px;right:16px;z-index:130;background:#1e222d;
      border:1px solid #f0b90b66;border-radius:12px;padding:13px 15px;width:260px;box-shadow:0 12px 36px #000d;">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -539,7 +540,8 @@ function showPatternPopup(m,isUpdate){
       (isUpdate?'<span class="pp-pill pp-b">🔔延续</span>':'')+
       '<br>价 <b>'+m.price+'</b>　触发 '+String(m.trigger_time||m.time||'').replace('T',' ').slice(5,16)+
       '<br><span class="pp-txt">'+(m.text||'')+'</span>',
-    onClick:()=>{location.href='/pc/detail?sym='+encodeURIComponent(m.symbol);}
+    onClick:()=>{location.href='/pc/detail?sym='+encodeURIComponent(m.symbol);},
+    href:'/pc/detail?sym='+encodeURIComponent(m.symbol)   // 跨页面恢复后仍可点击（popup_cards.js）
   });
 }
 /* 时效闸门：事件触发时刻距今超过 3 分钟 = 天勤断线窗口错过扫描后恢复的补发，
@@ -782,12 +784,14 @@ function posPopups(m){
     const det=()=>{location.href='/pc/detail?sym='+encodeURIComponent(m.symbol);};
     if(m.symbol===p.symbol&&m.period===p.period&&side===exitSide){
       PopupCards.push({fp:'posx_'+m.fingerprint,tone:'pos',onClick:det,
+        href:'/pc/detail?sym='+encodeURIComponent(m.symbol),
         title:'📌 离场预警 · '+p.name+' '+p.symbol+'（'+(P_LAB[p.period]||p.period)+'持仓）',
         info:(m.kind==='A'?'A类':'B类')+(long?'卖点':'买点')+(m.kind==='A'?'确认':'触发（无条件全平）')+(m.bi_formed?' · 已成笔':'')+'<br>价 <b>'+m.price+'</b>　'+fmtT(m.trigger_time||m.time)});
     }
     const r=P_RANK[m.period]||0;
     if(m.symbol===p.symbol&&r>(P_RANK[p.period]||0)&&side===(long?'long':'short')){
       PopupCards.push({fp:'posu_'+m.fingerprint,tone:'pos',onClick:det,
+        href:'/pc/detail?sym='+encodeURIComponent(m.symbol),
         title:'📌 可升级 · '+p.name+' → '+(P_LAB[m.period]||m.period),
         info:'更大级别同向'+(m.kind==='A'?'A类确认':'B类触发')+'，本级别卖点后可留底仓过户'+(P_LAB[m.period]||m.period)+'<br>价 <b>'+m.price+'</b>　'+fmtT(m.trigger_time||m.time)});
     }

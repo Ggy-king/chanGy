@@ -43,7 +43,8 @@
   .err{color:var(--red);padding:20px;}
   h2{font-size:14px;margin:6px 0 10px;color:var(--txt);}
 </style>
-<link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" sizes="32x32" href="/favicon.png"></head>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" sizes="32x32" href="/favicon.png"><script src="/popup_cards.js"></script>
+</head>
 <body>
 <div class="top">
   <a class="back" href="/pc">← 返回总览</a>
@@ -97,8 +98,12 @@ function run(){
   const go=document.getElementById('go'); go.disabled=true;
   document.getElementById('result').innerHTML='<div class="loading">正在回测（全部品种需拉17个数据，稍候十几秒）…</div>';
   document.getElementById('meta').textContent='';
-  fetch('/api/backtest?sym='+encodeURIComponent(sel.value)+'&months='+months)
-    .then(r=>r.json()).then(r=>{ go.disabled=false; render(r); })
+  fetch('/api/backtest?sym='+encodeURIComponent(sel.value||'ALL')+'&months='+months)
+    .then(r=>r.json()).then(r=>{
+      go.disabled=false;
+      if(r.error){ document.getElementById('result').innerHTML='<div class="err">'+r.error+'</div>'; return; }
+      render(r);
+    })
     .catch(e=>{ go.disabled=false; document.getElementById('result').innerHTML='<div class="err">请求失败：'+e+'</div>'; });
 }
 

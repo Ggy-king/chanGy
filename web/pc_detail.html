@@ -1546,7 +1546,8 @@ function showPatternPopup(m){
       (m._upd?'<span class="pp-pill pp-b">🔔延续</span>':'')+
       '<br>价 <b>'+m.price+'</b>　触发 '+String(m.trigger_time||m.time||'').replace('T',' ').slice(5,16)+
       '<br><span class="pp-txt">'+(m.text||'')+'</span>',
-    onClick:()=>location.href='/pc/matrix'
+    onClick:()=>location.href='/pc/matrix',
+    href:'/pc/matrix'   // 跨页面恢复后仍可点击（popup_cards.js）
   });
   playAlertSound();
 }

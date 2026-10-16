@@ -469,7 +469,8 @@ function onCell(c){
         PopupCards.push({fp:'up_'+c.symbol+'_'+c.period+'_'+c.state,
           title:'⚠ '+p.name+' 可能要升级',
           info:(P_LAB[c.period]||c.period)+' 同方向'+(KIND_OF[c.state]==='a'?'A类':'B类')+'已确认/触发 —— 本级别卖点出现时可留底仓',
-          tone:'pos',onClick:()=>gotoDetail(c.symbol,c.period),ms:12000});
+          tone:'pos',onClick:()=>gotoDetail(c.symbol,c.period),ms:12000,
+          href:'/pc/detail?sym='+encodeURIComponent(c.symbol)});
       }catch(e){}
     }
   }
