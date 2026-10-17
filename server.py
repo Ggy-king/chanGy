@@ -34,6 +34,12 @@ from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 
 import engine, fees, backtest, trading_time, config, alert_manager
 
+try:                                    # Agent 包（Phase 1：周复盘分析师），缺文件不致命
+    from agent import llm as agent_llm, weekly_analyst as agent_weekly, tools as agent_tools
+except Exception as _agent_err:
+    print('[agent] 包加载失败，AI 分析不可用:', _agent_err)
+    agent_llm = agent_weekly = agent_tools = None
+
 
 # ==================== 日志落盘（用户定稿 2026-10-11） ====================
 # print 原样输出到终端，同时抄写进 data/logs/server_YYYYMMDD.log。
@@ -958,6 +964,10 @@ async def pattern_loop():
                                 _print_session_report(c)   # 收盘战报（数据含最后一根K线后再打印）
                             except Exception as e:
                                 print('[收盘战报] 打印失败:', e)
+                            try:
+                                _save_daily_audit()        # 日审计快照存档（复盘页周聚合用，防信号流滚动丢失）
+                            except Exception as e:
+                                print('[复盘] 日审计快照失败:', e)
                             break
                     mod = now.hour * 60 + now.minute
                     due = []
@@ -1061,6 +1071,12 @@ async def page_pc_positions():
 async def page_pc_stats():
     """交易统计监督页（2026-10-14）：纪律指标为主、结果指标为辅，自动生成账本结论。"""
     return _page('pc_stats.html')
+
+
+@app.get('/pc/review')
+async def page_pc_review():
+    """复盘页（2026-10-17）：日审计/周复盘/月复盘/统计入口，docs/复盘系统设计.md v0.2。"""
+    return _page('pc_review.html')
 
 
 @app.get('/struct_zone.js')
@@ -1459,7 +1475,7 @@ async def api_positions_add(request: Request):
         if len(positions) >= _POS_LIMIT:
             return JSONResponse({'error': f'持仓已达上限（{_POS_LIMIT}个）'}, status_code=400)
         now = dt.datetime.now()
-        rec = {'id': str(int(now.timestamp() * 1000)), 'symbol': sym,
+        rec: dict = {'id': str(int(now.timestamp() * 1000)), 'symbol': sym,
                'name': config.CONTRACT_MAP[sym]['name'], 'period': period,
                'entry': entry, 'exit': str(p.get('exit') or _POS_EXIT_MAP[entry]),
                'open_time': now.strftime('%m-%d %H:%M'), 'weekday': _POS_WEEKDAYS[now.weekday()],
@@ -1467,6 +1483,16 @@ async def api_positions_add(request: Request):
                'result': '', 'pnl': ''}
         if p.get('entry_fp'):   # 进场时的活跃结构指纹（持仓卡"回调笔延伸中"判定用，2026-10-13）
             rec['entry_fp'] = str(p['entry_fp'])[:120]
+        # 开仓瞬间信号快照（2026-10-17 定稿）：信号流只留 2-3 天，事后回扫会误判/扫不到；
+        # 录入延迟（如手机晚 20 分钟记一笔）也能按真实开仓时刻判定
+        sb, ab = _signal_state(sym, now, period, 30)
+        rec['sig_snap'] = {'t': now.isoformat(timespec='seconds'),
+                           'same': ('none', 'early', 'signal')[sb],
+                           'any': ('none', 'early', 'signal')[ab]}
+        for k in ('open_price', 'lots'):   # 可选开仓价/手数：填了才参与 2% 风险审计
+            v = _fnum(p.get(k))
+            if v:
+                rec[k] = v
         positions.append(rec)
         _positions_save(positions)
     _POS_DIRTY['positions.json'] = True
@@ -1486,6 +1512,13 @@ async def api_positions_update(request: Request):
         for k in ('entry', 'exit', 'note', 'result', 'pnl', 'period', 'price'):
             if k in p:
                 rec[k] = str(p[k])[:200]
+        for k in ('open_price', 'lots'):   # 数值字段（2% 风险审计用）；清空即移除
+            if k in p:
+                v = _fnum(p.get(k))
+                if v:
+                    rec[k] = v
+                else:
+                    rec.pop(k, None)
         if 'entry' in p:
             rec['exit'] = str(p.get('exit') or _POS_EXIT_MAP.get(rec['entry'], rec['entry']))
         _positions_save(positions)
@@ -1760,6 +1793,535 @@ async def api_backtest(sym: str = 'ALL', months: int = 1):
         return JSONResponse(backtest.run_backtest(sym, months))
     except Exception as e:
         return JSONResponse({'error': f'回测失败：{e}'})
+
+
+# ==================== 复盘系统（2026-10-17，docs/复盘系统设计.md v0.2） ====================
+# 架构：审计=数据 diff（信号流×交易流水），人只做主观确认与决策；纯本机存档 data/reviews.json。
+_REVIEW_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'reviews.json')
+_REVIEW_LOCK = threading.Lock()
+
+
+def _reviews_load():
+    try:
+        with open(_REVIEW_FILE, encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _reviews_save(d):
+    tmp = _REVIEW_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(d, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, _REVIEW_FILE)
+
+
+def _capital_base():
+    """总资金基数（单笔2%审计用）：secret.py 的 CAPITAL，未配置返回 None（审计项自动跳过）。"""
+    try:
+        import secret
+        v = float(getattr(secret, 'CAPITAL', 0) or 0)
+        return v if v > 0 else None
+    except Exception:
+        return None
+
+
+def _bj_naive(iso):
+    """open/close ISO → 北京时间 naive（PC 写 naive 本地；手机写 UTC 带 Z）。"""
+    if not iso:
+        return None
+    s = str(iso).replace('Z', '+00:00')
+    try:
+        d = dt.datetime.fromisoformat(s)
+        if d.tzinfo is not None:
+            d = d.astimezone(dt.timezone(dt.timedelta(hours=8)))
+        return d.replace(tzinfo=None)
+    except Exception:
+        return None
+
+
+def _fnum(v):
+    """安全转 float：None/空串/NaN → None（f!=f 即 NaN）。"""
+    try:
+        f = float(v)
+        return None if f != f else f
+    except (TypeError, ValueError):
+        return None
+
+
+def _t_pub(t):
+    """审计流水 → JSON 安全副本（datetime 转字符串）。"""
+    x = dict(t)
+    x['open_bj'] = t['open_bj'].isoformat(sep=' ')[:16] if t['open_bj'] else None
+    x['close_bj'] = t['close_bj'].isoformat(sep=' ')[:16] if t['close_bj'] else None
+    return x
+
+
+def _all_trades():
+    """已平仓（history）+ 在仓（positions）统一成审计流水：
+    {id,sym,name,period,entry,side,open_bj,close_bj,pnl,result,src}"""
+    out = []
+    for h in _history_load():
+        out.append({'id': str(h.get('id') or ''), 'sym': h.get('symbol'), 'name': h.get('name'),
+                    'period': str(h.get('period') or ''), 'entry': h.get('entry') or '',
+                    'open_bj': _bj_naive(h.get('open_iso')), 'close_bj': _bj_naive(h.get('close_iso')),
+                    'pnl': _fnum(h.get('close_pnl')),
+                    'result': h.get('close_result') or '', 'src': 'history',
+                    'sig_snap': h.get('sig_snap'),
+                    'open_price': _fnum(h.get('open_price')), 'lots': _fnum(h.get('lots'))})
+    with _POS_LOCK:
+        for p in _positions_load():
+            out.append({'id': str(p.get('id') or ''), 'sym': p.get('symbol'), 'name': p.get('name'),
+                        'period': str(p.get('period') or ''), 'entry': p.get('entry') or '',
+                        'open_bj': _bj_naive(p.get('open_iso')), 'close_bj': None, 'pnl': None,
+                        'result': '', 'src': 'open',
+                        'sig_snap': p.get('sig_snap'),
+                        'open_price': _fnum(p.get('open_price')), 'lots': _fnum(p.get('lots'))})
+    return out
+
+
+def _signal_state(sym, when, ref_period, window_min=30):
+    """when 前 window_min 分钟内该品种的信号状态，返回 (本级别最佳, 任意级别最佳)：
+    0=无 1=候选/观察 2=确认/触发。开仓瞬间调用一次存进 sig_snap，审计时直接用。"""
+    if when is None:
+        return 0, 0
+    w0 = when - dt.timedelta(minutes=window_min)
+    same_best = any_best = 0
+    for ev in _pattern_events:
+        if ev.get('symbol') != sym:
+            continue
+        t = _bj_naive(ev.get('trigger_time') or ev.get('time'))
+        if t is None or t > when or t < w0:
+            continue
+        p = str(ev.get('pattern') or '')
+        lvl = 2 if ('CONF' in p or 'TRIG' in p) else 1
+        if lvl > any_best:
+            any_best = lvl
+        if str(ev.get('period') or '') == str(ref_period) and lvl > same_best:
+            same_best = lvl
+    return same_best, any_best
+
+
+def _signal_verdict(sym, period, open_bj, snap=None):
+    """开仓判定：优先用开仓瞬间快照 sig_snap（不受信号流滚动/录入延迟影响），
+    无快照（旧数据）再回扫事件流近 30 分钟。返回 (verdict, sig_t)：2=确认/触发（合规）1=仅候选（提前）0=无（冲动）。"""
+    if snap:
+        same = str(snap.get('same') or 'none')
+        return {'signal': 'signal', 'early': 'early', 'none': 'impulse'}.get(same, 'impulse'), None
+    if open_bj is None:
+        return 'unknown', None
+    w0 = open_bj - dt.timedelta(minutes=30)
+    best, best_t = 0, None
+    for ev in _pattern_events:
+        if ev.get('symbol') != sym or ev.get('period') != period:
+            continue
+        t = _bj_naive(ev.get('trigger_time') or ev.get('time'))
+        if t is None or t > open_bj or t < w0:
+            continue
+        p = str(ev.get('pattern') or '')
+        lvl = 2 if ('CONF' in p or 'TRIG' in p) else 1
+        if lvl > best:
+            best, best_t = lvl, t
+    return {0: 'impulse', 1: 'early', 2: 'signal'}[best], best_t
+
+
+def _audit_day(day):
+    """某交易日（YYYY-MM-DD）审计。三级判定（2026-10-17 定稿）：
+    certain=确定违规（数据可证：持仓越界、单笔风险>2%资金）；suspect=疑似（冲动/提前/加仓/续杯——
+    录入延迟常误判，由用户人工裁决）；info=提示（同赛道）。item.key 稳定，前端逐条处置用。"""
+    d0 = dt.datetime.fromisoformat(day + ' 00:00')
+    if d0.weekday() >= 5:   # 周末不开盘，无审计意义
+        return {'date': day, 'status': 'closed', 'items': [], 'trades': [], 'opens': 0, 'max_concurrent': 0}
+    trades = _all_trades()
+    items = []
+    d1 = d0 + dt.timedelta(days=1)
+    day_open = [t for t in trades if t['open_bj'] and d0 <= t['open_bj'] < d1]
+    seq = 0
+
+    def add(_type, sev, text, t=None):
+        nonlocal seq
+        seq += 1
+        items.append({'key': f'{day}:{_type}:{t["id"] if t else seq}', 'type': _type, 'sev': sev,
+                      'trade': t['id'] if t else None, 'sym': t['sym'] if t else None,
+                      'hour': t['open_bj'].hour if (t and t['open_bj']) else None, 'text': text})
+
+    # 1) 逐笔开仓判定（冲动/提前 → 疑似；有快照按快照判，老数据回扫事件流）
+    for t in day_open:
+        v, sig_t = _signal_verdict(t['sym'], t['period'], t['open_bj'], t.get('sig_snap'))
+        if v == 'impulse':
+            src = '开仓时快照无信号' if t.get('sig_snap') else '开仓前30分钟事件流无信号'
+            add('impulse', 'suspect', f"疑似冲动：{t['name']} {t['period']} {src}（录入延迟会误判，请人工裁决）", t)
+        elif v == 'early':
+            when = f"（信号时刻 {sig_t:%H:%M}）" if sig_t else ''
+            add('early', 'suspect', f"疑似提前：{t['name']} {t['period']} 开仓时信号仅候选未确认{when}", t)
+
+    # 2) 持仓越界（>4 确定违规）+ 单笔风险 >2% 资金（确定违规，需开仓价/手数/止损线齐全才可算）
+    timeline = []
+    for t in trades:
+        if t['open_bj']:
+            timeline.append((t['open_bj'], 1, t))
+        if t['close_bj']:
+            timeline.append((t['close_bj'], -1, t))
+    timeline.sort(key=lambda x: x[0])
+    cur, max_n = {}, 0
+    for tm, delta, t in timeline:
+        if delta == 1:
+            cur[t['id']] = t
+        else:
+            cur.pop(t['id'], None)
+        n = len(cur)
+        if d0 <= tm < d1 and n > max_n:
+            max_n = n
+    if max_n > 4:
+        add('overlimit', 'certain', f'确定违规：当日同时持仓峰值 {max_n} 个（上限 4）——数据可证')
+    cap = _capital_base()
+    if cap:
+        try:
+            fee_map = fees.load()
+        except Exception:
+            fee_map = {}
+        for t in day_open:
+            op, lots = t.get('open_price'), t.get('lots')
+            slp = (_sl_lines.get(t['sym']) or {}).get('price')
+            if not op or not lots or not slp:
+                continue
+            mult = (fee_map.get(t['sym']) or {}).get('multiplier', 10) or 10
+            risk = abs(op - slp) * lots * mult
+            if risk > cap * 0.02:
+                add('risk2pct', 'certain', f"确定违规：{t['name']} 单笔风险 {risk:.0f} 元 ≈ 资金的 {risk / cap * 100:.1f}%（上限 2%）", t)
+    # 当日的同品种加仓（疑似）/同赛道（提示）：只认"这笔开仓前已开且未平"的持仓，
+    # 不能拿当天更晚才开的仓来倒打一耙（2026-10-17 修 bug：曾把未来仓算成"已有持仓"）
+    for t in day_open:
+        others = [x for x in trades if x['id'] != t['id'] and x['open_bj'] and x['open_bj'] <= t['open_bj'] and
+                  (not x['close_bj'] or x['close_bj'] > t['open_bj']) and x['open_bj'] >= d1 - dt.timedelta(days=30)]
+        same_sym = [x for x in others if x['sym'] == t['sym']]
+        if same_sym:
+            add('pyramid', 'suspect', f"疑似变相加仓：{t['name']} 开仓时同品种已有持仓", t)
+        sec = config.sector_of(t['sym'] or '')
+        if sec:
+            ss = sorted({x['name'] for x in others if x['sym'] != t['sym'] and config.sector_of(x['sym'] or '') == sec})
+            if ss:
+                add('sector', 'info', f"同赛道提示：{t['name']} 与 {('、'.join(ss))} 同属{sec}驱动，合计风险注意", t)
+
+    # 3) 换仓续杯：当日平仓 + 同品种 24h 内重开且级别更高（疑似）
+    P_RANK = {'3': 3, '5': 5, '15': 15, '30m': 30, '60': 60}
+    closes_today = [t for t in trades if t['close_bj'] and d0 <= t['close_bj'] < d1]
+    for c in closes_today:
+        for t in trades:
+            if t['sym'] != c['sym'] or t['id'] == c['id'] or not t['open_bj']:
+                continue
+            if c['close_bj'] < t['open_bj'] <= c['close_bj'] + dt.timedelta(hours=24) \
+                    and P_RANK.get(t['period'], 0) > P_RANK.get(c['period'], 0):
+                add('rollover', 'suspect', f"疑似续杯：{c['name']} {c['period']} 平仓后 24h 内重开 {t['period']}——"
+                                           f"是否按独立新单管理（独立止损/仓位/盈亏比）？", t)
+
+    status = 'green' if not items else ('red' if any(i['sev'] == 'certain' for i in items) else 'yellow')
+    # 当日交易明细（绿灯也要让用户看到账——审计不能是黑箱）
+    day_trades = []
+    for t in day_open:
+        v, _ = _signal_verdict(t['sym'], t['period'], t['open_bj'], t.get('sig_snap'))
+        x = _t_pub(t)
+        x['verdict'] = v
+        day_trades.append(x)
+    for t in trades:
+        if t['close_bj'] and d0 <= t['close_bj'] < d1 and not any(x['id'] == t['id'] for x in day_trades):
+            x = _t_pub(t)
+            x['verdict'] = _signal_verdict(t['sym'], t['period'], t['open_bj'], t.get('sig_snap'))[0] if t['open_bj'] else 'unknown'
+            day_trades.append(x)
+    day_trades.sort(key=lambda x: x['open_bj'] or '')
+    return {'date': day, 'status': status, 'items': items, 'trades': day_trades,
+            'opens': len(day_open), 'max_concurrent': max_n}
+
+
+def _save_daily_audit(day=None):
+    """收盘战报后调用：把当天审计快照存档（周复盘聚合用，防信号流滚动丢失判定依据）。"""
+    day = day or dt.date.today().isoformat()
+    try:
+        with _REVIEW_LOCK:
+            d = _reviews_load()
+            d.setdefault('daily', {})[day] = _audit_day(day)
+            d['daily'][day]['saved_at'] = dt.datetime.now().isoformat(timespec='seconds')
+            _reviews_save(d)
+    except Exception as e:
+        print('[复盘] 日审计存档失败:', e)
+
+
+@app.get('/api/review/daily')
+async def api_review_daily(date: str = ''):
+    day = date or dt.date.today().isoformat()
+    stored = _reviews_load().get('daily', {}).get(day, {})
+    audit = stored if stored.get('items') is not None else _audit_day(day)
+    return JSONResponse({'audit': audit, 'read': bool(stored.get('read')),
+                         'dismissed': stored.get('dismissed', []), 'capital': _capital_base()})
+
+
+@app.get('/api/review/streak')
+async def api_review_streak():
+    """连续已阅天数（从今天/昨天往回数，断档即停）。"""
+    d = _reviews_load().get('daily', {})
+    day = dt.date.today()
+    if not d.get(day.isoformat(), {}).get('read'):
+        day -= dt.timedelta(days=1)   # 今天还没点则从昨天起算，保住连续记录
+    streak = 0
+    while d.get(day.isoformat(), {}).get('read'):
+        streak += 1
+        day -= dt.timedelta(days=1)
+    return JSONResponse({'streak': streak})
+
+
+@app.post('/api/review/daily')
+async def api_review_daily_post(request: Request):
+    p = await request.json()
+    day = str(p.get('date') or dt.date.today().isoformat())
+    with _REVIEW_LOCK:
+        d = _reviews_load()
+        rec = d.setdefault('daily', {}).setdefault(day, {})
+        if p.get('action') == 'read':
+            rec['read'] = True
+        elif p.get('action') == 'dismiss' and p.get('idx') is not None:
+            dis = rec.setdefault('dismissed', [])
+            if int(p['idx']) not in dis:
+                dis.append(int(p['idx']))
+        _reviews_save(d)
+    return JSONResponse({'ok': True})
+
+
+def _weekly_report(items, disp, done=None):
+    """合规报告（2026-10-17 二次定稿）：不必等全部处置完——边处置边出阶段性结论，全处置后自动成终版。
+    确认违规=你亲手点的【确实违规】；certain=数据可证的硬违规单列。
+    经验分级参考职业交易纪律常识（报复性交易、连亏停手、单品种连错停做、盈利期松懈）。"""
+    def agg(seq, k):
+        out = {}
+        for i in seq:
+            key = str(i.get(k) or '未知')
+            out[key] = out.get(key, 0) + 1
+        return dict(sorted(out.items(), key=lambda x: -x[1]))
+
+    certain = [i for i in items if i.get('sev') == 'certain']
+    suspect = [i for i in items if i.get('sev') == 'suspect']
+    info = [i for i in items if i.get('sev') == 'info']
+    mis = [i for i in items if disp.get(i['key']) == 'misjudge']
+    vio = [i for i in items if disp.get(i['key']) == 'violation']
+    n = len(items)
+    compliance = round((n - len(vio)) / n * 100) if n else 100
+    vio_syms, vio_hours = agg(vio, 'sym'), agg(vio, 'hour')
+    partial = done is not None and done < n
+
+    advice = []
+    if n and partial:
+        advice.append(f'阶段性结论（已处置 {done}/{n}）——没处置完的项默认暂不计违规，全处置后刷新为终版。')
+    if n:
+        if compliance >= 90:
+            advice.append('合规率 ≥90%：执行已不是瓶颈。职业经验：这个阶段最危险的敌人是松懈——盈利期悄悄省略流程，比亏损期的冲动更隐蔽，复盘流程照旧一步不省。')
+        elif compliance >= 80:
+            advice.append('合规率 80~89%：良好但有漏。看下面的聚合——违规已在品种/时段上集中，只挑最集中的那一个，定一条下周行动项，别贪多。')
+        elif compliance >= 70:
+            advice.append('合规率 70~79%（警戒区）：纪律问题开始成模式。职业共识：连亏之后最容易报复性开仓/变相加仓——到逐笔表里查一查，违规是不是紧跟在亏损单后面。')
+        else:
+            advice.append('合规率 <70%（危险区）：先谈生存再谈盈利。纪律崩塌期最好的交易是不交易——下周主动降半仓或减品种，用小单量把执行信心重新建起来，这是职业风控的标准处理。')
+        # 误判不统计不建议（2026-10-17 定稿）：误判按钮的价值是逼用户回看当笔心态，
+        # 手工做单误判恒有，等接入实盘账户再谈统计
+        sym0 = next(iter(vio_syms), None)
+        if sym0 and vio_syms[sym0] >= 3:
+            advice.append(f'{sym0} 一周被你确认违规 {vio_syms[sym0]} 次：单品种反复出问题，职业惯例是连错 3 次停做该品种一个交易日，让注意力换台再回来。')
+        hr0 = max(vio_hours, key=vio_hours.get) if vio_hours else None
+        if hr0 and hr0 != '未知' and vio_hours[hr0] >= 2:
+            advice.append(f'违规集中在 {hr0} 点时段（{vio_hours[hr0]} 次）：午后犯困/夜盘疲劳是经典的高违规时段，考虑该时段只看不动，或强制降仓。')
+        if certain:
+            advice.append(f'{len(certain)} 条是数据可证的硬违规（并发越界/单笔风险>2%）——这类没有误判空间，直接写进下周行动项。')
+    return {'total': n, 'certain': len(certain), 'suspect': len(suspect), 'info': len(info),
+            'misjudge': len(mis), 'violation': len(vio),
+            'compliance': compliance, 'done': done, 'partial': partial,
+            'vio_syms': vio_syms, 'vio_hours': vio_hours,
+            'suspect_syms': agg(suspect, 'sym'), 'advice': advice}
+
+
+def _weekly_data(week: str = ''):
+    """周复盘聚合（页面接口与 Agent 共用的唯一数据源）。仅周一~周五；不算胜率盈亏。"""
+    try:
+        anchor = dt.date.fromisoformat(week + '-1') if week and len(week) == 7 else dt.date.today()
+    except Exception:
+        anchor = dt.date.today()
+    monday = anchor - dt.timedelta(days=anchor.weekday())
+    reviews = _reviews_load()
+    days, items_all = {}, []
+    for i in range(5):   # 周一~周五，周末不开盘
+        day = (monday + dt.timedelta(days=i)).isoformat()
+        stored = reviews.get('daily', {}).get(day, {})
+        its = stored.get('items')
+        # 旧格式快照（无稳定 key）不直接用，重算补上处置锚点
+        a = stored if its is not None and all('key' in it for it in its) else _audit_day(day)
+        days[day] = {'status': a['status'], 'items': a['items'], 'opens': a['opens']}
+        items_all.extend(a['items'])
+    d0 = dt.datetime.fromisoformat(monday.isoformat() + ' 00:00')
+    d1 = d0 + dt.timedelta(days=5)
+    trades = []
+    for t in _all_trades():
+        if (t['open_bj'] and d0 <= t['open_bj'] < d1) or (t['close_bj'] and d0 <= t['close_bj'] < d1):
+            v, _ = _signal_verdict(t['sym'], t['period'], t['open_bj'], t.get('sig_snap')) if t['open_bj'] else ('unknown', None)
+            t['verdict'] = v
+            trades.append(_t_pub(t))
+    trades.sort(key=lambda t: (t['close_bj'] or t['open_bj'] or ''), reverse=True)   # 序列化后已是字符串，字典序=时间序
+    wk = f'{monday.isocalendar().year}-W{monday.isocalendar().week:02d}'
+    saved = reviews.get('weekly', {}).get(wk, {})
+    disp = saved.get('disp') or {}
+    undone = [it for it in items_all if it['key'] not in disp]
+    done, total = len(items_all) - len(undone), len(items_all)
+    report = _weekly_report(items_all, disp, done=done) if items_all else None
+    return {'week': wk, 'monday': monday.isoformat(), 'days': days,
+            'items': items_all, 'disp': disp, 'done': done, 'total': total,
+            'report': report, 'trades': trades, 'saved': saved}
+
+
+@app.get('/api/review/weekly')
+async def api_review_weekly(week: str = ''):
+    return JSONResponse(_weekly_data(week))
+
+
+@app.post('/api/review/weekly')
+async def api_review_weekly_post(request: Request):
+    p = await request.json()
+    wk = str(p.get('week') or '')
+    if not wk:
+        return JSONResponse({'error': '缺少 week'}, status_code=400)
+    with _REVIEW_LOCK:
+        d = _reviews_load()
+        rec = d.setdefault('weekly', {}).setdefault(wk, {})
+        if p.get('disp') is not None:              # 逐项处置：合并（每次点一个按钮）
+            rec.setdefault('disp', {}).update(p['disp'])
+        if p.get('answers') is not None:
+            rec['answers'] = p.get('answers') or {}
+        if p.get('actions') is not None:
+            rec['actions'] = (p.get('actions') or [])[:2]
+        rec['confirm'] = p.get('confirm') or {}
+        rec['saved_at'] = dt.datetime.now().isoformat(timespec='seconds')
+        _reviews_save(d)
+    return JSONResponse({'ok': True})
+
+
+def _agent_weekly_pack(week: str = ''):
+    """第一个 Agent（周复盘分析师）的数据包：聚合 + 用户问答/行动项/在办假设。
+    脱敏在 agent/tools.redact_trades 收口（时间到小时、无资金总量）。"""
+    d = _weekly_data(week)
+    disp, tdisp = d['disp'], {}
+    for it in d['items']:
+        if it.get('trade'):
+            tdisp.setdefault(it['trade'], {})[it['type']] = disp.get(it['key'])
+    raw_trades = [dict(t, dispositions=tdisp.get(t['id'])) for t in d['trades']]
+    questions_open = [{'text': q.get('text'), 'created': q.get('created')}
+                      for q in _reviews_load().get('questions', []) if q.get('status') == 'open']
+    saved = d['saved']
+    rep = d['report']
+    ans = saved.get('answers') or {}
+    answers = {}
+    for k, lab in (('q1', '该走没走_该进没进'), ('q2', '浮盈破例_加仓_止盈_手痒'), ('q3', '最难忍的冲动_最满意的执行')):
+        if ans.get(k):
+            answers[lab] = ans[k]
+    try:   # 上周教练建议（连续性：这周验证上周说的做没做）
+        prev_mon = dt.date.fromisoformat(d['monday']) - dt.timedelta(days=7)
+        prev_wk = f'{prev_mon.isocalendar().year}-W{prev_mon.isocalendar().week:02d}'
+        prev_agent = (_reviews_load().get('weekly', {}).get(prev_wk, {}).get('agent') or {}).get('text')
+    except Exception:
+        prev_agent = None
+    return {'week': d['week'],
+            'days': {k: {'status': v['status'], 'opens': v['opens']} for k, v in d['days'].items()},
+            'compliance': {k: rep[k] for k in ('compliance', 'total', 'violation', 'certain',
+                                               'misjudge', 'suspect', 'info', 'vio_syms', 'vio_hours')} if rep else None,
+            'trade_flow': agent_tools.redact_trades(raw_trades),
+            'answers': answers or None,
+            'actions': saved.get('actions') or None,
+            'last_week_coach': prev_agent,
+            'questions_open': questions_open or None}
+
+
+@app.post('/api/agent/weekly')
+async def api_agent_weekly(request: Request):
+    """AI 纪律教练：分析一周复盘数据（只读，结果存档 weekly[week].agent，重跑覆盖）。"""
+    if not (agent_llm and agent_weekly and agent_tools):
+        return JSONResponse({'error': 'agent 包未加载，检查 server 启动日志'}, status_code=500)
+    p = await request.json()
+    d = _weekly_data(str(p.get('week') or ''))
+    if not d['trades'] and not d['items']:
+        return JSONResponse({'error': '本周无交易与审计数据，无可分析'}, status_code=400)
+    if not agent_llm.get_key():
+        return JSONResponse({'error': '未配置智谱 API key：bigmodel.cn 免费领取后，'
+                                      '在 secret.py 加一行  ZHIPU_API_KEY = "你的key"（改完需重启）'}, status_code=400)
+    pack = _agent_weekly_pack(d['week'])
+    try:
+        res = await asyncio.get_event_loop().run_in_executor(None, lambda: agent_weekly.run(pack))
+    except Exception as e:
+        return JSONResponse({'error': '分析失败：' + str(e)}, status_code=500)
+    with _REVIEW_LOCK:
+        rev = _reviews_load()
+        rec = rev.setdefault('weekly', {}).setdefault(d['week'], {})
+        rec['agent'] = {'text': res['text'], 'model': res['model'], 'created': res['created']}
+        _reviews_save(rev)
+    print(f"[agent] 周分析完成 {d['week']}（{res['model']}，{len(res['text'])} 字）")
+    return JSONResponse({'ok': True, 'week': d['week'], 'agent': rec['agent']})
+
+
+@app.get('/api/review/questions')
+async def api_review_questions():
+    return JSONResponse({'questions': _reviews_load().get('questions', [])})
+
+
+@app.post('/api/review/questions')
+async def api_review_questions_post(request: Request):
+    p = await request.json()
+    act = p.get('action')
+    with _REVIEW_LOCK:
+        d = _reviews_load()
+        qs = d.setdefault('questions', [])
+        if act == 'add':
+            text = str(p.get('text') or '').strip()
+            if text:
+                qs.insert(0, {'id': str(int(time.time() * 1000)), 'text': text,
+                              'created': dt.date.today().isoformat(), 'status': 'open', 'note': ''})
+        else:
+            qid = str(p.get('id') or '')
+            q = next((x for x in qs if x['id'] == qid), None)
+            if q:
+                if act == 'resolve':
+                    q['status'], q['note'] = 'resolved', str(p.get('note') or '')[:500]
+                elif act == 'reject':
+                    q['status'], q['note'] = 'rejected', str(p.get('note') or '')[:500]
+                elif act == 'reopen':
+                    q['status'], q['note'] = 'open', ''
+                elif act == 'delete':
+                    qs.remove(q)
+        _reviews_save(d)
+    return JSONResponse({'ok': True, 'questions': d.get('questions', [])})
+
+
+@app.get('/api/review/monthly')
+async def api_review_monthly(month: str = ''):
+    m = month or dt.date.today().isoformat()[:7]
+    trades = [t for t in _all_trades() if t['close_bj'] and t['close_bj'].isoformat()[:7] == m]
+    pnls = [t['pnl'] for t in trades if t['pnl'] is not None]
+    wins = [v for v in pnls if v > 0]
+    losses = [v for v in pnls if v < 0]
+    cum, peak, mdd = 0, 0, 0
+    for t in sorted(trades, key=lambda x: x['close_bj']):
+        if t['pnl'] is None:
+            continue
+        cum += t['pnl']
+        peak = max(peak, cum)
+        mdd = max(mdd, peak - cum)
+    extreme = {'best': None, 'worst': None}
+    if pnls:
+        extreme['best'] = _t_pub(max(trades, key=lambda t: t['pnl'] or 0))
+        extreme['worst'] = _t_pub(min(trades, key=lambda t: t['pnl'] if t['pnl'] is not None else 0))
+    d = _reviews_load()
+    return JSONResponse({
+        'month': m, 'trades': len(trades), 'net': sum(pnls),
+        'win_rate': round(len(wins) / len(wins + losses) * 100) if (wins or losses) else None,
+        'pf': (sum(wins) / abs(sum(losses))) if losses else None,
+        'mdd': mdd,
+        'best': extreme['best'], 'worst': extreme['worst'],
+        'violations': sum(1 for k, v in d.get('daily', {}).items() if k[:7] == m and v.get('status') == 'red'),
+        'questions': {'open': sum(1 for q in d.get('questions', []) if q['status'] == 'open'),
+                      'resolved': sum(1 for q in d.get('questions', []) if q['status'] == 'resolved')},
+        'capital': _capital_base()})
 
 
 def _smart_markers(sym, period):

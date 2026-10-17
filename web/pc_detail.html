@@ -630,6 +630,13 @@ function initChart(){
     lastValueVisible:false,priceLineVisible:false,visible:CC.vol});
   vol.priceScale().applyOptions({scaleMargins:{top:.82,bottom:0}});
   applyChartConf();
+  // 进场铁律标签（2026-10-16 用户定稿）：原生水印没有留白参数，改用 DOM 标签（左上角、14号、带呼吸留白）
+  const rule=document.createElement('div');
+  rule.id='inRuleLabel';
+  rule.textContent='进场必须等本级别分型成立';
+  rule.style.cssText='position:absolute;top:14px;left:18px;font-size:14px;font-weight:700;'+
+    'color:rgba(255,255,255,.2);pointer-events:none;letter-spacing:1px;white-space:nowrap;z-index:5;';
+  el.appendChild(rule);
   // 中枢边框：画在独立 canvas 浮层上（脱离图表 series），四条边统一虚线、粗细一致
   zsOverlay=document.createElement('canvas');
   zsOverlay.id='zsOverlay';

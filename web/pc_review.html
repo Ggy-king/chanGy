@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>复盘 · chanGy</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#131722;color:#d1d4dc;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh;}
+header{display:flex;align-items:center;gap:12px;padding:10px 20px;background:#1e222d;border-bottom:1px solid #2a2e39;position:sticky;top:0;z-index:10;}
+header h1{font-size:17px;font-weight:800;}
+header h1 span{color:#b388ff;}
+.mut{color:#787b86;font-size:12px;}
+.sp{flex:1;}
+.btn{border:1px solid #2a2e39;background:#2a2e39;color:#d1d4dc;border-radius:8px;padding:6px 12px;
+  font-size:12.5px;cursor:pointer;text-decoration:none;display:inline-block;}
+.btn:hover{border-color:#b388ff;color:#b388ff;}
+main{max-width:1080px;margin:0 auto;padding:16px 16px 60px;display:flex;flex-direction:column;gap:14px;}
+#view{display:flex;flex-direction:column;gap:14px;}
+/* Tab */
+.tabs{display:flex;gap:8px;}
+.tabs button{flex:none;border:1px solid #2a2e39;background:#161b22;color:#787b86;border-radius:10px;
+  padding:9px 18px;font-size:13.5px;cursor:pointer;font-weight:700;}
+.tabs button.on{background:#2a2340;border-color:#b388ff;color:#b388ff;}
+/* 区块 */
+.sec{background:#161b22;border:1px solid #2a2e39;border-radius:14px;padding:14px 18px;}
+.sec h2{font-size:14px;margin-bottom:12px;letter-spacing:1px;}
+.sec h2 .sub{font-weight:400;font-size:11px;color:#787b86;margin-left:8px;letter-spacing:0;}
+/* 日审计 */
+.verdict{border-radius:12px;padding:14px 18px;font-size:14px;font-weight:700;margin-bottom:12px;}
+.verdict.green{background:rgba(38,166,154,.12);border:1px solid #26a69a;color:#26a69a;}
+.verdict.yellow{background:rgba(240,185,11,.10);border:1px dashed #f0b90b;color:#f0b90b;}
+.verdict.red{background:rgba(239,83,80,.12);border:1px solid #ef5350;color:#ef5350;}
+.verdict.closed{background:#0d1117;border:1px solid #2a2e39;color:#787b86;}
+.aitem{background:#0d1117;border-left:3px solid #f0b90b;border-radius:8px;padding:10px 14px;font-size:13px;
+  line-height:1.8;margin-bottom:8px;display:flex;gap:10px;align-items:flex-start;}
+.aitem.red{border-left-color:#ef5350;}
+.aitem.dim{opacity:.45;border-left-color:#3a3f4d;}
+.aitem .tx{flex:1;}
+.aitem .x{flex:none;font-size:11px;color:#787b86;cursor:pointer;border:1px solid #2a2e39;border-radius:6px;padding:2px 8px;}
+.aitem .x:hover{color:#d1d4dc;}
+/* 表 */
+table{width:100%;border-collapse:collapse;font-size:12.5px;}
+th{color:#787b86;font-weight:600;text-align:left;padding:6px 8px;border-bottom:1px solid #2a2e39;font-size:11px;}
+td{padding:7px 8px;border-bottom:1px solid #22262f;vertical-align:top;}
+tr:hover td{background:#1a1f2b;}
+td.pos{color:#ef5350;font-weight:700;} td.neg{color:#26a69a;font-weight:700;}
+.vtag{padding:1px 8px;border-radius:9px;font-size:10.5px;border:1px solid #3a3f4d;color:#9aa0b0;white-space:nowrap;}
+.vtag.signal{background:rgba(38,166,154,.12);border-color:#26a69a;color:#26a69a;}
+.vtag.early{background:rgba(240,185,11,.12);border-color:#f0b90b;color:#f0b90b;}
+.vtag.impulse{background:rgba(239,83,80,.15);border-color:#ef5350;color:#ef5350;}
+/* 疑问清单 */
+.qitem{background:#0d1117;border:1px solid #2a2e39;border-radius:10px;padding:10px 14px;margin-bottom:8px;font-size:13px;line-height:1.7;}
+.qitem.stale{border-color:rgba(240,185,11,.5);}
+.qitem .qh{display:flex;gap:8px;align-items:center;margin-bottom:4px;flex-wrap:wrap;}
+.qchip{padding:1px 8px;border-radius:9px;font-size:10.5px;border:1px solid #3a3f4d;}
+.qchip.open{border-color:#b388ff;color:#b388ff;}
+.qchip.resolved{border-color:#26a69a;color:#26a69a;}
+.qchip.rejected{border-color:#56606f;color:#56606f;}
+.qitem .note{color:#9aa0b0;font-size:12px;margin-top:4px;}
+.qitem .qb{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;}
+.qitem .qb button{font-size:11px;padding:3px 10px;border-radius:7px;border:1px solid #2a2e39;background:#1e222d;color:#9aa0b0;cursor:pointer;}
+.qitem .qb button:hover{color:#d1d4dc;border-color:#b388ff;}
+.qadd{display:flex;gap:8px;margin-bottom:10px;}
+.qadd input{flex:1;background:#0d1117;border:1px solid #2a2e39;border-radius:8px;color:#d1d4dc;padding:9px 12px;font-size:13px;}
+.qadd button{background:#2a2340;border:1px solid #b388ff;color:#b388ff;border-radius:8px;padding:9px 16px;font-size:13px;cursor:pointer;font-weight:700;}
+/* 周处置 */
+.progwrap{display:flex;align-items:center;gap:10px;margin:6px 0 12px;}
+.dbtns{display:flex;gap:6px;flex:none;}
+.dbtns button{font-size:11px;padding:3px 10px;border-radius:7px;border:1px solid #2a2e39;background:#1e222d;
+  color:#9aa0b0;cursor:pointer;white-space:nowrap;}
+.dbtns button:hover{color:#d1d4dc;border-color:#b388ff;}
+.dbtns button.vio:hover{border-color:#ef5350;}
+.dmark{flex:none;font-size:11px;color:#26a69a;border:1px solid rgba(38,166,154,.4);border-radius:7px;padding:2px 8px;white-space:nowrap;}
+.daybox{background:#0d1117;border:1px solid #2a2e39;border-radius:10px;padding:8px 12px;margin-bottom:6px;}
+.daybox b{font-size:13px;}
+.adv{background:#0d1117;border-left:3px solid #26a69a;border-radius:0 8px 8px 0;padding:8px 12px;
+  font-size:12.5px;line-height:1.8;margin-bottom:6px;color:#c9cdd8;}
+.agenttxt{background:#0d1117;border-left:3px solid #b388ff;border-radius:0 8px 8px 0;
+  padding:10px 14px;font-size:13px;line-height:1.9;}
+.wgroup{border-left:2px solid rgba(179,136,255,.35);background:#131722;border-radius:0 8px 8px 0;
+  padding:4px 10px;margin:5px 0;}
+.wghead{font-size:11.5px;color:rgba(179,136,255,.55);margin-bottom:1px;}
+.witem{display:flex;gap:8px;align-items:flex-start;padding:3px 0;font-size:12.5px;line-height:1.55;}
+.witem .ic{flex:none;font-size:10px;line-height:1.8;opacity:.85;}
+.witem .tx{flex:1;}
+.witem+.witem{border-top:1px dashed #22262f;}
+/* 问答 */
+.qa{background:#0d1117;border:1px solid #2a2e39;border-radius:10px;padding:10px 14px;margin-bottom:8px;}
+.qa .q{font-size:13px;margin-bottom:7px;line-height:1.7;}
+.qa textarea,.qa input{width:100%;background:#131722;border:1px solid #2a2e39;border-radius:8px;color:#d1d4dc;
+  padding:8px 11px;font-size:13px;font-family:inherit;}
+.qa textarea{min-height:52px;resize:vertical;}
+/* 指标 */
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;}
+.mcard{background:#0d1117;border:1px solid #2a2e39;border-radius:10px;padding:10px 13px;}
+.mcard .k{font-size:10.5px;color:#787b86;margin-bottom:4px;}
+.mcard .v{font-size:18px;font-weight:800;}
+.v.pos{color:#ef5350;} .v.neg{color:#26a69a;} .v.dim{color:#9aa0b0;}
+.nav{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+.nav button{border:1px solid #2a2e39;background:#1e222d;color:#d1d4dc;border-radius:8px;padding:4px 12px;cursor:pointer;font-size:13px;}
+.nav b{font-size:14px;}
+.savebar{display:flex;gap:10px;align-items:center;margin-top:12px;}
+.savebar .btn-ok{background:#2a2340;border:1px solid #b388ff;color:#b388ff;border-radius:9px;padding:9px 22px;
+  font-size:13.5px;cursor:pointer;font-weight:700;}
+#toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:#1e222d;border:1px solid #b388ff66;
+  color:#d1d4dc;border-radius:10px;padding:10px 20px;font-size:13px;display:none;z-index:99;}
+#cmodal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:98;}
+#cmodal .cbox{background:#1e222d;border:1px solid rgba(179,136,255,.4);border-radius:12px;padding:18px 22px;
+  max-width:360px;font-size:13.5px;line-height:1.7;}
+#cmodal .cbtns{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;}
+</style>
+<script src="/popup_cards.js"></script>
+</head>
+<body>
+<header>
+  <h1>📖 复盘<span> · 进化自己</span></h1>
+  <span class="mut" id="streak"></span>
+  <span class="sp"></span>
+  <a class="btn" href="/pc/stats">📊 统计</a>
+  <a class="btn" href="/pc/matrix">← 矩阵</a>
+</header>
+<main>
+  <div class="tabs">
+    <button data-t="daily" class="on">🕯 日审计</button>
+    <button data-t="weekly">📝 周复盘</button>
+    <button data-t="monthly">📅 月复盘</button>
+    <button data-t="questions">❓ 体系疑问</button>
+  </div>
+  <div id="view"></div>
+</main>
+<div id="toast"></div>
+<div id="cmodal"><div class="cbox"><div id="cmsg"></div>
+  <div class="cbtns"><button class="btn" onclick="cClose(false)">取消</button>
+  <button class="btn" style="border-color:#b388ff;color:#b388ff;font-weight:700" onclick="cClose(true)">确认</button></div></div></div>
+<script>
+const $=id=>document.getElementById(id);
+const P_LAB={'3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分'};
+const fmtT=t=>t?String(t).replace('T',' ').slice(5,16):'—';
+const posL=v=>{v=v||'';return v.startsWith('二')?('A类'+v):v.startsWith('三')?('B类'+v):v;};
+const V_TXT={signal:['✅信号触发','signal'],early:['🟡提前','early'],impulse:['🔴冲动','impulse'],unknown:['—信号流已滚动','']};
+let TAB='daily', dailyDate=new Date().toISOString().slice(0,10), weekAnchor=new Date().toISOString().slice(0,10), monthCur=new Date().toISOString().slice(0,7);
+function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2200);}
+async function api(url,opt){const r=await fetch(url,opt);return r.json();}
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>switchTab(b.dataset.t));
+function switchTab(t){
+  TAB=t;
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+  if(t==='daily')renderDaily();
+  else if(t==='weekly')renderWeekly();
+  else if(t==='monthly')renderMonthly();
+  else renderQuestions();
+}
+
+/* ==================== 日审计 ==================== */
+async function renderDaily(){
+  const v=$('view');
+  v.innerHTML='<div class="sec"><div class="mut">加载中…</div></div>';
+  const d=await api('/api/review/daily?date='+dailyDate);
+  const a=d.audit||{};
+  const VT={green:['🟢 绿灯日 —— 全部合规，已自动归档','green'],
+            yellow:['🟡 黄灯日 —— 有疑似项待裁决','yellow'],
+            red:['🔴 红灯日 —— 存在确定违规','red'],
+            closed:['⚫ 休市日 —— 周末不开盘，无审计','closed']};
+  const [txt,cls]=VT[a.status]||VT.green;
+  const dis=d.dismissed||[];
+  let items=(a.items||[]).map((it,i)=>
+    '<div class="aitem '+(it.sev==='certain'?'red':'')+(dis.includes(i)?' dim':'')+'">'+
+    '<div class="tx">'+it.text+'</div>'+
+    (dis.includes(i)?'<div class="x" style="cursor:default;">已标误报</div>'
+      :'<div class="x" onclick="dismissItem('+i+')">误报</div>')+'</div>').join('')
+    ||'<div class="mut" style="padding:6px 2px;">（无异常项）</div>';
+  const VT2={signal:['✅信号触发','signal'],early:['🟡提前','early'],impulse:['🔴冲动','impulse'],unknown:['—未判定','']};
+  const trows=(a.trades||[]).map(t=>{
+    const [vt,vc]=VT2[t.verdict]||VT2.unknown;
+    return '<tr><td>'+fmtT(t.open_bj)+'</td><td>'+(t.name||'')+'</td><td>'+(P_LAB[t.period]||t.period)+
+      '</td><td>'+posL(t.entry)+'</td><td>'+(t.close_bj?('平仓 '+fmtT(t.close_bj)):'<span class="mut">持仓中</span>')+
+      '</td><td><span class="vtag '+vc+'">'+vt+'</span></td>'+
+      '<td class="'+(t.pnl==null?'':t.pnl>=0?'pos':'neg')+'">'+(t.pnl==null?'—':(t.pnl>=0?'+':'')+t.pnl)+'</td></tr>';
+  }).join('')||'<tr><td colspan="7" class="mut">当日无开仓/平仓记录（周末或未操作）</td></tr>';
+  v.innerHTML=`<div class="sec">
+    <div class="nav"><button onclick="dailyShift(-1)">‹</button><b>${dailyDate}</b><button onclick="dailyShift(1)">›</button>
+      <span class="mut">开仓 ${a.opens??'—'} 笔 · 峰值并发 ${a.max_concurrent??'—'} 个</span>
+      <span class="sp"></span>
+      <button class="btn" id="readBtn" ${d.read?'disabled':''} onclick="markRead()">${d.read?'✔ 已阅':'点这里：已阅'}</button>
+    </div>
+    <div class="verdict ${cls}">${txt}</div>
+    ${items}
+    <h2 style="font-size:12.5px;margin:14px 0 8px;">当日交易明细<span class="sub">——绿灯也要把账摊开给你看，审计不是黑箱</span></h2>
+    <table><thead><tr><th>开仓</th><th>品种</th><th>级别</th><th>类型</th><th>状态</th><th>触发判定</th><th>盈亏</th></tr></thead><tbody>${trows}</tbody></table>
+    ${d.capital?'':'<div class="mut" style="margin-top:8px;">⚠ secret.py 未配置 CAPITAL，"单笔风险≤2%"审计已跳过。</div>'}
+  </div>`;
+}
+function dailyShift(n){
+  const d=new Date(dailyDate);d.setDate(d.getDate()+n);
+  dailyDate=d.toISOString().slice(0,10);renderDaily();
+}
+async function markRead(){
+  await api('/api/review/daily',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({date:dailyDate,action:'read'})});
+  loadStreak();renderDaily();
+}
+async function dismissItem(i){
+  await api('/api/review/daily',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({date:dailyDate,action:'dismiss',idx:i})});
+  renderDaily();
+}
+async function loadStreak(){
+  try{const s=await api('/api/review/streak');
+    $('streak').textContent=s.streak>0?('🔥 连续已阅 '+s.streak+' 天'):'';
+  }catch(e){}
+}
+
+/* ==================== 周复盘 ==================== */
+let weeklyData=null;
+const SEV={certain:['🔴','确定违规'],suspect:['🟡','疑似不合规'],info:['ℹ️','提示']};
+const DISP_LAB={misjudge:'系统误判',violation:'确实违规',noted:'知悉'};
+async function renderWeekly(){
+  const v=$('view');
+  v.innerHTML='<div class="sec"><div class="mut">生成本周审计草稿中…</div></div>';
+  const [w,qd]=await Promise.all([api('/api/review/weekly?week='+weekAnchor),
+                                  api('/api/review/questions').catch(()=>({questions:[]}))]);
+  weeklyData=w;
+  const saved=w.saved||{};
+  const ans=saved.answers||{};
+  const disp=w.disp||{};
+  const pct=w.total?Math.round(w.done/w.total*100):100;
+  const progBar=`<div class="progwrap">
+    <div style="flex:1;height:8px;background:#0d1117;border-radius:5px;overflow:hidden;">
+      <div style="width:${pct}%;height:100%;background:${pct>=100?'#26a69a':'#b388ff'};"></div></div>
+    <span class="mut" style="white-space:nowrap;">已处置 ${w.done}/${w.total}</span></div>`;
+  let repHtml='';
+  if(w.report){
+    const r=w.report;
+    const agg=o=>Object.keys(o).length?Object.keys(o).map(k=>k+'×'+o[k]).join('、'):'—';
+    const adv=(r.advice||[]).map(a=>`<div class="adv">${a}</div>`).join('');
+    repHtml=`<div class="sec" style="border-color:rgba(38,166,154,.4);">
+    <h2>🏆 本周合规报告<span class="sub">——随处置实时更新，全部处置完成终版</span></h2>
+    <div class="metrics">
+      <div class="mcard"><div class="k">合规率</div><div class="v ${r.compliance>=90?'pos':r.compliance>=70?'dim':'neg'}">${r.compliance}%</div></div>
+      <div class="mcard"><div class="k">审计项</div><div class="v dim">${r.total}</div></div>
+      <div class="mcard"><div class="k">确认违规</div><div class="v ${r.violation?'neg':'dim'}">${r.violation}</div></div>
+      <div class="mcard"><div class="k">数据可证硬违规</div><div class="v ${r.certain?'neg':'dim'}">${r.certain}</div></div>
+    </div>
+    ${adv?`<div style="margin-top:10px;">${adv}</div>`:''}
+    <div class="mut" style="margin-top:10px;line-height:2;">
+      合规率 =（审计项 − 你确认违规的）÷ 审计项；未处置的暂不计违规。<br>
+      违规品种聚合：${agg(r.vio_syms)}　违规时段聚合：${agg(r.vio_hours)}</div></div>`;
+  }
+  const itemHtml=it=>{
+    const [ico]=SEV[it.sev]||['·'];
+    const dv=disp[it.key];
+    const btns=dv?`<span class="dmark">${DISP_LAB[dv]||dv}</span>`
+      :`<span class="dbtns">${(it.sev==='info'?['noted']:['misjudge','violation'])
+        .map(o=>`<button class="${o==='violation'?'vio':''}" onclick="dispose('${it.key}','${o}')">${DISP_LAB[o]}</button>`).join('')}</span>`;
+    return `<div class="witem"><span class="ic">${ico}</span><span class="tx">${it.text}</span>${btns}</div>`;
+  };
+  const tmap={};
+  (w.trades||[]).forEach(t=>{tmap[t.id]=t;});
+  const dayBoxes=Object.keys(w.days).sort().map(d=>{
+    const x=w.days[d];
+    const ic={green:'🟢 合规',yellow:'🟡 疑似不合规',red:'🔴 确定违规',closed:'⚫ 休市'}[x.status]||x.status;
+    // 按笔分组：同笔开仓的所有审计项挂一起，组按开仓时间排序；无归属项（如持仓越界）单列
+    const groups=[], dayLevel=[];
+    (x.items||[]).forEach(it=>{
+      const t=it.trade&&tmap[it.trade];
+      if(t){let g=groups.find(g=>g.t.id===it.trade);if(!g){g={t,items:[]};groups.push(g);}g.items.push(it);}
+      else dayLevel.push(it);
+    });
+    groups.sort((a,b)=>String(a.t.open_bj||'').localeCompare(String(b.t.open_bj||'')));
+    const gHtml=groups.map((g,i)=>{
+      const t=g.t, ot=fmtT(t.open_bj), ct=t.close_bj?fmtT(t.close_bj):null;
+      return `<div class="wgroup"><div class="wghead">第${i+1}笔 · ${t.name||t.sym||''} ${P_LAB[t.period]||t.period||''} · ${ot.slice(6)} 开仓${ct?(' → '+ct.slice(6)+' 平仓'):'（持仓中）'}</div>${g.items.map(itemHtml).join('')}</div>`;
+    }).join('');
+    const dHtml=dayLevel.map(itemHtml).join('');
+    const body=gHtml+dHtml||'<div class="mut" style="padding:2px 2px 4px;">无异常</div>';
+    return `<div class="daybox"><b>${d.slice(5)}　${ic}</b><span class="mut" style="margin-left:8px;">${x.opens} 笔开仓</span>
+      <div style="margin-top:4px;">${body}</div></div>`;
+  }).join('')||'<div class="mut">本周无审计数据</div>';
+  const V=V_TXT;
+  const opens=(qd.questions||[]).filter(q=>q.status==='open');
+  const nowMs=Date.now();
+  const hypRows=opens.map(q=>{
+    const days=Math.max(0,Math.floor((nowMs-new Date(q.created+'T00:00:00'))/86400000));
+    return `<div class="qitem ${days>28?'stale':''}" style="margin-bottom:6px;">
+      <div class="qh"><span class="qchip open">在办 ${days} 天</span>${days>28?'<span class="qchip" style="border-color:#f0b90b;color:#f0b90b;">快到期</span>':''}</div>${q.text}</div>`;
+  }).join('')||'<div class="mut" style="margin-bottom:6px;">无在办假设——想提出一个吗？</div>';
+  // 联动：该笔的冲动/提前项你已裁决 → 逐笔表的判定标签跟着变
+  const vmap={};
+  (w.items||[]).forEach(it=>{if((it.type==='impulse'||it.type==='early')&&it.trade)vmap[it.trade]=disp[it.key];});
+  const tradeRows=[...(w.trades||[])].sort((a,b)=>String(a.close_bj||a.open_bj||'').localeCompare(String(b.close_bj||b.open_bj||''))).map(t=>{
+    const [txt,cls]=V[t.verdict]||V.unknown;
+    const dv=vmap[t.id];
+    const [tx,cl]=dv==='misjudge'?['🟢系统误判','signal']:dv==='violation'?['🔴违规','impulse']:[txt,cls];
+    return '<tr><td>'+fmtT(t.close_bj||t.open_bj)+'</td><td>'+(t.name||'')+'</td><td>'+(P_LAB[t.period]||t.period)+
+      '</td><td>'+posL(t.entry)+'</td><td><span class="vtag '+cl+'">'+tx+'</span></td>'+
+      '<td class="'+(t.pnl==null?'':t.pnl>=0?'pos':'neg')+'">'+(t.pnl==null?'—':(t.pnl>=0?'+':'')+t.pnl)+'</td></tr>';
+  }).join('')||'<tr><td colspan="6" class="mut">本周无交易记录</td></tr>';
+  const ag=saved.agent;
+  const agentHtml=`<div class="sec" style="border-color:rgba(179,136,255,.35);">
+    <h2>🤖 AI 纪律教练<span class="sub">——只评过程与心态，不荐单不预测；数据已脱敏（时间到小时、无资金量）</span></h2>
+    ${ag?`<div class="agenttxt">${ag.text.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>
+      <div class="mut" style="margin-top:6px;">${ag.model} · 生成于 ${ag.created} · 重跑会覆盖</div>`
+      :'<div class="mut" style="margin-bottom:8px;">还没有分析记录。先把上面的审计项裁决完、问答写完——喂得越全，它说得越准。</div>'}
+    <div style="margin-top:8px;"><button class="btn" id="agentBtn" onclick="runAgent()">${ag?'🔄 重新分析':'✨ 生成本周 AI 分析'}</button>
+      <span class="mut" style="margin-left:8px;">约 10-30 秒 · 首次使用需在 secret.py 配置 ZHIPU_API_KEY</span></div>
+  </div>`;
+  v.innerHTML=`${repHtml}${agentHtml}
+  <div class="sec">
+    <h2>📝 周复盘 <span class="sub">${w.week}（${w.monday} 起）——先逐条裁决，再回答问题；只问过程，不问盈亏</span></h2>
+    <div class="nav"><button onclick="weekShift(-1)">‹ 上周</button><button onclick="weekShift(1)">下周 ›</button></div>
+    <h2 style="font-size:12.5px;">审计项处置<span class="sub">——每一项都要表态；裁决即时保存</span></h2>
+    ${progBar}
+    ${dayBoxes}
+    <h2 style="font-size:12.5px;margin-top:14px;">本周交易逐笔判定<span class="sub">——按时间正序，周一在顶</span></h2>
+    <table><thead><tr><th>时间</th><th>品种</th><th>级别</th><th>类型</th><th>触发判定</th><th>盈亏</th></tr></thead><tbody>${tradeRows}</tbody></table>
+    <div class="mut" style="margin-top:6px;line-height:1.7;">判定口径：开仓瞬间存了信号快照（sig_snap），按快照判——本级别确认/触发=✅，仅候选=🟡提前，无=🟡疑似冲动；
+    旧数据无快照回扫近 30 分钟事件流，扫不到显示"—信号流已滚动"。冲动/提前默认判"疑似"——录入延迟常误判，由你裁决。</div>
+  </div>
+  <div class="sec">
+    <h2>🧪 假设回路<span class="sub">——执行回路管守规矩，这里管换认知；每周最多立项 1 个</span></h2>
+    ${hypRows}
+    <div class="qadd"><input id="hypNew" placeholder="每周最多 1 个，写成可证伪的“如果…那么…”"><button onclick="hypAdd()">立项</button></div>
+    <div class="mut" style="line-height:1.8;">提不出来时的三个引子：①这周哪笔交易的结果让你意外？②有没有重复做了、但说不清为什么的动作？③对笔/中枢的理解，哪一条你想验证？——判据和到期时间记得到"体系疑问"Tab 补上。</div>
+    <div style="margin-top:8px;"><a class="btn" onclick="switchTab('questions')">📋 全部假设与历史判决 →</a></div>
+  </div>
+  <div class="sec">
+    <h2>🧠 人工确认<span class="sub">——机器答不了的，诚实回答；没有就写"无"</span></h2>
+    <div class="qa"><div class="q">1. 本周有没有"该走没走、该进没进"？具体是哪笔？</div>
+      <textarea id="qa1">${(ans.q1||'').replace(/</g,'&lt;')}</textarea></div>
+    <div class="qa"><div class="q">2. 有没有因为浮盈而破例：加仓、提前止盈、拿不住、手痒多做？</div>
+      <textarea id="qa2">${(ans.q2||'').replace(/</g,'&lt;')}</textarea></div>
+    <div class="qa"><div class="q">3. 本周最难忍的一次冲动是什么？最满意的一个执行是什么？</div>
+      <textarea id="qa3">${(ans.q3||'').replace(/</g,'&lt;')}</textarea></div>
+    <div class="qa"><div class="q">4. 下周行动项（最多 2 条，要可执行——下周复盘第一件事就是检查它们）</div>
+      <input id="ac0" value="${(saved.actions?.[0]||'').replace(/"/g,'&quot;')}" placeholder="行动项 1">
+      <div style="height:6px;"></div>
+      <input id="ac1" value="${(saved.actions?.[1]||'').replace(/"/g,'&quot;')}" placeholder="行动项 2"></div>
+    <div class="savebar"><button class="btn-ok" onclick="saveWeekly()">存档（存后不可改，只能追加补充）</button>
+      <span class="mut">${saved.saved_at?('上次存档 '+saved.saved_at.slice(5,16)):''}</span></div>
+  </div>`;
+}
+async function dispose(key,val){
+  if(!weeklyData)return;
+  const y=window.scrollY;   // 记住位置，重渲染后还原——页面不能跳动
+  await api('/api/review/weekly',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({week:weeklyData.week,disp:{[key]:val}})});
+  toast(DISP_LAB[val]?'已裁决：'+DISP_LAB[val]:'已记录');
+  await renderWeekly();   // 全部处置完，服务端自动带合规报告回来
+  window.scrollTo(0,y);
+}
+function weekShift(n){
+  const d=new Date(weekAnchor);d.setDate(d.getDate()+7*n);
+  weekAnchor=d.toISOString().slice(0,10);renderWeekly();
+}
+let _cOk=null;
+function askConfirm(msg,ok){ $('cmsg').textContent=msg; _cOk=ok; $('cmodal').style.display='flex'; }
+function cClose(v){ $('cmodal').style.display='none'; const f=_cOk; _cOk=null; if(v&&f)f(); }
+async function saveWeekly(){
+  const w=weeklyData;if(!w)return;
+  const y=window.scrollY;   // 存档后原位不动
+  await api('/api/review/weekly',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({week:w.week,answers:{q1:$('qa1').value,q2:$('qa2').value,q3:$('qa3').value},
+      actions:[$('ac0').value,$('ac1').value].filter(x=>x.trim())})});
+  toast('已存档'); await renderWeekly(); window.scrollTo(0,y);
+}
+async function hypAdd(){
+  const t=($('hypNew')||{}).value?.trim?.();
+  if(!t)return;
+  const y=window.scrollY;
+  await api('/api/review/questions',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'add',text:t})});
+  toast('已立项——记得到"体系疑问"Tab 补判据和到期时间');
+  await renderWeekly(); window.scrollTo(0,y);
+}
+async function runAgent(){
+  const b=$('agentBtn'); if(!b||b.disabled)return;
+  const doRun=async()=>{
+    const y=window.scrollY;
+    b.disabled=true; b.textContent='分析中…（约 10-60 秒）';
+    try{
+      const r=await api('/api/agent/weekly',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({week:weeklyData?weeklyData.week:''})});
+      if(r.error)alert(r.error); else toast('AI 分析完成');
+    }catch(e){ alert('请求失败: '+e); }
+    await renderWeekly(); window.scrollTo(0,y);
+  };
+  if(weeklyData&&weeklyData.saved&&weeklyData.saved.agent) askConfirm('重新分析会覆盖上一次的 AI 建议，继续？',doRun);
+  else doRun();
+}
+
+/* ==================== 月复盘 ==================== */
+let moneyShown=false;   // 盈亏默认打码（2026-10-17 定稿）：复盘期不盯钱防手痒，点眼睛临时看，每次进页面重新隐藏
+function toggleMoney(){ moneyShown=!moneyShown; renderMonthly(); }
+async function renderMonthly(){
+  const v=$('view');
+  v.innerHTML='<div class="sec"><div class="mut">生成中…</div></div>';
+  const m=await api('/api/review/monthly?month='+monthCur);
+  const card=(k,val,cls)=>'<div class="mcard"><div class="k">'+k+'</div><div class="v '+(cls||'')+'">'+val+'</div></div>';
+  const money=(v,cls)=>moneyShown?((v>=0?'+':'')+Math.round(v)):'';   // 打码时连正负颜色一起藏
+  const ex=(t,lbl)=>t?('<div class="qa"><div class="q">'+lbl+'：<b>'+(t.name||'')+'</b> '+(P_LAB[t.period]||t.period)+
+    ' '+posL(t.entry)+' · '+(moneyShown?((t.pnl>=0?'+':'')+(t.pnl??'—')):'✱✱✱✱')+' 元 <span class="mut">'+fmtT(t.close_bj||t.open_bj)+'</span></div>'+
+    '<textarea placeholder="它教会了我什么？（一句话）" id="ex'+lbl+'"></textarea></div>'):'';
+  v.innerHTML=`<div class="sec">
+    <div class="nav"><button onclick="monthShift(-1)">‹</button><b>${m.month}</b><button onclick="monthShift(1)">›</button>
+      <span class="mut">月初自动生成，判决必须过样本门槛</span>
+      <span style="flex:1;"></span>
+      <button class="btn" onclick="toggleMoney()">${moneyShown?'👁 盈亏已显示':'🙈 盈亏已打码'}</button></div>
+    <div class="metrics">
+      ${card('平仓笔数',m.trades)}
+      ${card('净盈亏',moneyShown?money(m.net):'✱✱✱✱',moneyShown?(m.net>=0?'pos':'neg'):'')}
+      ${card('胜率',m.win_rate===null?'—':m.win_rate+'%')}
+      ${card('盈亏因子',m.pf===null?'—':m.pf.toFixed(1),m.pf&&m.pf>=1.5?'pos':'')}
+      ${card('最大回撤','-'+Math.round(m.mdd),'neg')}
+      ${card('红灯违规日',m.violations,m.violations?'neg':'')}
+    </div>
+  </div>
+  <div class="sec"><h2>⚖ 体系判决<span class="sub">——判决必须过样本门槛（≥10 笔），单月运气不算数</span></h2>
+    <div class="mut" style="line-height:1.9;">完整"形态×级别矩阵"在 <a class="btn" href="/pc/stats" style="padding:2px 9px;">📊 统计页</a> 查看并对照样本量。
+    本月红灯违规日 ${m.violations} 个${m.violations?'——违规率进月度曲线（第二期上线趋势图）':''}。
+    体系疑问：在办 ${m.questions.open} 个 · 已解决 ${m.questions.resolved} 个（见"体系疑问"Tab）。</div>
+  </div>
+  <div class="sec"><h2>🔍 极值复盘<span class="sub">——自动挑出本月最大盈/亏两笔，各写一句"教会了我什么"（金额默认打码）</span></h2>
+    ${ex(m.best,'最大盈利')}
+    ${ex(m.worst,'最大亏损')}
+  </div>`;
+}
+function monthShift(n){
+  const d=new Date(monthCur+'-01');d.setMonth(d.getMonth()+n);
+  monthCur=d.toISOString().slice(0,7);renderMonthly();
+}
+
+/* ==================== 体系疑问清单 ==================== */
+async function renderQuestions(){
+  const v=$('view');
+  v.innerHTML='<div class="sec"><div class="mut">加载中…</div></div>';
+  const d=await api('/api/review/questions');
+  const now=Date.now();
+  const rows=(d.questions||[]).map(q=>{
+    const stale=q.status==='open'&&(now-new Date(q.created+'T00:00:00'))>28*86400000;
+    return `<div class="qitem ${stale?'stale':''}">
+      <div class="qh"><span class="qchip ${q.status}">${{open:'待研究',resolved:'已解决',rejected:'已否决'}[q.status]}</span>
+        <span class="mut">${q.created}${stale?' · ⚠ 挂起超 4 周——排期研究或删掉':''}</span></div>
+      <div>${q.text.replace(/</g,'&lt;')}</div>
+      ${q.note?'<div class="note">结论：'+q.note.replace(/</g,'&lt;')+'</div>':''}
+      <div class="qb">
+        ${q.status==='open'?`<button onclick="qAct('${q.id}','resolve')">标解决（填结论）</button>
+          <button onclick="qAct('${q.id}','reject')">否决（附原因）</button>`:''}
+        ${q.status!=='open'?`<button onclick="qAct('${q.id}','reopen')">重开</button>`:''}
+        <button onclick="qDel('${q.id}')">删除</button>
+      </div></div>`;
+  }).join('')||'<div class="mut">清单是空的——每周复盘时强制问自己一次："体系有没有让我不舒服的地方？"</div>';
+  v.innerHTML=`<div class="sec">
+    <h2>❓ 体系疑问清单<span class="sub">——把"随手想到的灵感"变成有生命周期的资产；挂起超 4 周自动标黄</span></h2>
+    <div class="qadd"><input id="qText" placeholder="例：能否在更小级别提前确认本级别底分型？——想到就记，别让它丢"
+      onkeydown="if(event.key==='Enter')qAdd()"><button onclick="qAdd()">记下</button></div>
+    ${rows}
+  </div>`;
+}
+async function qAdd(){
+  const t=$('qText').value.trim();if(!t)return;
+  await api('/api/review/questions',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'add',text:t})});
+  renderQuestions();
+}
+async function qAct(id,act){
+  const note=act==='resolve'||act==='reject'?(prompt(act==='resolve'?'结论（一句话）：':'否决原因：')||''):'';
+  await api('/api/review/questions',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:act,id:id,note:note})});
+  renderQuestions();
+}
+async function qDel(id){
+  if(!confirm('删除这条疑问？'))return;
+  await api('/api/review/questions',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'delete',id:id})});
+  renderQuestions();
+}
+
+loadStreak();renderDaily();
+</script>
+</body>
+</html>

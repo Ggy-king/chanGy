@@ -271,6 +271,8 @@ select{appearance:none;-webkit-appearance:none;
     <div class="pf-row"><label>离场</label><select id="pfExit">
       <option value="二卖">A类二卖点</option><option value="二买">A类二买点</option>
       <option value="三卖">B类三卖点</option><option value="三买">B类三买点</option></select></div>
+    <div class="pf-row"><label>开仓价</label><input id="pfPrice" inputmode="decimal" placeholder="选填，填了参与2%风险审计" /></div>
+    <div class="pf-row"><label>手数</label><input id="pfLots" inputmode="numeric" placeholder="选填，默认1" /></div>
     <div class="pf-row"><label>备注</label><input id="pfNote" placeholder="选填" /></div>
     <div class="pf-row" style="gap:8px;justify-content:flex-end">
       <button class="btn" onclick="posFormClose()">取消</button>
@@ -853,6 +855,8 @@ function posFormOpen(editId){
     $('pfEntry').value=rec.entry;
     $('pfExit').value=rec.exit;
     $('pfNote').value=rec.note||'';
+    $('pfPrice').value=rec.open_price||'';
+    $('pfLots').value=rec.lots||'';
     sel.disabled=true;                    // 已有持仓不换品种
     $('pfSubmit').textContent='保存修改';
   }else{
@@ -868,6 +872,7 @@ function posFormOpen(editId){
     $('pfEntry').value='二买';
     pfDeriveExit();
     $('pfNote').value='';
+    $('pfPrice').value=''; $('pfLots').value='';
   }
   f.style.display='flex';
 }
@@ -876,6 +881,11 @@ function pfDeriveExit(){ $('pfExit').value=POS_EXIT[$('pfEntry').value]||$('pfEn
 async function posSubmit(){
   const body={symbol:$('pfSymbol').value, period:$('pfPeriod').value,
               entry:$('pfEntry').value, exit:$('pfExit').value, note:$('pfNote').value.trim()};
+  const price=parseFloat($('pfPrice').value), lots=parseInt($('pfLots').value,10);
+  if($('pfPrice').value.trim() && (!isFinite(price)||price<=0)){ alert('开仓价格式不对'); return; }
+  if($('pfLots').value.trim() && (!Number.isInteger(lots)||lots<1)){ alert('手数须为正整数'); return; }
+  if(isFinite(price)&&price>0) body.open_price=price;
+  if(Number.isInteger(lots)&&lots>=1) body.lots=lots;
   if(!posEditId){   // 新增：记录进场时的活跃结构指纹 → 持仓卡"回调笔延伸中"判定用（2026-10-13）
     const c0=CELLS[body.symbol+'|'+body.period];
     if(c0&&c0.fp&&c0.side===((body.entry||'').includes('买')?'long':'short')) body.entry_fp=c0.fp;

@@ -16,7 +16,7 @@ PERIOD_BIG = "60"     # 更大级别
 CONTRACTS = [
     {"symbol": "jd2612", "name": "鸡蛋",   "exchange": "DCE"},
     {"symbol": "UR2701", "name": "尿素",   "exchange": "CZCE"},
-    {"symbol": "MA2611", "name": "甲醇",   "exchange": "CZCE"},
+    {"symbol": "MA2701", "name": "甲醇",   "exchange": "CZCE"},
     {"symbol": "jm2701", "name": "焦煤",   "exchange": "DCE"},
     {"symbol": "CF2701", "name": "棉花",   "exchange": "CZCE"},
     {"symbol": "SA2701", "name": "纯碱",   "exchange": "CZCE"},
@@ -35,6 +35,32 @@ CONTRACTS = [
 
 # 方便按代码索引
 CONTRACT_MAP = {c["symbol"]: c for c in CONTRACTS}
+
+# ===== 赛道映射（复盘系统"同赛道持仓软提示"用，2026-10-17）=====
+# 只做软提示不判违规：当前持仓中同赛道品种重复时，日审计给一句黄灯提示。
+# key=品种字母前缀（合约代码去掉数字，换月自动跟随，如 jd2612/jd2701 都命中 'jd'）。
+# 未来资金到位新增品种时在这里补赛道（贵金属/油脂油料/新能源等空槽已预留）。
+SECTOR_MAP = {
+    # —— 当前 16 品种 ——
+    'jd': '畜产', 'lh': '畜产',
+    'cf': '软商品', 'sr': '软商品',
+    'ap': '果品', 'cj': '果品',
+    'rb': '黑色建材', 'jm': '煤焦',
+    'sa': '地产化工', 'v': '地产化工',
+    'ma': '煤化工', 'ur': '煤化工',
+    'pg': '原油链',
+    'ru': '橡胶', 'sp': '纸浆', 'ni': '有色',
+    # —— 未来赛道空槽（资金到位后加品种时同步补这里）——
+    # 'au': '贵金属', 'ag': '贵金属',
+    # 'm': '油脂油料', 'p': '油脂油料',
+    # 'lc': '新能源金属', 'si': '新能源金属',
+    # 'sc': '原油（直连，替代液化气）',
+}
+
+def sector_of(symbol):
+    """合约代码 → 赛道名（按字母前缀匹配）；未知返回 None。"""
+    pre = ''.join(ch for ch in str(symbol) if ch.isalpha()).lower()
+    return SECTOR_MAP.get(pre)
 
 # ===== 背驰-V反 形态预警系统（docs/背驰反转形态预警系统设计.md）=====
 # 监视级别（17品种×5级别=85序列）；扫描节奏按级别分钟数对齐挂钟时间（见 server.pattern_loop）
