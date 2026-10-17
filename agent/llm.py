@@ -1,4 +1,4 @@
-"""模型接入层（Agent 唯一的联网出口）。当前：智谱 GLM-4-Flash（免费额度，国内直连）。
+"""模型接入层（Agent 唯一的联网出口）。当前：智谱 GLM-4.7-Flash（免费旗舰，国内直连）。
 换供应商（DeepSeek / 本地 Ollama）只改这个文件，上层模块不动。"""
 import requests
 
@@ -23,15 +23,6 @@ def get_model():
         return getattr(secret, 'ZHIPU_MODEL', '') or MODEL
     except Exception:
         return MODEL
-
-
-def get_key():
-    """从 secret.py 读 ZHIPU_API_KEY，未配置返回 None。"""
-    try:
-        import secret
-        return getattr(secret, 'ZHIPU_API_KEY', '') or None
-    except Exception:
-        return None
 
 
 def chat(system, user):
