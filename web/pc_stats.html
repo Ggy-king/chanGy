@@ -88,6 +88,17 @@ td.pos{color:#ef5350;font-weight:700;} td.neg{color:#26a69a;font-weight:700;}
   </div>
 
   <div class="sec">
+    <h2>🎯 形态 × 级别 交叉矩阵<span class="sub">——验证台："小级别B类差、大级别B类好；A类反过来"——让账本说话</span></h2>
+    <div id="matWrap"></div>
+    <div class="mut" style="margin-top:9px;line-height:1.7;">样本规则：<b>灰格（&lt;3笔）= 不许看，看了也不许信</b>；3~9 笔 = 参考格局；≥10 笔 = 有判决权（金边）。行=级别，列=进场形态。每格：笔数 · 胜率（有盈亏的）· 净盈亏。</div>
+  </div>
+
+  <div class="sec">
+    <h2>📅 时间维度<span class="sub">——按月分桶；月份本身就是"体系在不同市场环境下的复读机"</span></h2>
+    <div id="timeWrap"></div>
+  </div>
+
+  <div class="sec">
     <h2>📈 图表</h2>
     <div class="charts">
       <div class="chartbox"><div class="t">累计盈亏（按平仓时间）</div><canvas id="cCurve" height="180"></canvas></div>
@@ -146,11 +157,13 @@ Number.prototype.toFixed1=function(){return this.toFixed(1);};
     $('warnbar').textContent='还没有平仓记录——第一笔简报产生后这里开始生长。';
     return;
   }
-  /* 样本量 */
-  if(N<10){
-    $('warnbar').style.display='block';
-    $('warnbar').textContent='⚠ 样本量不足（'+N+'/10）：以下所有结论仅供参考，先攒样本，别急着给体系下判决。';
-  }
+  /* 样本量分级（2026-10-16 用户定稿：阶梯递增，各阶段不同判决资格） */
+  const stage = N<10  ? {t:'⚠ 样本量不足（'+N+'/10）：以下所有结论仅供参考，先攒样本，别急着给体系下判决。'}
+              : N<30  ? {t:'📐 样本起步（'+N+'/30）：整体格局可以看，分维度（形态/级别）的结论只能当线索。'}
+              : N<100 ? {t:'📊 样本成形（'+N+'/100）：形态×级别的交叉结论开始有判决权——矩阵里金边的格子可以信了。'}
+              :         {t:'✅ 样本充分（'+N+' 笔）：这份账本对体系有完整判决资格——包括"哪个组合该停"。'};
+  $('warnbar').style.display='block';
+  $('warnbar').textContent=stage.t;
   /* 基础量 */
   const pnls=R.filter(r=>r.pnl!==null).map(r=>r.pnl);
   const wins=pnls.filter(v=>v>0),losses=pnls.filter(v=>v<0);
@@ -161,6 +174,14 @@ Number.prototype.toFixed1=function(){return this.toFixed(1);};
   const plRatio=(avgWin&&avgLoss)?(avgWin/avgLoss):null;
   const maxW=pnls.length?Math.max(...pnls):null, maxL=pnls.length?Math.min(...pnls):null;
   const holds=R.filter(r=>r.hold!==null).map(r=>r.hold);
+  /* 专业指标（2026-10-16）：期望值/笔、盈亏因子、最大回撤——只加对"手工不规则交易"有意义的，夏普类收益率序列指标明确不加 */
+  const expv=pnls.length?net/pnls.length:null;
+  const gp=wins.reduce((a,b)=>a+b,0), gl=Math.abs(losses.reduce((a,b)=>a+b,0));
+  const pf=gl>0?gp/gl:(gp>0?Infinity:null);
+  let _cum=0,_peak=0,_dd=0;
+  R.filter(r=>r.pnl!==null).sort((a,b)=>(a.closeIso||a.closeTime||'').localeCompare(b.closeIso||b.closeTime||''))
+    .forEach(r=>{_cum+=r.pnl;_peak=Math.max(_peak,_cum);_dd=Math.max(_dd,_peak-_cum);});
+  const mdd=_dd;
   /* 纪律指标 */
   const filled=R.filter(r=>r.result!=='未填').length;
   const stops=R.filter(r=>r.result==='止损').length;
@@ -186,6 +207,9 @@ Number.prototype.toFixed1=function(){return this.toFixed(1);};
     {k:'盈亏比',v:plRatio===null?'—':plRatio.toFixed(1)+':1',cls:plRatio&&plRatio>=1.5?'pos':''},
     {k:'最大单笔盈利',v:maxW===null?'—':'+'+maxW,cls:'pos'},
     {k:'最大单笔亏损',v:maxL===null?'—':''+maxL,cls:'neg'},
+    {k:'期望值/笔',v:expv===null?'—':(expv>=0?'+':'')+expv.toFixed(0),cls:expv!==null?(expv>=0?'pos':'neg'):''},
+    {k:'盈亏因子',v:pf===null?'—':(pf===Infinity?'∞':pf.toFixed(1)),cls:pf!==null&&pf!==Infinity&&pf>=1.5?'pos':''},
+    {k:'最大回撤',v:mdd===null?'—':'-'+mdd,cls:'neg'},
   ];
   $('metrics').innerHTML=mets.map(d=>'<div class="mcard"><div class="k">'+d.k+'</div><div class="v '+(d.v==='—'?'dim':d.cls)+'">'+d.v+'</div></div>').join('');
   /* 结论（规则生成，带数据引用） */
@@ -217,6 +241,58 @@ Number.prototype.toFixed1=function(){return this.toFixed(1);};
   if(miss>0)C.push({t:'有 <b>'+miss+' 笔</b>没有写简报——数据缺口就是纪律缺口，以后每笔了结走完简报再关弹窗。',c:''});
   if(N<10)C.push({t:'样本 '+N+' 笔，还太薄。<b>现在的任务不是让曲线好看，是把简报填满、把规则走完</b>，攒到 30 笔以上这份账本才有判决资格。',c:''});
   $('concl').innerHTML=C.map(c=>'<div class="citem '+c.c+'">'+c.t+'</div>').join('');
+  /* ===== 形态×级别 交叉矩阵（2026-10-16：A/B类 × 级别，样本量分级判决）===== */
+  const kindOf=e=>{e=e||'';return e.startsWith('二')?'A':e.startsWith('三')?'B':'';};
+  const PERIODS=['3','5','15','30m','60'];
+  const COLS=[['A','买','A类买点'],['A','卖','A类卖点'],['B','买','B类买点'],['B','卖','B类卖点']];
+  const groups={};   // 'p|K|S' -> {n,wins,pnl}
+  R.forEach(r=>{
+    const k=kindOf(r.entry); if(!k)return;
+    const side=(r.entry||'').includes('买')?'买':'卖';
+    const key=r.period+'|'+k+'|'+side;
+    const g=groups[key]||(groups[key]={n:0,wins:0,pnl:0});
+    g.n++; if(r.pnl>0)g.wins++; g.pnl+=r.pnl||0;
+  });
+  const cellHtml=g=>{
+    if(!g||g.n<3) return '<td style="color:#56606f;">'+(g?g.n+' 笔':'—')+(g?' · 样本不足':'')+'</td>';
+    const wr=Math.round(g.wins/g.n*100);
+    const strong=g.n>=10?'border:1px solid rgba(240,185,11,.55);':'';
+    return '<td style="'+strong+'"><b>'+g.n+'</b> 笔 · '+wr+'% · <span class="'+(g.pnl>=0?'pos':'neg')+'">'
+      +(g.pnl>=0?'+':'')+Math.round(g.pnl)+'</span></td>';
+  };
+  let mHtml='<table><thead><tr><th>级别</th>'+COLS.map(c=>'<th>'+c[2]+'</th>').join('')+'</tr></thead><tbody>';
+  PERIODS.forEach(p=>{
+    const any=COLS.some(c=>groups[p+'|'+c[0]+'|'+c[1]]);
+    if(!any)return;
+    mHtml+='<tr><td><b>'+(P_LAB[p]||p)+'</b></td>'+COLS.map(c=>cellHtml(groups[p+'|'+c[0]+'|'+c[1]])).join('')+'</tr>';
+  });
+  mHtml+='</tbody></table>';
+  const ab=['A','B'].map(k=>{
+    const g={n:0,wins:0,pnl:0};
+    Object.keys(groups).forEach(key=>{if(key.split('|')[1]!==k)return;const x=groups[key];g.n+=x.n;g.wins+=x.wins;g.pnl+=x.pnl;});
+    return {k,g};
+  });
+  mHtml+='<div class="mut" style="margin-top:8px;">A类合计：'+cellHtml(ab[0].g).replace(/<\/?td[^>]*>/g,'')+
+    '　│　B类合计：'+cellHtml(ab[1].g).replace(/<\/?td[^>]*>/g,'')+'</div>';
+  $('matWrap').innerHTML=mHtml;
+
+  /* ===== 时间维度（按月分桶）===== */
+  const months={};
+  R.forEach(r=>{
+    const m=(r.closeIso||'').slice(0,7); if(!m)return;
+    const g=months[m]||(months[m]={n:0,wins:0,pnl:0});
+    g.n++; if(r.pnl>0)g.wins++; g.pnl+=r.pnl||0;
+  });
+  let run=0;
+  const mRows=Object.keys(months).sort().map(m=>{
+    const g=months[m]; run+=g.pnl;
+    return '<tr><td><b>'+m+'</b></td><td>'+g.n+'</td><td>'+Math.round(g.wins/g.n*100)+'%</td>'+
+      '<td class="'+(g.pnl>=0?'pos':'neg')+'">'+(g.pnl>=0?'+':'')+Math.round(g.pnl)+'</td>'+
+      '<td class="'+(run>=0?'pos':'neg')+'">'+(run>=0?'+':'')+Math.round(run)+'</td></tr>';
+  }).join('');
+  $('timeWrap').innerHTML=mRows?'<table><thead><tr><th>月份</th><th>笔数</th><th>胜率</th><th>当月净盈亏</th><th>累计</th></tr></thead><tbody>'+mRows+'</tbody></table>'
+    :'<div class="mut">记录缺少平仓时间，暂无法分桶。</div>';
+
   /* 图表 */
   const sorted=R.filter(r=>r.pnl!==null).sort((a,b)=>(a.closeIso||a.closeTime||'').localeCompare(b.closeIso||b.closeTime||''));
   drawCurve(sorted);

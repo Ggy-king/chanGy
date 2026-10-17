@@ -361,6 +361,10 @@ async function posLoad(){
     const remote=d.data.positions||[];
     POSITIONS.forEach(p=>{   // 合并未推完的本地变更，已删除的不拉回
       if(!p._dirty) return;
+      // 脏记录 2 分钟内才参与合并（2026-10-16 修复僵尸持仓：离线添加/编辑推送失败后
+      // _dirty 永留缓存，每次 posLoad 都无条件塞回 → 云端3条+僵尸4条=7个持仓）。
+      // 超时视为推送失败已丢弃（Gitee=唯一权威）；无时间戳的旧脏记录一律不再合并。
+      if(!p._dirty_at || Date.now()-p._dirty_at>120000) return;
       const i=remote.findIndex(r=>r.id===p.id);
       if(i>=0) remote[i]=p; else remote.push(p);
     });
@@ -415,7 +419,7 @@ async function posFormSubmit(){
   if(posEditId){
     const eid=posEditId; posEditId=null;
     const rec=POSITIONS.find(x=>x.id===eid);
-    if(rec){ Object.assign(rec,{period:c.period,entry:c.entry,exit:c.exit,note:c.note}); rec._dirty=true; posRender(POSITIONS); posLocalSave(); }
+    if(rec){ Object.assign(rec,{period:c.period,entry:c.entry,exit:c.exit,note:c.note}); rec._dirty=true; rec._dirty_at=Date.now(); posRender(POSITIONS); posLocalSave(); }
     posFormClose(); toast('已保存');
     _bgJob(async()=>{
       const d=await ghGet('positions.json');
@@ -431,7 +435,7 @@ async function posFormSubmit(){
       name:(POS_SYMS.find(x=>x[0]===c.symbol)||['',''])[1], period:c.period,
       entry:c.entry, exit:c.exit, open_time:t, weekday:wk,
       open_iso:now.toISOString?now.toISOString():String(now), note:c.note, result:'', pnl:''};
-    rec._dirty=true;
+    rec._dirty=true; rec._dirty_at=Date.now();
     POSITIONS.push(rec); posRender(POSITIONS); posLocalSave(); posFormClose(); toast('已添加');
     _bgJob(async()=>{
       const d=await ghGet('positions.json');
