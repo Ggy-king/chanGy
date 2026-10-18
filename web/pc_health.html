@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>自检 · chanGy</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+:root{
+  --bg:#0c1017; --fg:#c9d1d9; --dim:#7d8896; --faint:#3d4451;
+  --grn:#3ddc97; --cyn:#4dd0e1; --amb:#f0b90b; --bad:#ff5252; --mag:#c792ea;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--fg);
+  font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  min-height:100vh;padding:14px 20px 30px;font-size:12px;line-height:1.8;}
+.wrap{max-width:840px;margin:0 auto;position:relative;}   /* 内容块居中，块内保持终端密排 */
+#out{white-space:pre-wrap;word-break:break-all;}
+.line{opacity:0;transform:translateX(-4px);animation:in .12s ease-out forwards;min-height:1.8em;}
+@keyframes in{to{opacity:1;transform:none;}}
+.lidx{color:var(--faint);}
+.lvl{font-weight:700;}
+.lvl.green{color:var(--grn);} .lvl.yellow{color:var(--amb);} .lvl.red{color:var(--bad);}
+.lname{color:#e6edf3;}
+.ldot{color:#333b46;}
+.lval{color:var(--cyn);}
+.ldim{color:var(--dim);}
+.lgrn{color:var(--grn);} .lamb{color:var(--amb);} .lbad{color:var(--bad);} .lmag{color:var(--mag);}
+.logo{color:var(--grn);text-shadow:0 0 14px rgba(61,220,151,.45);font-size:10px;line-height:1.25;}
+.cursor{display:inline-block;width:7px;height:13px;background:var(--grn);vertical-align:-2px;
+  animation:blink 1s step-end infinite;}
+@keyframes blink{50%{opacity:0;}}
+/* 小组件①：左右滑动的扫描光带（v2 复刻） */
+.rule{height:1px;background:#222a35;margin:10px 0 14px;position:relative;}
+.rule::after{content:'';position:absolute;left:0;top:-1px;height:3px;width:56px;border-radius:2px;
+  background:var(--grn);box-shadow:0 0 12px var(--grn);animation:sweep 2.4s ease-in-out infinite alternate;}
+@keyframes sweep{to{left:calc(100% - 56px);}}
+/* 小组件②③：状态条——实时时钟 + 跳动 uptime */
+.statusbar{display:flex;gap:18px;flex-wrap:wrap;font-size:11px;color:var(--dim);justify-content:center;}
+.statusbar .k{color:var(--faint);}
+.statusbar .v{color:var(--cyn);}
+.verdict{color:var(--grn);
+  text-shadow:0 0 16px rgba(61,220,151,.5);animation:in .2s ease-out forwards, pulse 2.4s ease-in-out .5s infinite;}
+.verdict.y{color:var(--amb);text-shadow:0 0 14px rgba(240,185,11,.4);}
+.verdict.r{color:var(--bad);text-shadow:0 0 14px rgba(255,82,82,.4);}
+@keyframes pulse{50%{text-shadow:0 0 26px rgba(61,220,151,.8);}}
+.cd{color:var(--dim);}
+.cd b{color:var(--grn);}
+button{background:transparent;border:none;color:var(--cyn);font-family:inherit;font-size:12px;cursor:pointer;
+  padding:0 4px;text-decoration:underline;text-underline-offset:3px;}
+button:hover{color:#fff;}
+button:active{opacity:.7;}
+/* 背景装饰：内容区右侧的 ASCII 缠论笔+分型（低透明度） */
+#tree{position:absolute;right:0;bottom:150px;margin:0;   /* 底部右侧：与黄色判决框一带平齐 */
+  color:var(--grn);opacity:0;font-size:10.5px;line-height:1.3;pointer-events:none;user-select:none;text-align:left;z-index:0;
+  animation:treein .8s ease-out 1s forwards;}   /* 树也要等检查动画走完才浮现（用户定稿） */
+@keyframes treein{to{opacity:.12;}}
+@media(max-width:1000px){#tree{opacity:.05;}}
+/* 动作条：与顶部分隔线同宽对齐 */
+.bars{margin-top:16px;display:flex;flex-direction:column;gap:8px;}
+.bar{border:1px solid #26303d;padding:9px 14px;text-align:center;letter-spacing:6px;color:var(--dim);
+  cursor:pointer;transition:border-color .15s,color .15s,background .15s;}
+.bar:hover{border-color:var(--grn);color:var(--grn);background:rgba(61,220,151,.05);}
+.bar.prime{border-color:rgba(61,220,151,.45);color:var(--grn);}
+.hint{color:var(--faint);}
+.hint b{color:var(--dim);font-weight:400;border:1px solid var(--faint);border-radius:3px;padding:0 5px;margin:0 2px;}
+/* 右上角：背景色切换（标准深蓝黑 ↔ 纯黑 #020306），选择存 localStorage */
+#bgbtn{position:fixed;top:30px;right:60px;z-index:50;font-size:11px;color:var(--faint);
+  border:1px solid var(--faint);border-radius:4px;padding:2px 8px;text-decoration:none;background:transparent;}
+#bgbtn:hover{color:var(--grn);border-color:var(--grn);}
+body.dark{background:#020306;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="out"></div>
+  <div class="statusbar" id="sbar" style="opacity:0;animation:in .2s ease-out .3s forwards;"></div>
+  <div class="hint" style="margin-top:12px;opacity:0;animation:in .2s ease-out .4s forwards;text-align:center;">
+    快捷键：<b>R</b> 重新自检 · <b>Enter</b> 进入控制台</div>
+  <pre id="tree">
+          /\
+         /  \
+        / /\ \
+       / /  \ \
+      / / /\ \ \
+     / / /  \ \ \
+    /_/ / /\ \ \_\
+      \_\ \**/ /_/
+       \_\**/ /
+        \_\**/
+          **
+         ****
+       __****__
+   ~~~~~~~~~~~~~~~
+</pre>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const splash=location.pathname==='/';   // 根目录进入 = 启动 splash：全绿倒计时自动跳控制台
+let data=null, skipped=false, timer=null, upBase=0;
+const out=$('out');
+
+const LOGO=
+'  ___ _  _   _   ___  ___\n'+
+' / __| || | /_\\ | _ \\/ __|\n'+
+'| (__| __ |/ _ \\|  _/\\__ \\\n'+
+' \\___|_||_/_/ \\_\\_|  |___/';
+
+function esc(s){return String(s).replace(/</g,'&lt;');}
+function line(html){
+  const d=document.createElement('div');
+  d.className='line';
+  d.innerHTML=html;
+  out.appendChild(d);
+  return d;   // 倒计时原地更新需要拿到这行的引用
+}
+function num(s){   // 数字高亮（多色终端感）
+  return esc(s).replace(/(\d+(?:\.\d+)?)/g,'<span class="lval">$1</span>');
+}
+function lvl(l){   // server 发 green/yellow/red
+  return {green:'<span class="lvl green">OK  </span>',
+          yellow:'<span class="lvl yellow">WARN</span>',
+          red:'<span class="lvl red">FAIL</span>'}[l];
+}
+/* 小组件②：状态条（实时时钟 + 跳动 uptime），每秒走字 */
+function startStatusbar(){
+  const sb=$('sbar');
+  const tick=()=>{
+    const now=new Date();
+    const hhmmss=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+    const up0=typeof data.uptime==='number'?data.uptime:0;   // 旧版 server 无此字段，兜底防 NaN
+    const up=up0+Math.floor((Date.now()-upBase)/1000);
+    const uh=Math.floor(up/3600), um=Math.floor(up%3600/60), us=up%60;
+    sb.innerHTML='<span><span class="k">LOCAL </span><span class="v">'+hhmmss+'</span></span>'+
+      '<span><span class="k">UPTIME </span><span class="v">'+uh+'h '+String(um).padStart(2,'0')+'m '+String(us).padStart(2,'0')+'s</span></span>'+
+      '<span><span class="k">MODE </span><span class="v">'+(splash?'SPLASH':'STANDALONE')+'</span></span>'+
+      '<span><span class="k">NET </span><span class="lgrn">zero-request</span></span>';
+  };
+  tick(); setInterval(tick,1000);
+}
+async function run(){
+  out.innerHTML=''; skipped=false; if(timer)clearInterval(timer);
+  // ① ASCII 横幅 + 问候
+  line('<span class="logo">'+esc(LOGO)+'</span>');
+  const h=new Date().getHours();
+  const hello=h<5?'凌晨好':h<9?'早上好':h<12?'上午好':h<14?'中午好':h<18?'下午好':'晚上好';
+  const wd='周'+'日一二三四五六'[new Date().getDay()];
+  line('');
+  line('<span class="lmag">'+hello+'，操盘手。</span><span class="ldim">今天是 2026 年 '+
+       (new Date().getMonth()+1)+' 月 '+new Date().getDate()+' 日 '+wd+'。'+(wd==='周六'||wd==='周日'?'市场休市，但系统没睡。':'守住纪律。')+'</span>');
+  line('<span class="ldim">$ ./selfcheck --all --verbose</span>');
+  line('<div class="rule"></div>');
+  // ② 阶段引导（快节奏）
+  const phases=['加载配置与合约表','恢复事件快照','校验数据文件','探测数据链状态'];
+  phases.forEach((p,i)=>setTimeout(()=>{ if(skipped)return;
+    line('<span style="color:var(--cyn);">›</span> '+p+' <span class="lgrn">✓</span>'); },50+i*70));
+  // ③ 拉数据
+  try{
+    const r=await fetch('/api/health'); data=await r.json();
+  }catch(e){
+    line('<span class="lvl red">FAIL</span> <span class="lname">服务连接</span> <span class="lbad">无法访问 /api/health——server 没起来？</span><span class="cursor"></span>');
+    return;
+  }
+  if(!upBase){ upBase=Date.now(); startStatusbar(); }
+  // ④ 检查行（密集小字 + 编号 + 多色）
+  const cs=data.checks||[];
+  cs.forEach((c,i)=>setTimeout(()=>{ if(skipped)return;
+    const idx='['+String(i+1).padStart(2,'0')+']';
+    const name=(c.name+' ').padEnd(9,'·');
+    line('<span class="lidx">'+idx+'</span> '+lvl(c.lvl)+' <span class="lname">'+name+'</span><span class="ldot">·</span> <span class="'+(c.lvl==='red'?'lbad':c.lvl==='yellow'?'lamb':'ldim')+'">'+num(c.detail)+'</span>');
+  },320+i*80));
+  setTimeout(()=>finish(data),320+cs.length*80+260);
+}
+function box(title,cls){
+  const inner=' '+title+' ';
+  const w=Math.max(46,inner.length+8);
+  const top='┌'+'─'.repeat(w)+'┐', bot='└'+'─'.repeat(w)+'┘';
+  const pad=w-2-inner.length, L=Math.floor(pad/2);
+  const mid='│'+' '.repeat(L)+inner+' '.repeat(pad-L)+'│';
+  return '<div class="verdict '+cls+'">'+esc(top)+'\n'+mid+'\n'+esc(bot)+'</div>';
+}
+function finish(d){
+  if(skipped)return;
+  const red=d?d.red:1, yellow=d?d.yellow:0;
+  if(d&&red===0&&yellow===0)      line(box('** ALL SYSTEMS GREEN **',''));
+  else if(d&&red===0)             line(box('** '+yellow+' NOTE(S) · NO FAILURES **','y'));
+  else                            line(box('** '+(d?red:'?')+' FAILURES · CHECK LINES ABOVE **','r'));
+  line('');
+  // 进入控制台 = 全宽大条；「重新自检」绝对定位钉死在行正中间（永远居中），倒计时靠左互不干扰
+  line('<div class="bars"><div class="bar prime" onclick="location.href=\'/pc\'">▶ &nbsp;进 入 控 制 台</div></div>');
+  const cdRow=line('');
+  cdRow.style.opacity=0;   // 先藏住：等检查动画全部走完，数字才出现
+  const hasCd=splash&&d&&red===0;
+  {
+    const row=document.createElement('div');
+    row.style.cssText='position:relative;display:flex;align-items:center;margin-top:12px;min-height:1.8em;';
+    const cdSpan=document.createElement('span');
+    cdSpan.className='cd'; cdSpan.style.flex='1';   // 倒计时占左侧，有没有内容都不影响按钮位置
+    const btn=document.createElement('div');
+    btn.style.cssText='position:absolute;left:50%;transform:translateX(-50%);';   // 钉死正中
+    btn.innerHTML='<button onclick="run()">[ ⟳ 重新自检 ]</button>';
+    row.appendChild(cdSpan); row.appendChild(btn);
+    cdRow.appendChild(row);
+  }
+  if(hasCd){
+    let n=4;
+    const tick=()=>{ if(skipped)return;
+      if(n<=0){ clearInterval(timer); location.href='/pc'; return; }
+      cdRow.querySelector('.cd').innerHTML='  <b style="font-size:15px;color:var(--grn);">'+n+'</b> 秒后进入控制台';
+      cdRow.style.opacity=1;
+      n--; };
+    setTimeout(()=>{ tick(); timer=setInterval(tick,1000); }, 1700);   // 检查行动画 ~1.5s 落定后再出现
+  }
+}
+function skipNow(){ skipped=true; if(timer)clearInterval(timer); location.href='/pc'; }
+document.addEventListener('keydown',e=>{   // 小组件④：键盘快捷键
+  if(e.key==='r'||e.key==='R')run();
+  else if(e.key==='Enter')location.href='/pc';
+});
+/* 右上角背景切换：标准深蓝黑 ↔ 纯黑 #020306，记住选择 */
+(function(){
+  const b=document.createElement('button');
+  b.id='bgbtn'; b.title='切换背景色'; b.type='button'; b.textContent= '◐';
+  const paint=d=> document.body.classList.toggle('dark',d);
+  b.onclick=()=>{ const d=document.body.classList.toggle('dark');
+    try{ localStorage.setItem('cl_bg_black',d?'1':'0'); }catch(e){}
+    paint(d); };
+  let d=false; try{ d=localStorage.getItem('cl_bg_black')==='1'; }catch(e){}
+  paint(d);
+  document.body.appendChild(b);
+})();
+run();
+</script>
+</body>
+</html>
