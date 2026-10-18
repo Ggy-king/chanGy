@@ -15,8 +15,12 @@
   .top h1{font-size:16px;white-space:nowrap;}
   .back{color:var(--mut);text-decoration:none;font-size:13px;}
   .back:hover{color:var(--txt);}
-  select{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:6px;
-         padding:7px 10px;font-size:13px;}
+  select{appearance:none;-webkit-appearance:none;background:var(--panel);color:var(--txt);
+         border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-size:13px;
+         background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%23787b86' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
+         background-repeat:no-repeat;background-position:right 10px center;}
+  .stratbtn{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:6px;
+            padding:7px 14px;font-size:13px;cursor:pointer;white-space:nowrap;}
   .seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;}
   .seg button{background:var(--panel);color:var(--mut);border:none;padding:7px 12px;font-size:13px;cursor:pointer;}
   .seg button.on{background:#2c3140;color:var(--gold);}
@@ -24,6 +28,24 @@
       font-size:13px;font-weight:700;cursor:pointer;}
   .go:disabled{opacity:.5;cursor:default;}
   .meta{color:var(--mut);font-size:12px;margin-left:auto;}
+  /* 未回测时的默认说明面板 */
+  .sbox{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 20px;max-width:780px;}
+  .stitle{font-size:15px;font-weight:700;margin-bottom:10px;}
+  .sdesc{font-size:13px;line-height:1.9;white-space:pre-wrap;margin-bottom:12px;}
+  .shint{color:var(--mut);font-size:12.5px;margin-top:12px;}
+  /* 策略面板（弹层） */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;align-items:flex-start;
+         justify-content:center;z-index:99;padding-top:8vh;}
+  .modal.show{display:flex;}
+  .mbox{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:20px 24px;width:min(660px,92vw);max-height:78vh;overflow:auto;}
+  .mbox h3{font-size:15px;margin-bottom:14px;color:var(--gold);}
+  .mbox .mname{font-size:14px;font-weight:700;margin:14px 0 6px;}
+  .mbox .mname.cur{color:var(--gold);}
+  .mbox .mdesc{font-size:12.5px;line-height:1.9;color:var(--txt);white-space:pre-wrap;margin-bottom:8px;}
+  .mbox .mtip{color:var(--mut);font-size:11.5px;margin-top:14px;line-height:1.8;}
+  .pill{display:inline-block;border:1px solid var(--gold);color:var(--gold);border-radius:10px;
+        font-size:11px;padding:1px 8px;margin-left:8px;font-weight:400;vertical-align:1px;}
   .wrap{padding:16px 18px;}
   .cards{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px;min-width:110px;}
@@ -60,10 +82,15 @@
   </div>
   <button class="go" id="go">开始回测</button>
   <span class="meta" id="meta"></span>
+  <button class="stratbtn" id="btnStrat" onclick="toggleStrat()" title="当前回测策略">⚙ 策略</button>
 </div>
 
 <div class="wrap">
-  <div id="result"><div class="loading">选择品种和时间区间，点"开始回测"。</div></div>
+  <div id="result"><div class="loading">加载中…</div></div>
+</div>
+
+<div class="modal" id="stratModal" onclick="if(event.target===this)toggleStrat()">
+  <div class="mbox" id="stratBox"></div>
 </div>
 
 <script>
@@ -71,9 +98,25 @@ let SYMS = [];   // 从服务端 /api/contracts 动态加载（换合约只改 c
 const sel = document.getElementById('sym');
 function fillSyms(list){
   sel.innerHTML='';
+  const all=document.createElement('option'); all.value='ALL'; all.textContent='全部'; sel.appendChild(all);
   list.forEach(([s,n])=>{ const o=document.createElement('option'); o.value=s; o.textContent=n+' '+s; sel.appendChild(o); });
-  if(q.get('sym')) sel.value = q.get('sym'); else sel.value='ALL';
+  if(q.get('sym')) sel.value = q.get('sym'); else sel.value='ALL';   // 默认=全部
+  fitSel();
 }
+/* 原生 select 箭头永远贴盒右缘；已 appearance:none 自绘箭头。
+   宽度：取全部选项里最宽的一条，固定不变（切换品种时盒子不跳）；
+   箭头：跟随当前选中文字，间距 16px 留呼吸感 */
+function fitSel(){
+  const ctx=fitSel.c||(fitSel.c=document.createElement('canvas').getContext('2d'));
+  ctx.font='13px -apple-system,"Segoe UI","Microsoft YaHei",sans-serif';
+  const W=o=>Math.ceil(ctx.measureText(o.textContent).width);
+  const opts=Array.from(sel.options); if(!opts.length)return;
+  const widest=Math.max.apply(null,opts.map(W));      // 最宽选项定宽，选择切换不再改变盒宽
+  sel.style.width=(widest+34)+'px';                   // 左内边距10 + 文字 + 间隙16 + 箭头10 + 余量
+  const cur=sel.options[sel.selectedIndex];
+  sel.style.backgroundPosition=((cur?W(cur):0)+16)+'px center';
+}
+sel.addEventListener('change',fitSel);
 fetch('/api/contracts').then(r=>r.json())
   .then(d=>fillSyms((d.contracts||[]).map(c=>[c.symbol,c.name])))
   .catch(()=>{});   // 服务端同源，页面能打开接口就通；失败时下拉为空属服务异常
@@ -94,11 +137,49 @@ function cls(v){ return v>0?'pos':(v<0?'neg':'neu'); }
 function num(v,f){ if(v===null||v===undefined) return '—'; return f?f(v):v; }
 
 document.getElementById('go').onclick = run;
+
+/* ── 策略信息：未回测时的默认说明页 + 右上角「策略」弹层 ── */
+let STRATS={}, DEF_STRAT=null, CUR_STRAT=null;
+function paramTable(st){
+  let h='<table style="margin:0;">';
+  st.params.forEach(p=>{ h+='<tr><td class="l" style="color:var(--mut);width:90px;">'+p.label+'</td><td class="l">'+p.value+'</td></tr>'; });
+  return h+'</table>';
+}
+function renderDefault(){
+  if(!DEF_STRAT) return;
+  const st=STRATS[CUR_STRAT]||STRATS[DEF_STRAT];
+  document.getElementById('result').innerHTML=
+    '<div class="sbox">'
+    +'<div class="stitle">当前策略：'+st.name+'<span class="pill">回测用</span></div>'
+    +'<div class="sdesc">'+st.desc+'</div>'
+    +paramTable(st)
+    +'<div class="shint">选择品种和时间区间，点"开始回测"。右上角「⚙ 策略」可随时查看策略详情。</div>'
+    +'</div>';
+}
+function renderModal(){
+  let h='<h3>回测策略</h3>';
+  Object.keys(STRATS).forEach(k=>{
+    const st=STRATS[k];
+    h+='<div class="mname'+(k===CUR_STRAT?' cur':'')+'">'+st.name+(k===CUR_STRAT?'<span class="pill">当前选中</span>':'')+'</div>'
+      +'<div class="mdesc">'+st.desc+'</div>'+paramTable(st);
+  });
+  h+='<div class="mtip">· 以后新增策略：在 backtest.py 的 STRATEGIES 注册表里加一条记录，这里会自动列出。<br>· 参数目前为固定值（写死在策略里）；开放调参时会在「参数」下加输入控件，接口已预留 strategy 传参。</div>';
+  document.getElementById('stratBox').innerHTML=h;
+}
+function toggleStrat(){
+  const m=document.getElementById('stratModal');
+  m.classList.toggle('show');
+  if(m.classList.contains('show')) renderModal();
+}
+fetch('/api/backtest/strategy').then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }).then(d=>{
+  STRATS=d.strategies||{}; DEF_STRAT=d.default||Object.keys(STRATS)[0]; CUR_STRAT=q.get('strategy')||DEF_STRAT;
+  renderDefault();
+}).catch(()=>{ document.getElementById('result').innerHTML='<div class="err">策略信息加载失败——server 没起来或没重启（新接口 /api/backtest/strategy），重启 server 后刷新。</div>'; });
 function run(){
   const go=document.getElementById('go'); go.disabled=true;
   document.getElementById('result').innerHTML='<div class="loading">正在回测（全部品种需拉17个数据，稍候十几秒）…</div>';
   document.getElementById('meta').textContent='';
-  fetch('/api/backtest?sym='+encodeURIComponent(sel.value||'ALL')+'&months='+months)
+  fetch('/api/backtest?sym='+encodeURIComponent(sel.value||'ALL')+'&months='+months+'&strategy='+encodeURIComponent(CUR_STRAT||''))
     .then(r=>r.json()).then(r=>{
       go.disabled=false;
       if(r.error){ document.getElementById('result').innerHTML='<div class="err">'+r.error+'</div>'; return; }

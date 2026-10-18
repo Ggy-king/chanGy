@@ -10,7 +10,7 @@
   *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
   body{background:#131722;color:#d1d4dc;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
   .red{color:#ef5350;} .green{color:#26a69a;} .gold{color:#f0b90b;} .mut{color:#787b86;}
-  header{display:flex;align-items:center;gap:14px;padding:12px 22px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;flex-wrap:wrap;}
+  header{display:flex;align-items:center;gap:8px;padding:12px 22px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;flex-wrap:wrap;}
   header h1{font-size:18px;font-weight:800;letter-spacing:1px;}
   header h1 span{color:#f0b90b;}
   .conn{display:flex;align-items:center;gap:7px;font-size:13px;color:#787b86;}
@@ -111,6 +111,7 @@
   <button class="btn" style="border-color:#00d2d3;color:#00d2d3;" onclick="location.href='/pc/matrix'" title="全品种×全级别形态监控矩阵">▦ 监控</button>
   <button class="btn" style="border-color:#b388ff;color:#b388ff;" onclick="location.href='/pc/review'" title="日审计/周复盘/月复盘/体系疑问">📖 复盘</button>
   <button class="btn alert-list-btn" id="alertListBtn" onclick="toggleAlertList()" title="预警列表">🔔<span class="badge" id="alertBadge">0</span></button>
+  <button class="btn" style="border-color:#26a69a;color:#26a69a;" onclick="location.href='/pc/health'" title="系统全绿自检">🩺 自检</button>
 </header>
 <main>
   <div class="left">

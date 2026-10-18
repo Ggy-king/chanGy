@@ -30,7 +30,7 @@ for _mod in ['pyarrow', 'pyarrow.lib', 'pyarrow.compute', 'numexpr', 'numexpr.in
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
-from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 import engine, fees, backtest, trading_time, config, alert_manager
 
@@ -1046,9 +1046,141 @@ def _page(name):
     return FileResponse(os.path.join(WEB_DIR, name), headers={'Cache-Control': 'no-cache'})
 
 
+_START_TS = time.time()   # server 进程启动时刻（自检页"连续运行"用）
+
+
+def _health_checks():
+    """全绿自检（爽感清单 #1，2026-10-17）：每行一个 OK/WARN/FAIL，3 秒定位断在哪条线。
+    全部读本地内存/文件状态，零网络请求，毫秒级返回。"""
+    checks = []
+
+    def add(name, lvl, detail):
+        checks.append({'name': name, 'lvl': lvl, 'detail': detail})
+
+    # 1) 天勤账户连接（懒创建：休市期未建立属正常）
+    try:
+        from tqsdk_data import TqData
+        inst = TqData()
+        st = trading_time.trading_status()
+        if getattr(inst, '_auth_failed', False):
+            add('天勤账户', 'red', '认证失败——检查 secret.py 账号密码后重启')
+        elif getattr(inst, '_api', None) is not None:
+            add('天勤账户', 'green', '已连接（ws 断线由 TqSdk 自动重连）')
+        elif st.get('trading'):
+            add('天勤账户', 'yellow', '交易中但连接未建立——打开任意看盘页会自动拉起')
+        else:
+            add('天勤账户', 'green', '休市中，连接懒创建（首次看盘自动拉起）')
+    except Exception as e:
+        add('天勤账户', 'red', '状态读取失败: ' + str(e)[:60])
+    # 2) 交易日历
+    try:
+        st = trading_time.trading_status()
+        add('交易日历', 'green', ('交易日 · ' if st.get('trading_day') else '非交易日 · ')
+            + ('交易中' if st.get('trading') else '休市'))
+    except Exception as e:
+        add('交易日历', 'red', str(e)[:60])
+    # 3) 监控总开关
+    if _MON['enabled']:
+        add('监控总开关', 'green', '开启（扫描/预警/手续费刷新运行中）')
+    else:
+        add('监控总开关', 'yellow', '已关闭（纯看盘模式，属正常操作）')
+    # 4) 形态扫描心跳
+    if not _MON['enabled']:
+        add('扫描心跳', 'yellow', '监控关闭，心跳停摆属正常')
+    elif _last_loop_ts is None:
+        add('扫描心跳', 'yellow', '启动后尚未完成第一轮')
+    else:
+        age = (dt.datetime.now() - _last_loop_ts).total_seconds()
+        lvl = 'green' if age < 180 else ('yellow' if age < 900 else 'red')
+        add('扫描心跳', lvl, f'最近一轮 {age:.0f} 秒前（正常节奏 30-60 秒/轮）')
+    # 5) 事件流容量
+    n = len(_pattern_events)
+    add('事件流容量', 'green' if n < 270 else 'yellow',
+        f'{n}/{_EVENT_CAP}' + ('（满后滚动淘汰最旧）' if n >= 270 else ''))
+    # 6) 事件快照年龄
+    try:
+        age = time.time() - os.path.getmtime(_PATTERN_SNAPSHOT_FILE)
+        txt = f'{age / 60:.0f} 分钟前保存' if age < 86400 else f'{age / 86400:.1f} 天前保存'
+        trading_now = trading_time.trading_status().get('trading')
+        lvl = 'green' if (age < 7200 if trading_now else age < 7 * 86400) else 'yellow'
+        add('事件快照', lvl, txt + '（重启恢复事件流用）')
+    except Exception:
+        add('事件快照', 'red', 'pattern_snapshot.json 不存在')
+    # 7) Gitee 云同步
+    if _POS_LAST_ERR[0]:
+        add('Gitee 云同步', 'red', str(_POS_LAST_ERR[0])[:80])
+    else:
+        add('Gitee 云同步', 'green', '持仓/历史/合约三件套推送正常')
+    # 8) 手续费缓存
+    try:
+        fmap = fees.load()
+        need = len(config.CONTRACT_MAP)
+        add('手续费缓存', 'green' if len(fmap) >= need else 'yellow', f'{len(fmap)}/{need} 品种')
+    except Exception as e:
+        add('手续费缓存', 'red', str(e)[:60])
+    # 9) 数据文件五件套
+    bad = []
+    for fn in ('positions.json', 'history.json', 'reviews.json', 'sl_lines.json', 'pattern_snapshot.json'):
+        p = os.path.join(_HERE, 'data', fn)
+        if not os.path.exists(p):
+            bad.append(fn)
+            continue
+        try:
+            with open(p, encoding='utf-8') as f:
+                json.load(f)
+        except Exception:
+            bad.append(fn + '(损坏)')
+    if bad:
+        add('数据文件', 'yellow', '缺失/损坏: ' + '、'.join(bad))
+    else:
+        add('数据文件', 'green', '五件套齐全且可解析')
+    # 10) 连续运行
+    up = time.time() - _START_TS
+    add('连续运行', 'green', f'{int(up // 3600)} 小时 {int(up % 3600 // 60)} 分（无重启）')
+    # 11) 在办假设（体系疑问清单）
+    try:
+        qs = [q for q in _reviews_load().get('questions', []) if q.get('status') == 'open']
+        if qs:
+            days = (dt.date.today() - dt.date.fromisoformat(min(q.get('created', '') for q in qs))).days
+            add('在办假设', 'yellow' if days > 28 else 'green', f'{len(qs)} 个在办，最久的拖了 {days} 天')
+        else:
+            add('在办假设', 'green', '无在办假设（有困惑就来立项）')
+    except Exception:
+        add('在办假设', 'yellow', '读取失败')
+    # 12) 昨日审计
+    try:
+        yest = (dt.date.today() - dt.timedelta(days=1)).isoformat()
+        a = _reviews_load().get('daily', {}).get(yest) or _audit_day(yest)
+        st = a.get('status')
+        add('昨日审计', {'green': 'green', 'yellow': 'yellow', 'red': 'red', 'closed': 'green'}.get(st, 'yellow'),
+            {'green': '全合规', 'yellow': '有疑似项待裁决', 'red': '有确定违规', 'closed': '休市日'}.get(st, '未生成'))
+    except Exception:
+        add('昨日审计', 'yellow', '读取失败')
+    return checks
+
+
+@app.get('/api/health')
+async def api_health():
+    checks = _health_checks()
+    return JSONResponse({
+        'checks': checks,
+        'all_ok': not any(c['lvl'] == 'red' for c in checks),
+        'red': sum(1 for c in checks if c['lvl'] == 'red'),
+        'yellow': sum(1 for c in checks if c['lvl'] == 'yellow'),
+        'uptime': int(time.time() - _START_TS),
+        'ts': dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
+
+
 @app.get('/')
 async def index():
-    return RedirectResponse('/pc')
+    # 启动彩蛋（爽感清单 #1）：根目录=自检 splash，全绿后自动跳控制台
+    return _page('pc_health.html')
+
+
+@app.get('/pc/health')
+async def page_pc_health():
+    """全绿自检页（常驻入口，不自动跳转）。"""
+    return _page('pc_health.html')
 
 
 @app.get('/pc')
@@ -1785,14 +1917,21 @@ async def api_simulate(sym: str, side: str = 'buy'):
 
 
 @app.get('/api/backtest')
-async def api_backtest(sym: str = 'ALL', months: int = 1):
+async def api_backtest(sym: str = 'ALL', months: int = 1, strategy: str = ''):
     # 空/未知品种兜成 ALL（页面下拉未就绪时点击不再 500）；异常转 JSON 错误消息（2026-10-16）
     if not sym or sym not in config.CONTRACT_MAP:
         sym = 'ALL'
     try:
-        return JSONResponse(backtest.run_backtest(sym, months))
+        return JSONResponse(backtest.run_backtest(sym, months, strategy or None))
     except Exception as e:
         return JSONResponse({'error': f'回测失败：{e}'})
+
+
+@app.get('/api/backtest/strategy')
+async def api_backtest_strategy():
+    """策略注册表：前端「策略」面板与回测页默认说明的数据源。"""
+    return JSONResponse({'strategies': backtest.STRATEGIES,
+                         'default': backtest.DEFAULT_STRATEGY})
 
 
 # ==================== 复盘系统（2026-10-17，docs/复盘系统设计.md v0.2） ====================

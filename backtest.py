@@ -24,6 +24,29 @@ _TQ_PERIOD = {'30':30, '1':60, '3':180, '15':900, '60':3600, 'daily':86400}
 
 PERIODS = [0, 1, 2, 3]   # 0=全部
 
+# ── 策略注册表（回测策略的"口子"）────────────────────────────────
+# 以后加新策略：这里添一条记录 + _stats/_one 里按 strategy 分支信号规则即可，
+# 前端「策略」面板和默认说明页会自动跟随，无需改前端代码。
+# params.fixed=True 表示当前版本写死、暂不开放调节；以后开放调参时改成 editable 并接前端输入。
+STRATEGIES = {
+    'chan_bi_long_v1': {
+        'name': '缠论笔 · 底买顶卖 v1',
+        'desc': ('15分钟K线先合并，再识别顶/底分型并成笔。\n'
+                 '买入：底分型确认，按该根K线收盘价开多 1 手；\n'
+                 '平仓：顶分型确认，按收盘价平多。\n'
+                 '只做多、无止损、不加减仓，同段时间内最多持 1 笔；\n'
+                 '手续费按 fees.py 各品种实际开/平费率计入盈亏。'),
+        'params': [
+            {'key': 'period',    'label': 'K线周期', 'value': '15分钟（跟随监控主周期）'},
+            {'key': 'direction', 'label': '交易方向', 'value': '只做多'},
+            {'key': 'stop_loss', 'label': '止损/止盈', 'value': '无（顶分型信号平仓）'},
+            {'key': 'position',  'label': '仓位',    'value': '固定 1 手'},
+            {'key': 'fee',       'label': '手续费',  'value': 'fees.py 实际开平费率'},
+        ],
+    },
+}
+DEFAULT_STRATEGY = 'chan_bi_long_v1'
+
 
 def _slice_by_months(df, months):
     """近 months 个月切片；months<=0 返回全部。按数据里最新时间往前推。"""
@@ -161,8 +184,10 @@ def _one(symbol, months):
     }
 
 
-def run_backtest(symbol, months):
-    """入口。symbol='ALL' 返回全部品种统计表+全局汇总；否则返回单品种完整回测。"""
+def run_backtest(symbol, months, strategy=None):
+    """入口。symbol='ALL' 返回全部品种统计表+全局汇总；否则返回单品种完整回测。
+    strategy：策略 key，当前仅实现 DEFAULT_STRATEGY 一条，入参先收下留作扩展。"""
+    strategy = strategy or DEFAULT_STRATEGY
     if str(symbol).upper() == 'ALL':
         rows = []
         for c in config.CONTRACTS:
