@@ -2421,13 +2421,36 @@ async def api_review_questions_post(request: Request):
             q = next((x for x in qs if x['id'] == qid), None)
             if q:
                 if act == 'resolve':
-                    q['status'], q['note'] = 'resolved', str(p.get('note') or '')[:500]
+                    q['status'] = 'resolved'
                 elif act == 'reject':
-                    q['status'], q['note'] = 'rejected', str(p.get('note') or '')[:500]
+                    q['status'] = 'rejected'
                 elif act == 'reopen':
-                    q['status'], q['note'] = 'open', ''
+                    q['status'] = 'open'
                 elif act == 'delete':
                     qs.remove(q)
+                elif act == 'note_add':      # 结论追加一条（带日期，可天天补）
+                    t = str(p.get('text') or '').strip()
+                    if t:
+                        q.setdefault('notes', []).append(
+                            {'date': dt.date.today().isoformat(), 'text': t[:500]})
+                elif act == 'note_edit':
+                    notes = q.setdefault('notes', [])
+                    if not notes and q.get('note'):      # 旧数据单条 note 迁移
+                        notes.append({'date': q.get('created', ''), 'text': q['note']})
+                    try:
+                        idx = int(p.get('idx', -1))
+                    except (TypeError, ValueError):
+                        idx = -1
+                    if 0 <= idx < len(notes):
+                        notes[idx]['text'] = str(p.get('text') or '')[:500]
+                elif act == 'note_del':
+                    notes = q.get('notes') or []
+                    try:
+                        idx = int(p.get('idx', -1))
+                    except (TypeError, ValueError):
+                        idx = -1
+                    if 0 <= idx < len(notes):
+                        notes.pop(idx)
         _reviews_save(d)
     return JSONResponse({'ok': True, 'questions': d.get('questions', [])})
 

@@ -633,7 +633,7 @@ function initChart(){
   // 进场铁律标签（2026-10-16 用户定稿）：原生水印没有留白参数，改用 DOM 标签（左上角、14号、带呼吸留白）
   const rule=document.createElement('div');
   rule.id='inRuleLabel';
-  rule.textContent='进场必须等本级别分型成立';
+  rule.textContent='本级别分型成立后次级别回调进场';
   rule.style.cssText='position:absolute;top:14px;left:18px;font-size:14px;font-weight:700;'+
     'color:rgba(255,255,255,.2);pointer-events:none;letter-spacing:1px;white-space:nowrap;z-index:5;';
   el.appendChild(rule);
