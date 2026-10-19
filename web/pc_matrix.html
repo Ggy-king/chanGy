@@ -271,8 +271,10 @@ select{appearance:none;-webkit-appearance:none;
     <div class="pf-row"><label>离场</label><select id="pfExit">
       <option value="二卖">A类二卖点</option><option value="二买">A类二买点</option>
       <option value="三卖">B类三卖点</option><option value="三买">B类三买点</option></select></div>
-    <div class="pf-row"><label>开仓价</label><input id="pfPrice" inputmode="decimal" placeholder="选填，填了参与2%风险审计" /></div>
-    <div class="pf-row"><label>手数</label><input id="pfLots" inputmode="numeric" placeholder="选填，默认1" /></div>
+    <!-- 开仓价/手数暂时隐藏（2026-10-19 定稿）：盘中不填影响统计意义；接账户后由服务端自动快照取代人工录入。
+         元素保留：编辑历史持仓时回填/保存不丢老数据；2% 审计改造为"止损线+自动现价快照"待收盘后实施 -->
+    <div class="pf-row" style="display:none"><label>开仓价</label><input id="pfPrice" inputmode="decimal" placeholder="选填，填了参与2%风险审计" /></div>
+    <div class="pf-row" style="display:none"><label>手数</label><input id="pfLots" inputmode="numeric" placeholder="选填，默认1" /></div>
     <div class="pf-row"><label>备注</label><input id="pfNote" placeholder="选填" /></div>
     <div class="pf-row" style="gap:8px;justify-content:flex-end">
       <button class="btn" onclick="posFormClose()">取消</button>

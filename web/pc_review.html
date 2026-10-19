@@ -62,6 +62,26 @@ td.pos{color:#ef5350;font-weight:700;} td.neg{color:#26a69a;font-weight:700;}
 .qitem .qb{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;}
 .qitem .qb button{font-size:11px;padding:3px 10px;border-radius:7px;border:1px solid #2a2e39;background:#1e222d;color:#9aa0b0;cursor:pointer;}
 .qitem .qb button:hover{color:#d1d4dc;border-color:#b388ff;}
+/* 结论追加列表（可展开折叠） */
+.qitem .nhead{display:inline-flex;align-items:center;gap:5px;margin-top:7px;font-size:11.5px;color:#9aa0b0;
+  cursor:pointer;user-select:none;border:1px dashed #2a2e39;border-radius:7px;padding:2px 9px;}
+.qitem .nhead:hover{color:#b388ff;border-color:rgba(179,136,255,.5);}
+.qitem .nlist{margin-top:2px;}
+.nrow{display:flex;gap:8px;align-items:flex-start;padding:6px 0 5px;border-top:1px dashed #22262f;font-size:12.5px;line-height:1.7;}
+.nrow:first-child{border-top:none;}
+.nrow .nd{flex:none;color:#787b86;font-size:11px;padding-top:2px;min-width:34px;}
+.nrow .nt{flex:1;color:#c9cdd8;white-space:pre-wrap;}
+/* 结论区通用小按钮：次级=深灰底悬停紫；主操作=紫底紫字（与"记下"顶部按钮同规范） */
+.nx{flex:none;font-size:10.5px;color:#9aa0b0;cursor:pointer;border:1px solid #2a2e39;border-radius:7px;
+  padding:3px 10px;background:#1e222d;line-height:1.5;}
+.nx:hover{color:#d1d4dc;border-color:#b388ff;}
+.nx.pri{background:#2a2340;border-color:#b388ff;color:#b388ff;font-weight:700;padding:3px 14px;}
+.nx.pri:hover{background:#3a2f5c;color:#d1c4ff;}
+.nbox textarea{width:100%;background:#131722;border:1px solid rgba(179,136,255,.4);border-radius:8px;color:#d1d4dc;
+  padding:8px 11px;font-size:13px;font-family:inherit;min-height:64px;resize:vertical;}
+.nbox textarea:focus{outline:none;border-color:#b388ff;}
+.nbox .nbtns{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;}
+.nbox .nhint{font-size:10.5px;color:#56606f;margin-right:auto;padding-top:5px;}
 .qadd{display:flex;gap:8px;margin-bottom:10px;}
 .qadd input{flex:1;background:#0d1117;border:1px solid #2a2e39;border-radius:8px;color:#d1d4dc;padding:9px 12px;font-size:13px;}
 .qadd button{background:#2a2340;border:1px solid #b388ff;color:#b388ff;border-radius:8px;padding:9px 16px;font-size:13px;cursor:pointer;font-weight:700;}
@@ -432,22 +452,58 @@ function monthShift(n){
 }
 
 /* ==================== 体系疑问清单 ==================== */
-async function renderQuestions(){
+let qOpenNotes=new Set();   // 本会话内展开结论区的疑问 id
+let qNoteBox=null;          // 正在编辑的结论输入框 {id, idx}；idx=null 表示追加，整个对象为 null 表示收起
+function notesOf(q){
+  if(q.notes&&q.notes.length)return q.notes;
+  if(q.note)return [{date:q.created||'',text:q.note}];   // 兼容旧的单条 note，不迁移不丢数据
+  return [];
+}
+async function renderQuestions(silent){
   const v=$('view');
-  v.innerHTML='<div class="sec"><div class="mut">加载中…</div></div>';
+  if(!silent)v.innerHTML='<div class="sec"><div class="mut">加载中…</div></div>';   // 原地更新不清屏，避免闪烁
   const d=await api('/api/review/questions');
   const now=Date.now();
   const rows=(d.questions||[]).map(q=>{
     const stale=q.status==='open'&&(now-new Date(q.created+'T00:00:00'))>28*86400000;
+    const notes=notesOf(q);
+    const nOpen=qOpenNotes.has(q.id);
+    let notesHtml='';
+    if(notes.length){
+      const rowsHtml=notes.map((n,i)=>{
+        const editing=qNoteBox&&qNoteBox.id===q.id&&qNoteBox.idx===i;
+        return editing
+          ?`<div class="nbox" style="padding:6px 0 2px;"><textarea id="nbx"
+             onkeydown="nbKey(event,'${q.id}',${i})">${String(n.text||'').replace(/</g,'&lt;')}</textarea>
+             <div class="nbtns"><span class="nhint">⌘/Ctrl+Enter 保存 · Esc 取消</span>
+             <button class="nx pri" onclick="noteSave('${q.id}',${i})">保存</button>
+             <button class="nx" onclick="openNoteBox(null)">取消</button></div></div>`
+          :`<div class="nrow"><span class="nd">${String(n.date||'').slice(5)||'—'}</span>
+             <span class="nt">${String(n.text||'').replace(/</g,'&lt;')}</span>
+             <button class="nx" onclick="openNoteBox('${q.id}',${i})">改</button>
+             <button class="nx" onclick="noteDel('${q.id}',${i})">删</button></div>`;
+      }).join('');
+      notesHtml=`<div><span class="nhead" id="nh_${q.id}" onclick="toggleNotes('${q.id}')">${nOpen?'▾':'▸'} 结论 ${notes.length} 条</span></div>
+        ${nOpen?`<div class="nlist" id="nl_${q.id}">${rowsHtml}</div>`:''}`;
+    }
+    const adding=qNoteBox&&qNoteBox.id===q.id&&qNoteBox.idx===null;
+    const addBox=adding?`<div class="nbox" style="margin-top:8px;">
+        <textarea id="nbx" placeholder="今天的想法，一句话也行——结论可以每天追加，存进历史不会覆盖"
+          onkeydown="nbKey(event,'${q.id}',null)"></textarea>
+        <div class="nbtns"><span class="nhint">⌘/Ctrl+Enter 记下 · Esc 取消</span>
+        <button class="nx pri" onclick="noteSave('${q.id}',null)">记下</button>
+        <button class="nx" onclick="openNoteBox(null)">取消</button></div></div>`:'';
     return `<div class="qitem ${stale?'stale':''}">
       <div class="qh"><span class="qchip ${q.status}">${{open:'待研究',resolved:'已解决',rejected:'已否决'}[q.status]}</span>
         <span class="mut">${q.created}${stale?' · ⚠ 挂起超 4 周——排期研究或删掉':''}</span></div>
       <div>${q.text.replace(/</g,'&lt;')}</div>
-      ${q.note?'<div class="note">结论：'+q.note.replace(/</g,'&lt;')+'</div>':''}
+      ${notesHtml}
+      ${addBox}
       <div class="qb">
-        ${q.status==='open'?`<button onclick="qAct('${q.id}','resolve')">标解决（填结论）</button>
-          <button onclick="qAct('${q.id}','reject')">否决（附原因）</button>`:''}
-        ${q.status!=='open'?`<button onclick="qAct('${q.id}','reopen')">重开</button>`:''}
+        <button onclick="openNoteBox('${q.id}',null)">${notes.length?'➕ 追加结论':'✍️ 写结论'}</button>
+        ${q.status==='open'?`<button onclick="qSet('${q.id}','resolve')">标解决</button>
+          <button onclick="qSet('${q.id}','reject')">否决</button>`:''}
+        ${q.status!=='open'?`<button onclick="qSet('${q.id}','reopen')">重开</button>`:''}
         <button onclick="qDel('${q.id}')">删除</button>
       </div></div>`;
   }).join('')||'<div class="mut">清单是空的——每周复盘时强制问自己一次："体系有没有让我不舒服的地方？"</div>';
@@ -458,16 +514,59 @@ async function renderQuestions(){
     ${rows}
   </div>`;
 }
+function _rqKeep(){   // 原地刷新：不清屏、保持滚动位置——页面不能跳动
+  const y=window.scrollY;
+  renderQuestions(true).then(()=>window.scrollTo(0,y));
+}
+function toggleNotes(id){
+  // 纯本地折叠/展开：不发请求不重渲染，零闪烁
+  const list=$('nl_'+id),head=$('nh_'+id);
+  if(!list){   // 兜底（理论上到不了）：直接改状态重渲染
+    qOpenNotes.has(id)?qOpenNotes.delete(id):qOpenNotes.add(id);_rqKeep();return;}
+  const hiding=list.style.display!=='none';
+  list.style.display=hiding?'none':'';
+  if(head)head.textContent=(hiding?'▸':'▾')+' 结论 '+list.querySelectorAll('.nrow').length+' 条';
+  if(hiding){qOpenNotes.delete(id);if(qNoteBox&&qNoteBox.id===id)qNoteBox=null;}
+  else qOpenNotes.add(id);
+}
+function openNoteBox(id,idx){
+  qNoteBox=id?{id,idx:idx===undefined?null:idx}:null;
+  const y=window.scrollY;
+  renderQuestions(true).then(()=>{
+    window.scrollTo(0,y);
+    if(id){const ta=$('nbx');if(ta)ta.focus();}
+  });
+}
+function nbKey(e,id,idx){
+  if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();noteSave(id,idx===undefined?null:idx);}
+  else if(e.key==='Escape'){e.preventDefault();openNoteBox(null);}
+}
+async function noteSave(id,idx){
+  const t=($('nbx')||{}).value.trim();if(!t)return;
+  const add=idx===null||idx===undefined;
+  await api('/api/review/questions',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:add?'note_add':'note_edit',id:id,idx:idx,text:t})});
+  toast(add?'结论已追加——随时还能补':'结论已更新');
+  qNoteBox=null; qOpenNotes.add(id);
+  _rqKeep();
+}
+async function noteDel(id,idx){
+  if(!confirm('删除这条结论？'))return;
+  await api('/api/review/questions',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'note_del',id:id,idx:idx})});
+  _rqKeep();
+}
+async function qSet(id,act){
+  await api('/api/review/questions',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:act,id:id})});
+  toast(act==='resolve'?'已标解决——结论还能继续追加':act==='reject'?'已否决——原因可写在结论里':'已重开');
+  qOpenNotes.add(id);
+  _rqKeep();
+}
 async function qAdd(){
   const t=$('qText').value.trim();if(!t)return;
   await api('/api/review/questions',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'add',text:t})});
-  renderQuestions();
-}
-async function qAct(id,act){
-  const note=act==='resolve'||act==='reject'?(prompt(act==='resolve'?'结论（一句话）：':'否决原因：')||''):'';
-  await api('/api/review/questions',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({action:act,id:id,note:note})});
   renderQuestions();
 }
 async function qDel(id){
