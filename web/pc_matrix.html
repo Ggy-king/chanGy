@@ -81,8 +81,10 @@
 #posCards{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:9px;}
 #posPanel.wide{width:768px;max-height:96vh;}   /* 3~4 个持仓：加宽两列（1、2 左列，3、4 右列）；
   高度上限同步放宽（88vh 是单列时代定的，装不下两行卡会截底），超出 96vh 才内部滚动 */
-#posPanel.wide #posCards{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:repeat(2,auto);
-  grid-auto-flow:column;align-items:start;gap:9px;}
+#posPanel.wide #posCards{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:repeat(2,max-content);
+  grid-auto-flow:column;align-items:start;gap:12px;}
+/* 行轨必须 max-content：auto 行在容器高度不足时会被压缩，卡片内容溢出压到下一行卡上
+  （2026-10-21 矮窗口重叠事故）。max-content 永不压缩 → 装不下走 posCards 的 overflow-y 滚动 */
 #posCards .empty{color:#787b86;font-size:12.5px;text-align:center;padding:26px 0;}
 /* 持仓卡（与移动端同款：金色信息带，交易级别+进场时间双主角） */
 .posCard{position:relative;background:#161C26;border:1px solid #2a2e39;border-radius:14px;overflow:hidden;

@@ -63,6 +63,20 @@ td.pos{color:#ef5350;font-weight:700;} td.neg{color:#26a69a;font-weight:700;}
 .tag.止盈{background:rgba(239,83,80,.15);border-color:#ef5350;color:#ef5350;font-weight:700;}
 .tag.止损{background:rgba(38,166,154,.12);border-color:#26a69a;color:#26a69a;font-weight:700;}
 .tag.保本{background:rgba(240,185,11,.12);border-color:#f0b90b;color:#f0b90b;}
+/* 违规标记（2026-10-19）：默认虚线灰可点，标记后红实 */
+.vio{font-size:10.5px;color:#56606f;border:1px dashed #2a2e39;border-radius:9px;padding:1px 8px;cursor:pointer;white-space:nowrap;user-select:none;}
+.vio:hover{color:#ef5350;border-color:#ef5350;}
+.vio.on{background:rgba(239,83,80,.15);border:1px solid #ef5350;color:#ef5350;font-weight:700;}
+tr.vioRow td{background:rgba(239,83,80,.05);}
+tr.vioRow:hover td{background:rgba(239,83,80,.10);}
+/* 双口径行标签 */
+.rowlab{font-size:11px;color:#787b86;margin:2px 0 8px;}
+.rowlab b{color:#d1d4dc;}
+#metricsEx .mcard{border-color:rgba(239,83,80,.25);}
+/* 口径开关（纪律指标/矩阵/时间维度/分布图共用） */
+.seg{display:inline-flex;border:1px solid #2a2e39;border-radius:9px;overflow:hidden;flex:none;}
+.seg button{border:none;background:#0d1117;color:#787b86;padding:5px 14px;font-size:11.5px;cursor:pointer;font-weight:700;}
+.seg button.on{background:#2a2340;color:#b388ff;}
 </style>
 <script src="/popup_cards.js"></script>
 </head>
@@ -78,13 +92,22 @@ td.pos{color:#ef5350;font-weight:700;} td.neg{color:#26a69a;font-weight:700;}
   <div class="warnbar" id="warnbar" style="display:none;"></div>
 
   <div class="sec">
-    <h2>🛡 纪律指标<span class="sub">——这才是你要天天看的数字，钱只是它们的影子</span></h2>
-    <div class="disc" id="disc"></div>
+    <div style="display:flex;align-items:center;gap:12px;">
+      <h2 style="flex:1;margin-bottom:0;">🛡 纪律指标<span class="sub">——这才是你要天天看的数字，钱只是它们的影子</span></h2>
+      <div class="seg" id="vioSeg" style="display:none;" title="切换矩阵/时间维度/分布图的统计口径">
+        <button id="segAll" class="on" onclick="setVioView(false)">全部</button>
+        <button id="segEx" onclick="setVioView(true)">剔除违规</button>
+      </div>
+    </div>
+    <div class="disc" id="disc" style="margin-top:12px;"></div>
   </div>
 
   <div class="sec">
-    <h2>💰 结果指标<span class="sub">——看一眼就好，别盯着它做单</span></h2>
+    <h2>💰 结果指标<span class="sub">——上排全量、下排剔除违规；两份永远都在，缺一不可</span></h2>
+    <div class="rowlab" id="capAll"></div>
     <div class="metrics" id="metrics"></div>
+    <div class="rowlab" id="capEx" style="margin-top:12px;"></div>
+    <div class="metrics" id="metricsEx"></div>
   </div>
 
   <div class="sec">
@@ -112,9 +135,9 @@ td.pos{color:#ef5350;font-weight:700;} td.neg{color:#26a69a;font-weight:700;}
   </div>
 
   <div class="sec">
-    <h2>📋 明细<span class="sub" id="tblCap"></span></h2>
+    <h2>📋 明细<span class="sub" id="tblCap"></span><span class="mut" style="margin-left:10px;">"标违规"点击切换，标记立即云端保存</span></h2>
     <table>
-      <thead><tr><th>平仓时间</th><th>品种</th><th>级别</th><th>类型</th><th>持仓时长</th><th>结果</th><th>盈亏</th></tr></thead>
+      <thead><tr><th>平仓时间</th><th>品种</th><th>级别</th><th>类型</th><th>持仓时长</th><th>结果</th><th>盈亏</th><th>违规</th></tr></thead>
       <tbody id="tbody"></tbody>
     </table>
   </div>
@@ -131,19 +154,137 @@ function parseRec(x){
   let open=null,close=null;
   try{open=datetime(x.open_iso);}catch(e){}
   try{close=datetime('2026-'+x.close_time);}catch(e){}
+  // 持仓时长：优先用服务端算好的 hold_min（2026-10-19 修复：旧逻辑前端重算，
+  // 且把 PC 端本地时间 open_iso 误当 UTC 再+8h、Safari 解析不了 'YYYY-MM-DD HH:MM' → 永远显示 —）
   let hold=null;
-  if(open&&close)hold=Math.round((close-open).total_seconds/360)/10;
+  const hm=parseFloat(x.hold_min);
+  if(!isNaN(hm))hold=Math.round(hm/6)/10;                 // 分钟→小时，1 位小数
+  else if(open&&close)hold=Math.round((close-open)/360000)/10;
   return {pnl,result,hold,sym:x.symbol,name:x.name,period:x.period,entry:x.entry,
-          closeTime:x.close_time||'',closeIso:x.close_iso||''};
+          closeTime:x.close_time||'',closeIso:x.close_iso||'',id:x.id,vio:!!x.violation};
   function datetime(s){
     if(!s)return null;
-    const d=new Date(s.includes('T')?s:'2026-'+s);
-    return isNaN(d)?null:(s.includes('T')?new Date(d.getTime()+8*3600000):d);
+    if(s.includes('T')){
+      const d=new Date(s);
+      return isNaN(d)?null:(String(s).endsWith('Z')?new Date(d.getTime()+8*3600000):d);
+    }
+    const d=new Date(s.replace(' ','T'));   // 'YYYY-MM-DD HH:MM'→ISO 风格，各浏览器一致
+    return isNaN(d)?null:d;
   }
 }
 Number.prototype.toFixed1=function(){return this.toFixed(1);};
 
-(async function(){
+function buildMets(rows){
+  /* 结果指标卡组（2026-10-19 抽成函数：全量/剔除违规两口径各渲染一份） */
+  const P=rows.filter(r=>r.pnl!==null).map(r=>r.pnl);
+  const wins=P.filter(v=>v>0),losses=P.filter(v=>v<0);
+  const net=P.reduce((a,b)=>a+b,0);
+  const wr=(wins.length+losses.length)?Math.round(wins.length/(wins.length+losses.length)*100):null;
+  const aw=wins.length?wins.reduce((a,b)=>a+b,0)/wins.length:null;
+  const al=losses.length?Math.abs(losses.reduce((a,b)=>a+b,0)/losses.length):null;
+  const pl=(aw&&al)?(aw/al):null;
+  const mw=P.length?Math.max(...P):null, ml=P.length?Math.min(...P):null;
+  const ex=P.length?net/P.length:null;
+  const gp=wins.reduce((a,b)=>a+b,0), gl=Math.abs(losses.reduce((a,b)=>a+b,0));
+  const pf=gl>0?gp/gl:(gp>0?Infinity:null);
+  let c=0,pk=0,dd=0;
+  rows.filter(r=>r.pnl!==null).sort((a,b)=>(a.closeIso||a.closeTime||'').localeCompare(b.closeIso||b.closeTime||''))
+    .forEach(r=>{c+=r.pnl;pk=Math.max(pk,c);dd=Math.max(dd,pk-c);});
+  return [
+    {k:'总笔数',v:rows.length,cls:''},
+    {k:'净盈亏',v:(net>=0?'+':'')+net,cls:net>=0?'pos':'neg'},
+    {k:'胜率（有盈亏的）',v:wr===null?'—':wr+'%',cls:''},
+    {k:'平均盈利',v:aw===null?'—':'+'+aw.toFixed(0),cls:'pos'},
+    {k:'平均亏损',v:al===null?'—':'-'+al.toFixed(0),cls:'neg'},
+    {k:'盈亏比',v:pl===null?'—':pl.toFixed(1)+':1',cls:pl&&pl>=1.5?'pos':''},
+    {k:'最大单笔盈利',v:mw===null?'—':'+'+mw,cls:'pos'},
+    {k:'最大单笔亏损',v:ml===null?'—':''+ml,cls:'neg'},
+    {k:'期望值/笔',v:ex===null?'—':(ex>=0?'+':'')+ex.toFixed(0),cls:ex!==null?(ex>=0?'pos':'neg'):''},
+    {k:'盈亏因子',v:pf===null?'—':(pf===Infinity?'∞':pf.toFixed(1)),cls:pf!==null&&pf!==Infinity&&pf>=1.5?'pos':''},
+    {k:'最大回撤',v:'-'+dd,cls:'neg'},
+  ].map(d=>'<div class="mcard"><div class="k">'+d.k+'</div><div class="v '+(d.v==='—'?'dim':d.cls)+'">'+d.v+'</div></div>').join('');
+}
+/* ===== 口径状态与分区渲染（2026-10-19：纪律指标/矩阵/时间维度/分布图跟随开关切换） ===== */
+let _R=[],_REx=[],_NV=0,_VIO=false;   // _VIO: false=全部口径 true=剔除违规
+function renderDisc(rows){
+  const n=rows.length;
+  const filled=rows.filter(r=>r.result!=='未填').length;
+  const stops=rows.filter(r=>r.result==='止损').length;
+  const hWin=rows.filter(r=>r.pnl>0&&r.hold!==null).map(r=>r.hold);
+  const hLoss=rows.filter(r=>r.pnl<0&&r.hold!==null).map(r=>r.hold);
+  const avgH=a=>a.length?(a.reduce((x,y)=>x+y,0)/a.length).toFixed(1)+'h':'—';
+  const shortR=rows.filter(r=>r.hold!==null&&r.hold<3);
+  const shortWin=shortR.filter(r=>r.pnl>0).length;
+  const disc=[
+    {k:'简报完整率',v:Math.round(filled/n*100)+'%',s:'每次平仓老老实实写简报，账本才配当镜子。缺的每一笔都是未来的盲区。',gold:true},
+    {k:'认错离场',v:stops+' 次',s:'每一笔止损都是体系在替你止血——这是守规则的表现，不是失败。',gold:true},
+    {k:'止盈单平均持仓',v:avgH(hWin),s:'对比下面止损单的平均持仓',gold:true},
+    {k:'止损单平均持仓',v:avgH(hLoss),s:hWin.length&&hLoss.length?(parseFloat(avgH(hWin))>parseFloat(avgH(hLoss))?'拿得久的在赚钱——账本支持"别提前下车"':'样本还看不出规律'):'样本不足'},
+  ];
+  $('disc').innerHTML=disc.map(d=>'<div class="dcard'+(d.gold?' gold':'')+'"><div class="k">'+d.k+'</div><div class="v">'+d.v+'</div><div class="s">'+d.s+'</div></div>').join('');
+}
+function renderMatrix(rows){
+  /* 形态×级别 交叉矩阵（2026-10-16：A/B类 × 级别，样本量分级判决） */
+  const kindOf=e=>{e=e||'';return e.startsWith('二')?'A':e.startsWith('三')?'B':'';};
+  const PERIODS=['3','5','15','30m','60'];
+  const COLS=[['A','买','A类买点'],['A','卖','A类卖点'],['B','买','B类买点'],['B','卖','B类卖点']];
+  const groups={};   // 'p|K|S' -> {n,wins,pnl}
+  rows.forEach(r=>{
+    const k=kindOf(r.entry); if(!k)return;
+    const side=(r.entry||'').includes('买')?'买':'卖';
+    const key=r.period+'|'+k+'|'+side;
+    const g=groups[key]||(groups[key]={n:0,wins:0,pnl:0});
+    g.n++; if(r.pnl>0)g.wins++; g.pnl+=r.pnl||0;
+  });
+  const cellHtml=g=>{
+    if(!g||g.n<3) return '<td style="color:#56606f;">'+(g?g.n+' 笔':'—')+(g?' · 样本不足':'')+'</td>';
+    const wr=Math.round(g.wins/g.n*100);
+    const strong=g.n>=10?'border:1px solid rgba(240,185,11,.55);':'';
+    return '<td style="'+strong+'"><b>'+g.n+'</b> 笔 · '+wr+'% · <span class="'+(g.pnl>=0?'pos':'neg')+'">'
+      +(g.pnl>=0?'+':'')+Math.round(g.pnl)+'</span></td>';
+  };
+  let mHtml='<table><thead><tr><th>级别</th>'+COLS.map(c=>'<th>'+c[2]+'</th>').join('')+'</tr></thead><tbody>';
+  PERIODS.forEach(p=>{
+    const any=COLS.some(c=>groups[p+'|'+c[0]+'|'+c[1]]);
+    if(!any)return;
+    mHtml+='<tr><td><b>'+(P_LAB[p]||p)+'</b></td>'+COLS.map(c=>cellHtml(groups[p+'|'+c[0]+'|'+c[1]])).join('')+'</tr>';
+  });
+  mHtml+='</tbody></table>';
+  const ab=['A','B'].map(k=>{
+    const g={n:0,wins:0,pnl:0};
+    Object.keys(groups).forEach(key=>{if(key.split('|')[1]!==k)return;const x=groups[key];g.n+=x.n;g.wins+=x.wins;g.pnl+=x.pnl;});
+    return {k,g};
+  });
+  mHtml+='<div class="mut" style="margin-top:8px;">A类合计：'+cellHtml(ab[0].g).replace(/<\/?td[^>]*>/g,'')+
+    '　│　B类合计：'+cellHtml(ab[1].g).replace(/<\/?td[^>]*>/g,'')+'</div>';
+  $('matWrap').innerHTML=mHtml;
+}
+function renderMonths(rows){
+  /* 时间维度（按月分桶） */
+  const months={};
+  rows.forEach(r=>{
+    const m=(r.closeIso||'').slice(0,7); if(!m)return;
+    const g=months[m]||(months[m]={n:0,wins:0,pnl:0});
+    g.n++; if(r.pnl>0)g.wins++; g.pnl+=r.pnl||0;
+  });
+  let run=0;
+  const mRows=Object.keys(months).sort().map(m=>{
+    const g=months[m]; run+=g.pnl;
+    return '<tr><td><b>'+m+'</b></td><td>'+g.n+'</td><td>'+Math.round(g.wins/g.n*100)+'%</td>'+
+      '<td class="'+(g.pnl>=0?'pos':'neg')+'">'+(g.pnl>=0?'+':'')+Math.round(g.pnl)+'</td>'+
+      '<td class="'+(run>=0?'pos':'neg')+'">'+(run>=0?'+':'')+Math.round(run)+'</td></tr>';
+  }).join('');
+  $('timeWrap').innerHTML=mRows?'<table><thead><tr><th>月份</th><th>笔数</th><th>胜率</th><th>当月净盈亏</th><th>累计</th></tr></thead><tbody>'+mRows+'</tbody></table>'
+    :'<div class="mut">记录缺少平仓时间，暂无法分桶。</div>';
+}
+function applyVioView(){
+  const rows=_VIO?_REx:_R;
+  renderDisc(rows); renderMatrix(rows); renderMonths(rows); drawDist(rows);
+  $('segAll').classList.toggle('on',!_VIO);
+  $('segEx').classList.toggle('on',_VIO);
+}
+function setVioView(v){ _VIO=v; applyVioView(); }
+async function loadStats(){
   let H=[];
   try{const r=await fetch('/api/positions/history');const d=await r.json();H=d.history||[];}catch(e){}
   const R=H.map(parseRec);
@@ -182,36 +323,26 @@ Number.prototype.toFixed1=function(){return this.toFixed(1);};
   R.filter(r=>r.pnl!==null).sort((a,b)=>(a.closeIso||a.closeTime||'').localeCompare(b.closeIso||b.closeTime||''))
     .forEach(r=>{_cum+=r.pnl;_peak=Math.max(_peak,_cum);_dd=Math.max(_dd,_peak-_cum);});
   const mdd=_dd;
-  /* 纪律指标 */
+  /* 纪律指标基础量（结论区用，恒为全量口径） */
   const filled=R.filter(r=>r.result!=='未填').length;
-  const stops=R.filter(r=>r.result==='止损').length;
   const hWin=R.filter(r=>r.pnl>0&&r.hold!==null).map(r=>r.hold);
   const hLoss=R.filter(r=>r.pnl<0&&r.hold!==null).map(r=>r.hold);
-  const avgH=a=>a.length?(a.reduce((x,y)=>x+y,0)/a.length).toFixed(1)+'h':'—';
   const shortR=R.filter(r=>r.hold!==null&&r.hold<3);
   const shortWin=shortR.filter(r=>r.pnl>0).length;
-  const disc=[
-    {k:'简报完整率',v:Math.round(filled/N*100)+'%',s:'每次平仓老老实实写简报，账本才配当镜子。缺的每一笔都是未来的盲区。',gold:true},
-    {k:'认错离场',v:stops+' 次',s:'每一笔止损都是体系在替你止血——这是守规则的表现，不是失败。',gold:true},
-    {k:'止盈单平均持仓',v:avgH(hWin),s:'对比下面止损单的平均持仓',gold:true},
-    {k:'止损单平均持仓',v:avgH(hLoss),s:hWin.length&&hLoss.length?(parseFloat(avgH(hWin))>parseFloat(avgH(hLoss))?'拿得久的在赚钱——账本支持"别提前下车"':'样本还看不出规律'):'样本不足'},
-  ];
-  $('disc').innerHTML=disc.map(d=>'<div class="dcard'+(d.gold?' gold':'')+'"><div class="k">'+d.k+'</div><div class="v">'+d.v+'</div><div class="s">'+d.s+'</div></div>').join('');
-  /* 结果指标 */
-  const mets=[
-    {k:'总笔数',v:N,cls:''},
-    {k:'净盈亏',v:(net>=0?'+':'')+net,cls:net>=0?'pos':'neg'},
-    {k:'胜率（有盈亏的）',v:winRate===null?'—':winRate+'%',cls:''},
-    {k:'平均盈利',v:avgWin===null?'—':'+'+avgWin.toFixed(0),cls:'pos'},
-    {k:'平均亏损',v:avgLoss===null?'—':'-'+avgLoss.toFixed(0),cls:'neg'},
-    {k:'盈亏比',v:plRatio===null?'—':plRatio.toFixed(1)+':1',cls:plRatio&&plRatio>=1.5?'pos':''},
-    {k:'最大单笔盈利',v:maxW===null?'—':'+'+maxW,cls:'pos'},
-    {k:'最大单笔亏损',v:maxL===null?'—':''+maxL,cls:'neg'},
-    {k:'期望值/笔',v:expv===null?'—':(expv>=0?'+':'')+expv.toFixed(0),cls:expv!==null?(expv>=0?'pos':'neg'):''},
-    {k:'盈亏因子',v:pf===null?'—':(pf===Infinity?'∞':pf.toFixed(1)),cls:pf!==null&&pf!==Infinity&&pf>=1.5?'pos':''},
-    {k:'最大回撤',v:mdd===null?'—':'-'+mdd,cls:'neg'},
-  ];
-  $('metrics').innerHTML=mets.map(d=>'<div class="mcard"><div class="k">'+d.k+'</div><div class="v '+(d.v==='—'?'dim':d.cls)+'">'+d.v+'</div></div>').join('');
+  /* 双口径数据（2026-10-19）：纪律指标/矩阵/时间维度/分布图跟随开关，结果指标双行常驻 */
+  const NV=R.filter(r=>r.vio).length;
+  const REx=R.filter(r=>!r.vio);
+  _R=R; _REx=REx; _NV=NV;
+  if(NV===0)_VIO=false;
+  /* 结果指标（双口径两行常驻——用户定稿"千万不要总数据不做了"） */
+  $('capAll').innerHTML='▼ <b>全量口径</b>（'+N+' 笔'+(NV?'，含 '+NV+' 笔已标违规':'')+'）';
+  $('capEx').innerHTML=NV
+    ?'▼ <b style="color:#ef5350;">剔除违规</b>（'+REx.length+' 笔——标记的 '+NV+' 笔不计入，无论盈亏）'
+    :'▼ <b>剔除违规</b>（暂未标记违规单，与全量相同——点明细里"标违规"后这里开始分流）';
+  $('metrics').innerHTML=buildMets(R);
+  $('metricsEx').innerHTML=buildMets(REx);
+  $('vioSeg').style.display=NV?'inline-flex':'none';
+  applyVioView();
   /* 结论（规则生成，带数据引用） */
   const C=[];
   if(plRatio&&wins.length&&losses.length){
@@ -239,91 +370,75 @@ Number.prototype.toFixed1=function(){return this.toFixed(1);};
   }
   const miss=N-filled;
   if(miss>0)C.push({t:'有 <b>'+miss+' 笔</b>没有写简报——数据缺口就是纪律缺口，以后每笔了结走完简报再关弹窗。',c:''});
+  if(NV){
+    const vioPnl=R.filter(r=>r.vio&&r.pnl!==null).reduce((s,r)=>s+r.pnl,0);
+    const netEx=REx.filter(r=>r.pnl!==null).reduce((s,r)=>s+r.pnl,0);
+    C.push({t:'🚫 已标记违规 <b>'+NV+' 笔</b>'+(vioPnl?'，合计盈亏 <b>'+(vioPnl>=0?'+':'')+vioPnl+'</b>':'')+
+      '——剔除后净盈亏 <b>'+(netEx>=0?'+':'')+netEx+'</b>（全量 '+(net>=0?'+':'')+net+'）。'+
+      '违规单是体系外的信息：赚了也是运气，亏了才是体系要说话的地方，都不参与体系判决。',c:'bad'});
+  }
   if(N<10)C.push({t:'样本 '+N+' 笔，还太薄。<b>现在的任务不是让曲线好看，是把简报填满、把规则走完</b>，攒到 30 笔以上这份账本才有判决资格。',c:''});
   $('concl').innerHTML=C.map(c=>'<div class="citem '+c.c+'">'+c.t+'</div>').join('');
-  /* ===== 形态×级别 交叉矩阵（2026-10-16：A/B类 × 级别，样本量分级判决）===== */
-  const kindOf=e=>{e=e||'';return e.startsWith('二')?'A':e.startsWith('三')?'B':'';};
-  const PERIODS=['3','5','15','30m','60'];
-  const COLS=[['A','买','A类买点'],['A','卖','A类卖点'],['B','买','B类买点'],['B','卖','B类卖点']];
-  const groups={};   // 'p|K|S' -> {n,wins,pnl}
-  R.forEach(r=>{
-    const k=kindOf(r.entry); if(!k)return;
-    const side=(r.entry||'').includes('买')?'买':'卖';
-    const key=r.period+'|'+k+'|'+side;
-    const g=groups[key]||(groups[key]={n:0,wins:0,pnl:0});
-    g.n++; if(r.pnl>0)g.wins++; g.pnl+=r.pnl||0;
-  });
-  const cellHtml=g=>{
-    if(!g||g.n<3) return '<td style="color:#56606f;">'+(g?g.n+' 笔':'—')+(g?' · 样本不足':'')+'</td>';
-    const wr=Math.round(g.wins/g.n*100);
-    const strong=g.n>=10?'border:1px solid rgba(240,185,11,.55);':'';
-    return '<td style="'+strong+'"><b>'+g.n+'</b> 笔 · '+wr+'% · <span class="'+(g.pnl>=0?'pos':'neg')+'">'
-      +(g.pnl>=0?'+':'')+Math.round(g.pnl)+'</span></td>';
-  };
-  let mHtml='<table><thead><tr><th>级别</th>'+COLS.map(c=>'<th>'+c[2]+'</th>').join('')+'</tr></thead><tbody>';
-  PERIODS.forEach(p=>{
-    const any=COLS.some(c=>groups[p+'|'+c[0]+'|'+c[1]]);
-    if(!any)return;
-    mHtml+='<tr><td><b>'+(P_LAB[p]||p)+'</b></td>'+COLS.map(c=>cellHtml(groups[p+'|'+c[0]+'|'+c[1]])).join('')+'</tr>';
-  });
-  mHtml+='</tbody></table>';
-  const ab=['A','B'].map(k=>{
-    const g={n:0,wins:0,pnl:0};
-    Object.keys(groups).forEach(key=>{if(key.split('|')[1]!==k)return;const x=groups[key];g.n+=x.n;g.wins+=x.wins;g.pnl+=x.pnl;});
-    return {k,g};
-  });
-  mHtml+='<div class="mut" style="margin-top:8px;">A类合计：'+cellHtml(ab[0].g).replace(/<\/?td[^>]*>/g,'')+
-    '　│　B类合计：'+cellHtml(ab[1].g).replace(/<\/?td[^>]*>/g,'')+'</div>';
-  $('matWrap').innerHTML=mHtml;
+  /* 矩阵/时间维度/分布图已由 applyVioView() 按当前口径渲染（renderMatrix/renderMonths） */
 
-  /* ===== 时间维度（按月分桶）===== */
-  const months={};
-  R.forEach(r=>{
-    const m=(r.closeIso||'').slice(0,7); if(!m)return;
-    const g=months[m]||(months[m]={n:0,wins:0,pnl:0});
-    g.n++; if(r.pnl>0)g.wins++; g.pnl+=r.pnl||0;
-  });
-  let run=0;
-  const mRows=Object.keys(months).sort().map(m=>{
-    const g=months[m]; run+=g.pnl;
-    return '<tr><td><b>'+m+'</b></td><td>'+g.n+'</td><td>'+Math.round(g.wins/g.n*100)+'%</td>'+
-      '<td class="'+(g.pnl>=0?'pos':'neg')+'">'+(g.pnl>=0?'+':'')+Math.round(g.pnl)+'</td>'+
-      '<td class="'+(run>=0?'pos':'neg')+'">'+(run>=0?'+':'')+Math.round(run)+'</td></tr>';
-  }).join('');
-  $('timeWrap').innerHTML=mRows?'<table><thead><tr><th>月份</th><th>笔数</th><th>胜率</th><th>当月净盈亏</th><th>累计</th></tr></thead><tbody>'+mRows+'</tbody></table>'
-    :'<div class="mut">记录缺少平仓时间，暂无法分桶。</div>';
-
-  /* 图表 */
+  /* 图表（累计曲线双线：实线=全量，金色虚线=剔除违规） */
   const sorted=R.filter(r=>r.pnl!==null).sort((a,b)=>(a.closeIso||a.closeTime||'').localeCompare(b.closeIso||b.closeTime||''));
-  drawCurve(sorted);
-  drawDist(R);
+  drawCurve(sorted,sorted.filter(r=>!r.vio));
   /* 明细 */
-  $('tblCap').textContent='（'+N+' 笔，按平仓时间倒序）';
+  $('tblCap').textContent='（'+N+' 笔，按平仓时间倒序'+(NV?' · 🚫 已标违规 '+NV+' 笔':'')+'）';
   $('tbody').innerHTML=R.slice().sort((a,b)=>(b.closeIso||b.closeTime||'').localeCompare(a.closeIso||a.closeTime||''))
-    .map(r=>'<tr><td>'+fmtT(r.closeTime)+'</td><td>'+r.name+'</td><td>'+(P_LAB[r.period]||r.period)+'</td><td>'+posL(r.entry)+'</td>'+
+    .map(r=>'<tr'+(r.vio?' class="vioRow"':'')+'><td>'+fmtT(r.closeTime)+'</td><td>'+r.name+'</td><td>'+(P_LAB[r.period]||r.period)+'</td><td>'+posL(r.entry)+'</td>'+
       '<td>'+(r.hold===null?'—':r.hold+'h')+'</td><td><span class="tag '+r.result+'">'+r.result+'</span></td>'+
-      '<td class="'+(r.pnl==null?'':r.pnl>=0?'pos':'neg')+'">'+(r.pnl===null?'—':(r.pnl>=0?'+':'')+r.pnl)+'</td></tr>').join('');
-})();
+      '<td class="'+(r.pnl==null?'':r.pnl>=0?'pos':'neg')+'">'+(r.pnl===null?'—':(r.pnl>=0?'+':'')+r.pnl)+'</td>'+
+      '<td><span class="vio'+(r.vio?' on':'')+'" onclick="vioToggle(\''+r.id+'\','+(!r.vio)+')">'+(r.vio?'🚫 违规':'标违规')+'</span></td></tr>').join('');
+}
+loadStats();
+async function vioToggle(id,to){
+  try{
+    const r=await fetch('/api/positions/history/violation',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,violation:to})});
+    if(!r.ok){
+      alert('接口异常（HTTP '+r.status+'）——大概率是服务还没重启到最新版本：Ctrl+C 停掉后重新 python server.py 再刷新本页');
+      return;
+    }
+    const d=await r.json();
+    if(d.error){alert(d.error);return;}
+  }catch(e){alert('请求失败: '+e);return;}
+  const y=window.scrollY;   // 重渲后原位不动
+  await loadStats();
+  window.scrollTo(0,y);
+}
 function posL(v){v=v||'';return v.startsWith('二')?('A类'+v):v.startsWith('三')?('B类'+v):v;}
-function drawCurve(rows){
+function drawCurve(rows,rowsEx){
   const cv=$('cCurve'),ctx=cv.getContext('2d');
   cv.width=cv.clientWidth*2;cv.height=360;ctx.scale(2,2);
   const W=cv.clientWidth,H=180;
   if(!rows.length){ctx.fillStyle='#56606f';ctx.fillText('暂无盈亏数据',20,60);return;}
   let cum=0;const pts=rows.map(r=>{cum+=r.pnl;return cum;});
-  const min=Math.min(0,...pts),max=Math.max(0,...pts);
+  let cum2=0;const ptsEx=(rowsEx||[]).map(r=>{cum2+=r.pnl;return cum2;});
+  const all=pts.concat(ptsEx);
+  const min=Math.min(0,...all),max=Math.max(0,...all);
   const pad=30,x0=pad,y0=H-24,gy=H-24-((0-min)/(max-min||1))*(H-48);
   ctx.strokeStyle='#2a2e39';ctx.beginPath();ctx.moveTo(x0,gy);ctx.lineTo(W-8,gy);ctx.stroke();
   ctx.fillStyle='#787b86';ctx.font='10px sans-serif';ctx.fillText('0',6,gy+3);
-  ctx.strokeStyle=pts[pts.length-1]>=0?'#ef5350':'#26a69a';ctx.lineWidth=2;ctx.beginPath();
-  pts.forEach((v,i)=>{
-    const x=x0+(W-x0-12)*(i/Math.max(1,pts.length-1));
-    const y=y0-((v-min)/(max-min||1))*(H-48);
-    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
-  });
-  ctx.stroke();
+  const line=(pts2,color,dash)=>{
+    if(!pts2.length)return;
+    ctx.strokeStyle=color;ctx.lineWidth=2;
+    ctx.setLineDash(dash?[4,3]:[]);
+    ctx.beginPath();
+    pts2.forEach((v,i)=>{
+      const x=x0+(W-x0-12)*(i/Math.max(1,pts2.length-1));
+      const y=y0-((v-min)/(max-min||1))*(H-48);
+      i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+    });
+    ctx.stroke();ctx.setLineDash([]);
+  };
+  line(ptsEx,'#f0b90b',true);                            // 剔除违规：金色虚线
+  line(pts,pts[pts.length-1]>=0?'#ef5350':'#26a69a',false);  // 全量：实线
   ctx.fillStyle='#d1d4dc';ctx.font='12px sans-serif';
-  ctx.fillText('累计 '+(pts[pts.length-1]>=0?'+':'')+pts[pts.length-1],x0+4,16);
+  let txt='累计全量 '+(pts[pts.length-1]>=0?'+':'')+pts[pts.length-1];
+  if(ptsEx.length)txt+='　·　剔除违规 '+(ptsEx[ptsEx.length-1]>=0?'+':'')+ptsEx[ptsEx.length-1]+'（虚线）';
+  ctx.fillText(txt,x0+4,16);
 }
 function drawDist(R){
   const cv=$('cDist'),ctx=cv.getContext('2d');
