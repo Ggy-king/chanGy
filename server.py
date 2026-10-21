@@ -1723,6 +1723,29 @@ async def api_positions_history():
     return JSONResponse({'history': _history_load()})
 
 
+@app.post('/api/positions/history/violation')
+async def api_history_violation(request: Request):
+    """统计页违规标记（2026-10-19）：history 记录级布尔位。
+    统计出两口径：全量 / 剔除违规——前端双份展示，本接口只负责标记持久化。"""
+    p = await request.json()
+    hid = str(p.get('id', ''))
+    vio = bool(p.get('violation'))
+    _history_pull_merge(force=True)   # 写前强拉合并，防覆盖手机端新简报
+    with _POS_LOCK:
+        hist = _history_load()
+        rec = next((x for x in hist if x['id'] == hid), None)
+        if rec is None:
+            return JSONResponse({'error': '未找到该平仓记录'}, status_code=404)
+        if vio:
+            rec['violation'] = True       # 只增字段，兼容旧记录与手机端
+        else:
+            rec.pop('violation', None)    # 取消标记=物理移除，保持记录干净
+        _history_save(hist)
+    _POS_DIRTY['history.json'] = True
+    _bg_sync()
+    return JSONResponse({'ok': True, 'id': hid, 'violation': vio})
+
+
 # ==================== 持仓出场提示（三个价，2026-10-14 定稿） ====================
 # 规则文档：持仓出场逻辑-止盈规则说明（用户与外部 AI 对话定稿，本系统口径优先）。
 # 口径对齐：中枢=本级别笔中枢（chanlun/zs.py），延伸=关 → [ZD,ZG] 成枢后固定（与文档一致，

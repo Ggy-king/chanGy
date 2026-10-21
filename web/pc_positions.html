@@ -156,6 +156,16 @@ main{flex:1;overflow-y:auto;scrollbar-width:thin;padding:8px;}
     <input type="hidden" id="pcDelId">
   </div>
 </div>
+<div class="modal" id="pcWarn">
+  <div class="box" style="border:2px solid #f0b90b;">
+    <div style="font-size:15px;font-weight:800;color:#f0b90b;margin-bottom:10px;">⚠ 结果和盈亏对不上</div>
+    <div id="pwB" style="font-size:13px;line-height:2;color:#d1d4dc;margin-bottom:16px;"></div>
+    <div style="display:flex;gap:9px;justify-content:flex-end;">
+      <button class="btn" onclick="document.getElementById('pcWarn').style.display='none'">我去改一下</button>
+      <button class="btn" style="background:#f0b90b;color:#131722;font-weight:700;" onclick="pcWarnGo()">没选错，继续平仓</button>
+    </div>
+  </div>
+</div>
 <div class="modal" id="pfModal">
   <div class="box">
     <h3 style="margin:0 0 14px;font-size:15px;">编辑持仓</h3>
@@ -387,6 +397,26 @@ function posDel(id){
   $('pcModal').style.display='flex';
 }
 async function posDelConfirm(){
+  const id=$('pcDelId').value;
+  const selB=document.querySelector('#pcResults button.sel');
+  const res=selB?selB.dataset.v:'';
+  const raw=$('pcPnl').value.trim();
+  const pnl=parseFloat(raw);
+  /* 结果与盈亏符号交叉校验（2026-10-19）：负数不可能是止盈，正数不可能是止损——弹层确认防手滑 */
+  if(raw&&!isNaN(pnl)&&pnl!==0&&((res==='止盈'&&pnl<0)||(res==='止损'&&pnl>0))){
+    $('pwB').innerHTML='盈亏填的是 <b style="color:'+(pnl<0?'#26a69a':'#ef5350')+'">'+(pnl>0?'+':'')+pnl+
+      '</b>，结果选的却是 <b style="color:#f0b90b">'+res+'</b>——'+
+      (pnl<0?'亏了钱一般不是止盈，<b>是不是把止损点成止盈了？</b>':'赚了钱一般不是止损，<b>是不是把止盈点成止损了？</b>');
+    $('pcWarn').style.display='flex';
+    return;   // 拦下，等用户决定
+  }
+  await posDelGo();
+}
+async function pcWarnGo(){
+  $('pcWarn').style.display='none';
+  await posDelGo();
+}
+async function posDelGo(){
   const id=$('pcDelId').value;
   const selB=document.querySelector('#pcResults button.sel');
   try{
