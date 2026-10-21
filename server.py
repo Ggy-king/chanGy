@@ -1016,6 +1016,36 @@ async def fees_refresh_loop():
         print('[fees] 启动刷新失败（沿用旧缓存）：', e)
 
 
+async def keepwarm_loop():
+    """连接保温（2026-10-21 事故复盘，用户定稿：只在监控关闭时运行）：
+    监控总开关关闭后没有任何循环去摸天勤连接，而 TqSdk 的断线重连只在
+    wait_update 里推进（拉式、无后台线程）——闲置半小时连接必死（free-api
+    周期性掐线）。此时第一次点详情页要吃整套恢复流程：3s+15s 死亡判定 →
+    主动重建重新认证 → 重新订阅 → 等历史块落地（最多15s），前端转圈十几秒。
+    监控开着时 pattern_loop 本身在持续摸连接，无需保温（零重复开销）。
+    所以：仅当 _MON['enabled']=False 且有品种在交易时段，每 60s 把盯盘清单
+    全量过一遍（只拉数不算形态，缓存复用开销极小）。非交易时段不摸连接：
+    收市品种 _market_idle 直接回缓存，本就不需要活连接。"""
+    await asyncio.sleep(25)
+    while True:
+        try:
+            if not _MON['enabled'] and trading_time.any_product_in_session():
+                loop = asyncio.get_event_loop()
+                for c in config.CONTRACTS:
+                    for period in config.PATTERN_PERIODS:
+                        psec = engine._TQ_PERIOD.get(period, 900)
+                        try:
+                            await loop.run_in_executor(
+                                None, engine.tq.fetch_kline, c['symbol'], psec, 1000)
+                        except engine.tq.TqAuthError:
+                            return   # 认证失败不可自愈，保温无意义，等改配置重启
+                        except Exception:
+                            pass     # 掐线重连窗口：本轮跳过，下轮自愈
+        except Exception as e:
+            print('[keepwarm] 保温循环异常:', e)
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动自检：关键配置缺失时明确说出来，避免"静默失败跑几天才发现"（2026-10-11）
@@ -1032,12 +1062,14 @@ async def lifespan(app: FastAPI):
     pattern_task = asyncio.create_task(pattern_loop())
     fees_task = asyncio.create_task(fees_refresh_loop())
     posbi_task = asyncio.create_task(posbi_loop())
+    warm_task = asyncio.create_task(keepwarm_loop())
     yield
     task.cancel()
     alert_task.cancel()
     pattern_task.cancel()
     fees_task.cancel()
     posbi_task.cancel()
+    warm_task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)

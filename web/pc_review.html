@@ -318,14 +318,14 @@ async function renderWeekly(){
       '</td><td>'+posL(t.entry)+'</td><td><span class="vtag '+cl+'">'+tx+'</span></td>'+
       '<td class="'+(t.pnl==null?'':t.pnl>=0?'pos':'neg')+'">'+(t.pnl==null?'—':(t.pnl>=0?'+':'')+t.pnl)+'</td></tr>';
   }).join('')||'<tr><td colspan="6" class="mut">本周无交易记录</td></tr>';
-  const ag=saved.agent;
+  const ag=(saved.agent&&saved.agent.text)?saved.agent:null;   // 空文本存档（旧版思考烧尽token的产物）按无记录处理
   const agentHtml=`<div class="sec" style="border-color:rgba(179,136,255,.35);">
     <h2>🤖 AI 纪律教练<span class="sub">——只评过程与心态，不荐单不预测；数据已脱敏（时间到小时、无资金量）</span></h2>
     ${ag?`<div class="agenttxt">${ag.text.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>
       <div class="mut" style="margin-top:6px;">${ag.model} · 生成于 ${ag.created} · 重跑会覆盖</div>`
       :'<div class="mut" style="margin-bottom:8px;">还没有分析记录。先把上面的审计项裁决完、问答写完——喂得越全，它说得越准。</div>'}
     <div style="margin-top:8px;"><button class="btn" id="agentBtn" onclick="runAgent()">${ag?'🔄 重新分析':'✨ 生成本周 AI 分析'}</button>
-      <span class="mut" style="margin-left:8px;">约 10-30 秒 · 首次使用需在 secret.py 配置 ZHIPU_API_KEY</span></div>
+      <span class="mut" style="margin-left:8px;">约 30-120 秒（深度思考模型较慢）· 首次使用需在 secret.py 配置 ZHIPU_API_KEY</span></div>
   </div>`;
   v.innerHTML=`${repHtml}${agentHtml}
   <div class="sec">
@@ -399,7 +399,7 @@ async function runAgent(){
   const b=$('agentBtn'); if(!b||b.disabled)return;
   const doRun=async()=>{
     const y=window.scrollY;
-    b.disabled=true; b.textContent='分析中…（约 10-60 秒）';
+    b.disabled=true; b.textContent='分析中…（约 30-120 秒）';
     try{
       const r=await api('/api/agent/weekly',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({week:weeklyData?weeklyData.week:''})});

@@ -107,9 +107,9 @@
   <button class="btn buy" onclick="simulate('buy')">模拟买入</button>
   <button class="btn sell" onclick="simulate('sell')">模拟卖出</button>
   <button class="btn" onclick="refresh()"><span style="font-size:15px;vertical-align:-1.5px;">⟳</span> 刷新</button>
-  <button class="btn" style="border-color:#f0b90b;color:#f0b90b;" onclick="location.href='/pc/backtest'">📈 回测</button>
-  <button class="btn" style="border-color:#00d2d3;color:#00d2d3;" onclick="location.href='/pc/matrix'" title="全品种×全级别形态监控矩阵">▦ 监控</button>
-  <button class="btn" style="border-color:#b388ff;color:#b388ff;" onclick="location.href='/pc/review'" title="日审计/周复盘/月复盘/体系疑问">📖 复盘</button>
+  <a class="btn" style="border-color:#f0b90b;color:#f0b90b;text-decoration:none;" href="/pc/backtest" target="_blank">📈 回测</a>
+  <a class="btn" style="border-color:#00d2d3;color:#00d2d3;text-decoration:none;" href="/pc/matrix" target="_blank" title="全品种×全级别形态监控矩阵">▦ 监控</a>
+  <a class="btn" style="border-color:#b388ff;color:#b388ff;text-decoration:none;" href="/pc/review" target="_blank" title="日审计/周复盘/月复盘/体系疑问">📖 复盘</a>
   <button class="btn alert-list-btn" id="alertListBtn" onclick="toggleAlertList()" title="预警列表">🔔<span class="badge" id="alertBadge">0</span></button>
   <button class="btn" style="border-color:#26a69a;color:#26a69a;" onclick="location.href='/pc/health'" title="系统全绿自检">🩺 自检</button>
 </header>
