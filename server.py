@@ -1031,11 +1031,13 @@ async def lifespan(app: FastAPI):
     alert_task = asyncio.create_task(alert_loop())
     pattern_task = asyncio.create_task(pattern_loop())
     fees_task = asyncio.create_task(fees_refresh_loop())
+    posbi_task = asyncio.create_task(posbi_loop())
     yield
     task.cancel()
     alert_task.cancel()
     pattern_task.cancel()
     fees_task.cancel()
+    posbi_task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -1151,7 +1153,7 @@ def _health_checks():
     try:
         yest = (dt.date.today() - dt.timedelta(days=1)).isoformat()
         a = _reviews_load().get('daily', {}).get(yest) or _audit_day(yest)
-        st = a.get('status')
+        st = a.get('status') or ''
         add('昨日审计', {'green': 'green', 'yellow': 'yellow', 'red': 'red', 'closed': 'green'}.get(st, 'yellow'),
             {'green': '全合规', 'yellow': '有疑似项待裁决', 'red': '有确定违规', 'closed': '休市日'}.get(st, '未生成'))
     except Exception:
@@ -1221,6 +1223,12 @@ async def asset_struct_zone_js():
 async def asset_popup_cards_js():
     """右上角预警弹卡全局组件（监控/详情/列表页共用，2026-10-12 用户定稿）"""
     return _page('popup_cards.js')
+
+
+@app.get('/posbi_cards.js')
+async def asset_posbi_cards_js():
+    """左上角持仓确认笔强制提醒全局组件（2026-10-21 定稿）"""
+    return _page('posbi_cards.js')
 
 
 @app.get('/favicon.svg')
@@ -1498,6 +1506,7 @@ def _bg_sync():
     下次任意持仓 API 调用时再触发（自愈）。"""
     def run():
         with _SYNC_LOCK:                 # 串行：并发推送会互相用旧 sha 覆盖（实测教训）
+            last_err = ''                # 全部轮次都没失败时也要有值（否则收尾 print 会 NameError）
             for _ in range(3):
                 errs = []
                 for remote, dirty in list(_POS_DIRTY.items()):
@@ -1513,10 +1522,11 @@ def _bg_sync():
                     if not any(_POS_DIRTY.values()):
                         return           # 收尾复查：期间若有新变更则再跑一轮
                     continue
-                err = '; '.join(errs)
-                _POS_LAST_ERR[0] = err
+                last_err = '; '.join(errs)
+                _POS_LAST_ERR[0] = last_err
                 time.sleep(2)
-            print(f'[持仓] Gitee 同步失败（将于下次操作时重试）: {err}')
+            if last_err:
+                print(f'[持仓] Gitee 同步失败（将于下次操作时重试）: {last_err}')
     threading.Thread(target=run, daemon=True).start()
 
 
@@ -1721,6 +1731,157 @@ async def api_positions_delete(request: Request):
 async def api_positions_history():
     _history_pull_merge()   # 手机端简报先回灌，统计页看到的就是全量最新
     return JSONResponse({'history': _history_load()})
+
+
+# ==================== 持仓确认笔提醒（2026-10-21 定稿） ====================
+# 持仓 品种×级别 独立扫描：新完成笔（确认笔）成立 → 推左上角强制弹卡，点"确认"才消。
+# 有独立开关（与形态监控开关互不影响）；数据存 data/posbi.json，跨页面/跨设备一致。
+_POSBI_FILE = os.path.join(_HERE, 'data', 'posbi.json')
+_POSBI_LOCK = asyncio.Lock()
+
+
+def _posbi_load():
+    """每次从盘上读（文件小、30s 一轮，代价可忽略）——手工改文件也能即时生效，便于调试。"""
+    try:
+        with open(_POSBI_FILE, encoding='utf-8') as f:
+            d = json.load(f)
+        return {'switch': bool(d.get('switch')), 'alerts': d.get('alerts') or [], 'seen': d.get('seen') or {}}
+    except Exception:
+        return {'switch': False, 'alerts': [], 'seen': {}}
+
+
+def _posbi_save(d):
+    try:
+        with open(_POSBI_FILE, 'w', encoding='utf-8') as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+    except Exception as e:
+        print('[posbi] 保存失败:', e)
+
+
+def _posbi_pairs():
+    """当前持仓的 品种×级别 去重列表 [(sym, period, name)]"""
+    pairs, seen = [], set()
+    for p in _positions_load():
+        key = (p['symbol'], p.get('period', '15'))
+        if key in seen:
+            continue
+        seen.add(key)
+        pairs.append((p['symbol'], key[1], config.CONTRACT_MAP.get(p['symbol'], {}).get('name', p['symbol'])))
+    return pairs
+
+
+def _posbi_last_bi(sym, period):
+    """该品种级别最后一根完成笔（不含进行中笔）；拉不到/算不出返回 None"""
+    import pandas as pd
+    try:
+        period_sec = engine._TQ_PERIOD.get(period, 900)
+        df = engine.tq.fetch_kline(sym, period_sec, data_length=500)
+        if df is None or len(df) == 0:
+            return None
+        df = df.reset_index(drop=True)
+        if df['datetime'].dt.tz is None:
+            df['datetime'] = pd.to_datetime(df['datetime'])
+        df = df.dropna(subset=['open', 'high', 'low', 'close'])
+        if len(df) > 1:   # 剔除未完结K线（与形态监控同口径，2026-10-08 定稿）
+            _last = df['datetime'].iloc[-1]
+            _now = pd.Timestamp.now(tz=_last.tz) if _last.tzinfo else pd.Timestamp.now()
+            if (_now - _last).total_seconds() < period_sec:
+                df = df.iloc[:-1]
+        merged = engine.merge_klines(df)
+        top_fx, bottom_fx = engine.find_fenxing(merged)
+        bi_list = engine.build_bi(top_fx, bottom_fx, merged, **_pattern_bi_conf)
+        if not bi_list:
+            return None
+        b = bi_list[-1]
+        return {'fp': f"{b['end_datetime']}|{round(float(b['end_price']), 1)}",
+                'dir': 'up' if b['direction'] == 'up' else 'down',
+                'price': float(b['end_price']), 'time': str(b['end_datetime'])[:16]}
+    except Exception as e:
+        print(f'[posbi] {sym} {period} 扫描失败: {e}')
+        return None
+
+
+async def posbi_loop():
+    """持仓确认笔扫描循环（独立于 pattern_loop/监控开关）：30s 一轮。
+    首次见到某 品种×级别 → 静默建基线（避免开启瞬间历史笔轰炸）；
+    之后每出现一根新完成笔 → 建提醒 + WS 广播；平仓即清基线，再进场重新静默。"""
+    await asyncio.sleep(20)
+    while True:
+        try:
+            pb = _posbi_load()
+            if pb['switch']:
+                async with _POSBI_LOCK:
+                    changed = False
+                    pairs = _posbi_pairs()
+                    valid = {f'{s}|{p}' for s, p, _ in pairs}
+                    for k in list(pb['seen']):        # 平仓的品种×级别清出基线：
+                        if k not in valid:            # 再进场时视为首见，重新静默建基线（不弹旧笔）
+                            del pb['seen'][k]
+                            changed = True
+                    for sym, period, name in pairs:
+                        key = f'{sym}|{period}'
+                        info = _posbi_last_bi(sym, period)
+                        if info is None:
+                            continue
+                        if key not in pb['seen']:
+                            pb['seen'][key] = info['fp']          # 基线：静默
+                            changed = True
+                        elif pb['seen'][key] != info['fp']:
+                            pb['seen'][key] = info['fp']
+                            changed = True
+                            alert = {'id': str(int(time.time() * 1000)), 'sym': sym, 'name': name,
+                                     'period': period, 'dir': info['dir'], 'price': info['price'],
+                                     'time': info['time'],
+                                     'created': dt.datetime.now().strftime('%m-%d %H:%M')}
+                            pb['alerts'].insert(0, alert)
+                            pb['alerts'] = pb['alerts'][:50]      # 上限保护
+                            print(f"[posbi] 确认笔: {name} {period} {info['dir']} {info['price']}")
+                            await manager.broadcast({'type': 'posbi_new', 'alert': alert, 'ts': time.time()})
+                    if changed:
+                        _posbi_save(pb)
+        except Exception as e:
+            print('[posbi] 循环异常:', e)
+        await asyncio.sleep(30)
+
+
+@app.get('/api/posbi')
+async def api_posbi():
+    pb = _posbi_load()
+    return JSONResponse({'switch': pb['switch'], 'alerts': pb['alerts']})
+
+
+@app.post('/api/posbi/switch')
+async def api_posbi_switch(request: Request):
+    p = await request.json()
+    on = bool(p.get('on'))
+    async with _POSBI_LOCK:
+        pb = _posbi_load()
+        pb['switch'] = on
+        if not on:
+            pb['alerts'] = []          # 关闭即清空未确认卡（都关功能了，卡不该再飘着）
+        _posbi_save(pb)
+    await manager.broadcast({'type': 'posbi_switch', 'on': on, 'alerts': pb['alerts'], 'ts': time.time()})
+    return JSONResponse({'ok': True, 'switch': on, 'alerts': pb['alerts']})
+
+
+@app.post('/api/posbi/ack')
+async def api_posbi_ack(request: Request):
+    p = await request.json()
+    aid = str(p.get('id', ''))
+    removed = None
+    async with _POSBI_LOCK:
+        pb = _posbi_load()
+        hit = [x for x in pb['alerts'] if x['id'] == aid]
+        if hit:
+            removed = hit[0]
+            pb['alerts'] = [x for x in pb['alerts'] if x['id'] != aid]
+            _posbi_save(pb)
+    if removed:
+        await manager.broadcast({'type': 'posbi_ack', 'id': aid, 'ts': time.time()})
+    return JSONResponse({'ok': True})
+
+
+@app.get('/api/positions/history')
 
 
 @app.post('/api/positions/history/violation')
@@ -2286,7 +2447,7 @@ def _weekly_report(items, disp, done=None):
         sym0 = next(iter(vio_syms), None)
         if sym0 and vio_syms[sym0] >= 3:
             advice.append(f'{sym0} 一周被你确认违规 {vio_syms[sym0]} 次：单品种反复出问题，职业惯例是连错 3 次停做该品种一个交易日，让注意力换台再回来。')
-        hr0 = max(vio_hours, key=vio_hours.get) if vio_hours else None
+        hr0 = max(vio_hours, key=lambda k: vio_hours[k]) if vio_hours else None
         if hr0 and hr0 != '未知' and vio_hours[hr0] >= 2:
             advice.append(f'违规集中在 {hr0} 点时段（{vio_hours[hr0]} 次）：午后犯困/夜盘疲劳是经典的高违规时段，考虑该时段只看不动，或强制降仓。')
         if certain:
@@ -2364,6 +2525,7 @@ async def api_review_weekly_post(request: Request):
 def _agent_weekly_pack(week: str = ''):
     """第一个 Agent（周复盘分析师）的数据包：聚合 + 用户问答/行动项/在办假设。
     脱敏在 agent/tools.redact_trades 收口（时间到小时、无资金总量）。"""
+    assert agent_tools is not None          # 调用方（api_agent_weekly）已守卫；此处仅供类型检查
     d = _weekly_data(week)
     disp, tdisp = d['disp'], {}
     for it in d['items']:
@@ -2409,8 +2571,9 @@ async def api_agent_weekly(request: Request):
         return JSONResponse({'error': '未配置智谱 API key：bigmodel.cn 免费领取后，'
                                       '在 secret.py 加一行  ZHIPU_API_KEY = "你的key"（改完需重启）'}, status_code=400)
     pack = _agent_weekly_pack(d['week'])
+    wa = agent_weekly                       # 局部别名：闭包/lambda 内 Pylance 不做跨变量收窄
     try:
-        res = await asyncio.get_event_loop().run_in_executor(None, lambda: agent_weekly.run(pack))
+        res = await asyncio.get_event_loop().run_in_executor(None, lambda: wa.run(pack))
     except Exception as e:
         return JSONResponse({'error': '分析失败：' + str(e)}, status_code=500)
     with _REVIEW_LOCK:
@@ -2492,7 +2655,7 @@ async def api_review_monthly(month: str = ''):
         cum += t['pnl']
         peak = max(peak, cum)
         mdd = max(mdd, peak - cum)
-    extreme = {'best': None, 'worst': None}
+    extreme: dict = {'best': None, 'worst': None}
     if pnls:
         extreme['best'] = _t_pub(max(trades, key=lambda t: t['pnl'] or 0))
         extreme['worst'] = _t_pub(min(trades, key=lambda t: t['pnl'] if t['pnl'] is not None else 0))
@@ -2749,7 +2912,11 @@ if __name__ == '__main__':
             accs = getattr(secret, 'ACCOUNTS', None)
             if accs:
                 return [(a.get('name') or a['user'], a['user'], a['pwd']) for a in accs]
-            return [('main', secret.TQ_USER, secret.TQ_PASS)]
+            u = getattr(secret, 'TQ_USER', None)
+            pw = getattr(secret, 'TQ_PASS', None)
+            if not (u and pw):
+                raise RuntimeError('secret.py 缺少 TQ_USER/TQ_PASS（新格式请改用 ACCOUNTS 列表）')
+            return [('main', u, pw)]
         except ImportError:
             return []
 
