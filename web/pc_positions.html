@@ -20,6 +20,9 @@ header h1 span{color:#4a9eff;}
 .btn{border:1px solid #2a2e39;background:#2a2e39;color:#d1d4dc;border-radius:8px;padding:5px 11px;
   font-size:12px;cursor:pointer;text-decoration:none;display:inline-block;}
 .btn:hover{border-color:#4a9eff;color:#4a9eff;}
+.vsel{background:#1e222d;color:#d1d4dc;border:1px solid #2a2e39;border-radius:6px;
+  font-size:11px;padding:2px 4px;cursor:pointer;margin-left:2px;}
+.vsel:hover{border-color:#4a9eff;}
 /* ===== 2×2 四宫格：小头(品种条) + 迷你K线笔图 / 添加 ===== */
 main{flex:1;overflow-y:auto;scrollbar-width:thin;padding:8px;}
 #wrap{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:repeat(2,minmax(0,1fr));
@@ -80,8 +83,24 @@ main{flex:1;overflow-y:auto;scrollbar-width:thin;padding:8px;}
   <span class="sp"></span>
   <span class="conn" style="display:flex;align-items:center;gap:6px;font-size:12px;color:#787b86;">
     <span class="dot" id="dot"></span><span id="connTx">连接中…</span></span>
-  <a class="btn" href="/pc/matrix">← 矩阵</a>
+  <button class="btn" onclick="cfgToggle()">⚙ 设置</button>
 </header>
+
+<!-- 设置面板（存本机） -->
+<div id="cfgPanel" style="display:none;position:fixed;top:52px;right:16px;z-index:130;background:#1e222d;
+     border:1px solid #f0b90b66;border-radius:12px;padding:13px 15px;width:260px;box-shadow:0 12px 36px #000d;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+    <b style="font-size:13px;">设置</b>
+    <span style="cursor:pointer;color:#787b86;" onclick="cfgToggle()">×</span>
+  </div>
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <span style="font-size:12px;">右侧价格轴</span>
+    <div style="display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;" title="每个模块图右边的价格刻度；关掉图更宽更清爽，鼠标悬停十字线仍能看到价格">
+      <button id="psOn" onclick="psChange(true)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">开</button>
+      <button id="psOff" onclick="psChange(false)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">关</button>
+    </div>
+  </div>
+</div>
 <main><div id="wrap"></div></main>
 
 <!-- 添加观察（≠持仓） -->
@@ -247,6 +266,43 @@ function buildSlots(){
 }
 function watchesDup(w){return POSITIONS.some(p=>p.symbol===w.symbol&&String(p.period)===String(w.period));}
 
+/* ---------- 槽位看图级别：临时串大小级别看图，本级别金色加粗不忘（按槽位记 localStorage） ---------- */
+const VIEW_KEY='cl_cockpit_view';
+let VIEW={};
+try{VIEW=JSON.parse(localStorage.getItem(VIEW_KEY)||'{}');}catch(e){VIEW={};}
+function saveViewPer(){try{localStorage.setItem(VIEW_KEY,JSON.stringify(VIEW));}catch(e){}}
+function viewPeriod(i,base){const v=VIEW[i];return (v&&P_LAB[v])?String(v):String(base);}
+function perTagHtml(base,per){
+  const bl='<b style="color:#f0b90b">本 '+(P_LAB[base]||base)+'</b>';
+  if(String(per)===String(base))return bl;
+  return bl+' <span style="color:#9aa0b0">· 看 '+(P_LAB[per]||per)+'</span>';
+}
+function viewSelHtml(i,base){
+  const cur=viewPeriod(i,base);
+  const opts=Object.keys(P_LAB).map(k=>
+    '<option value="'+k+'"'+(String(k)===cur?' selected':'')+'>'+P_LAB[k]+(String(k)===String(base)?' · 本':'')+'</option>').join('');
+  return '<select class="vsel" title="切换看图级别（只改这张图，不动持仓级别）" onchange="viewChange('+i+',this.value)">'+opts+'</select>';
+}
+function viewChange(i,per){
+  VIEW[i]=per;saveViewPer();
+  const s=_slotList[i];
+  if(s){
+    const base=s.pos?s.pos.period:(s.watch?s.watch.period:null);
+    const tag=$('vtag_'+i);
+    if(tag&&base)tag.innerHTML=perTagHtml(base,per)+' · '+(s.pos?posLabel(s.pos.entry)+' 进 · 已持 '+durTxt(s.pos):'只看');
+    const dl=$('dl_'+i);
+    if(dl)dl.href='/pc/detail?sym='+encodeURIComponent(s.pos?s.pos.symbol:s.watch.symbol)+'&period='+encodeURIComponent(per);
+  }
+  remount(i);
+}
+function remount(i){
+  const c=CHARTS[i];
+  if(c){try{c.timer&&clearInterval(c.timer);}catch(e){}try{c.chart.remove();}catch(e){}delete CHARTS[i];}
+  const s=_slotList[i];if(!s)return;
+  const sym=s.pos?s.pos.symbol:(s.watch?s.watch.symbol:null);
+  if(sym)mountChart(i,sym,viewPeriod(i,s.pos?s.pos.period:s.watch.period));
+}
+
 /* ---------- 渲染：结构变了才重建（保图表），否则只刷新小头动态数字 ---------- */
 function render(){
   const slots=buildSlots();
@@ -258,7 +314,7 @@ function render(){
   slots.forEach((s,i)=>wrap.appendChild(slotEl(s,i)));
   slots.forEach((s,i)=>{
     const sym=s.pos?s.pos.symbol:(s.watch?s.watch.symbol:null);
-    if(sym)mountChart(i,sym,s.pos?s.pos.period:s.watch.period);
+    if(sym)mountChart(i,sym,viewPeriod(i,s.pos?s.pos.period:s.watch.period));
   });
   updateDyn();
 }
@@ -270,7 +326,8 @@ function slotEl(s,i){
     const p=s.pos,long=posIsLong(p);
     head='<span class="pname">'+p.name+'</span><span class="psym">'+p.symbol+'</span>'+
       '<span class="dir '+(long?'long':'short')+'">'+(long?'▲ 多单':'▼ 空单')+'</span>'+
-      '<span class="mut">'+(P_LAB[p.period]||p.period)+' · '+posLabel(p.entry)+' 进 · 已持 '+durTxt(p)+'</span>'+
+      '<span class="mut" id="vtag_'+i+'">'+perTagHtml(p.period,viewPeriod(i,p.period))+' · '+posLabel(p.entry)+' 进 · 已持 '+durTxt(p)+'</span>'+
+      viewSelHtml(i,p.period)+
       '<span class="sp"></span>'+
       '<span class="px" id="px_'+i+'">—</span>'+
       '<span class="pnl" id="pnl_'+i+'" style="display:none;"></span>'+
@@ -280,11 +337,12 @@ function slotEl(s,i){
   }else if(s.watch){
     const w=s.watch;
     head='<span class="pname">'+(cname(w.symbol))+'</span><span class="psym">'+w.symbol+'</span>'+
-      '<span class="mut">'+(P_LAB[w.period]||w.period)+' · 只看</span>'+
+      '<span class="mut" id="vtag_'+i+'">'+perTagHtml(w.period,viewPeriod(i,w.period))+' · 只看</span>'+
+      viewSelHtml(i,w.period)+
       '<span class="sp"></span>'+
       '<span class="px" id="px_'+i+'" style="font-size:13px;color:#9aa0b0;">—</span>'+
       '<button class="hold" onclick="holdOpen('+i+')">➕ 持仓</button>'+
-      '<a class="btn" style="padding:4px 9px;" href="/pc/detail?sym='+encodeURIComponent(w.symbol)+'&period='+encodeURIComponent(w.period)+'" target="_blank">📊</a>'+
+      '<a class="btn" id="dl_'+i+'" style="padding:4px 9px;" href="/pc/detail?sym='+encodeURIComponent(w.symbol)+'&period='+encodeURIComponent(viewPeriod(i,w.period))+'" target="_blank">📊</a>'+
       '<button onclick="removeWatch('+i+')">移除</button>';
   }else{
     head='<span class="mut">空槽位 · 添加后在这里盯笔</span>';
@@ -362,6 +420,27 @@ function zoomApply(i){
     c.chart.timeScale().scrollToRealTime();
   }catch(e){}
 }
+/* ---------- 设置面板：右侧价格轴开关（存本机，实时作用于全部模块图） ---------- */
+let _pscale=true;
+try{_pscale=localStorage.getItem('cl_pscale_visible')!=='0';}catch(e){}
+function paintSeg(onId,offId,on){
+  const o=$(onId),f=$(offId);if(!o||!f)return;
+  o.style.background=on?'#2c3140':'#1e222d';o.style.color=on?'#f0b90b':'#787b86';o.style.fontWeight=on?'700':'400';
+  f.style.background=!on?'#2c3140':'#1e222d';f.style.color=!on?'#f0b90b':'#787b86';f.style.fontWeight=!on?'700':'400';
+}
+function psApply(c){try{c.chart.applyOptions({rightPriceScale:{visible:_pscale}});}catch(e){}}
+function psChange(on){
+  _pscale=on;
+  try{localStorage.setItem('cl_pscale_visible',on?'1':'0');}catch(e){}
+  Object.values(CHARTS).forEach(psApply);
+  paintSeg('psOn','psOff',_pscale);
+}
+function cfgToggle(){
+  const p=$('cfgPanel');
+  const show=p.style.display==='none';
+  p.style.display=show?'block':'none';
+  if(show)paintSeg('psOn','psOff',_pscale);
+}
 function destroyCharts(){
   Object.values(CHARTS).forEach(c=>{try{c.timer&&clearInterval(c.timer);}catch(e){}try{c.chart.remove();}catch(e){}});
   Object.keys(CHARTS).forEach(k=>delete CHARTS[k]);
@@ -379,6 +458,7 @@ function mountChart(i,sym,period){
   const bi=chart.addLineSeries({color:'#f0b90b',lineWidth:1,
     priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
   CHARTS[i]={sym,period,chart,candle,bi,lastBi:'',timer:null};
+  psApply(CHARTS[i]);
   refreshChart(i);
   ctimer(i);
 }
