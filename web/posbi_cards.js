@@ -100,7 +100,14 @@ const PosBI = (function () {
       ws = new WebSocket(proto + '://' + location.host + '/ws?role=pc');
       ws.onmessage = function (ev) {
         let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
-        if (m.type === 'posbi_new' && m.alert) render(m.alert);
+        if (m.type === 'posbi_new' && m.alert) {
+          render(m.alert);
+          try {   // 跨应用系统横幅（2026-10-22）：确认笔卡必须确认才消，人不在页面时也得知道
+            if ('Notification' in window && Notification.permission === 'granted')
+              new Notification('🖊 确认笔 · ' + m.alert.name + ' ' + (P_LAB[m.alert.period] || m.alert.period),
+                { body: (m.alert.dir === 'up' ? '▲ 向上笔' : '▼ 向下笔') + ' 端点 ' + m.alert.price + ' —— 点确认才消', tag: 'posbi_' + m.alert.id });
+          } catch (e) {}
+        }
         else if (m.type === 'posbi_ack' && m.id) kill(m.id);        // 任意一端确认 → 全部消
         else if (m.type === 'posbi_switch') applySwitch(m.on, m.alerts);
       };
