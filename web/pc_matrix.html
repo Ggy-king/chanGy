@@ -181,20 +181,27 @@ select{appearance:none;-webkit-appearance:none;
   <h1>形态<span>监控矩阵</span></h1>
   <div class="conn"><span class="dot" id="dot"></span><span id="connTx">连接中…</span></div>
   <div class="sp"></div>
-  <button class="btn" id="muteBtn" onclick="toggleMute()">🔊 提示音开</button>
+  <button class="btn" id="muteBtn" onclick="sndQuickToggle()">🔊 提示音</button>
   <button class="btn" onclick="sndPanelToggle()" title="声音分类设置：确认/触发与候选分开调音">♪ 设置</button>
   <button class="btn" id="posBtn" onclick="togglePosPanel()">持仓 <span id="posCountHdr" class="mut" style="font-size:11px"></span></button>
   <a class="btn" style="text-decoration:none;color:#4a9eff;border-color:#4a9eff66" href="/pc/stats" target="_blank">📊 统计</a>
 </header>
 
-<!-- 右上角预警弹卡容器 + 声音分类设置面板（弹卡容器由 popup_cards.js 按需创建） -->
-<div id="sndPanel" style="display:none;position:fixed;top:52px;right:16px;z-index:130;background:#1e222d;
-     border:1px solid #f0b90b66;border-radius:12px;padding:13px 15px;width:260px;box-shadow:0 12px 36px #000d;">
+<!-- 右上角预警弹卡容器 + 提示音面板 + 技术设置面板（弹卡容器由 popup_cards.js 按需创建） -->
+<div id="sndQuick" style="display:none;position:fixed;top:52px;right:16px;z-index:131;background:#1e222d;
+     border:1px solid #4a9eff66;border-radius:12px;padding:13px 15px;width:260px;box-shadow:0 12px 36px #000d;">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-    <b style="font-size:13px;">声音设置</b>
-    <span style="cursor:pointer;color:#787b86;" onclick="sndPanelToggle()">×</span>
+    <b style="font-size:13px;">提示音</b>
+    <span style="cursor:pointer;color:#787b86;" onclick="sndQuickToggle()">×</span>
   </div>
-  <div style="font-size:11.5px;color:#f0b90b;margin-bottom:5px;">确认 / 触发类（上行双音）</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <span style="font-size:12px;">提示音开关</span>
+    <div style="display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;" title="关=所有事件不响铃不闪标题（弹卡和系统横幅仍在）；实时同步所有页面">
+      <button id="muteOff" onclick="muteChange(false)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">关</button>
+      <button id="muteOn" onclick="muteChange(true)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">开</button>
+    </div>
+  </div>
+  <div style="font-size:11.5px;color:#f0b90b;margin:13px 0 5px;">确认 / 触发类（上行双音）</div>
   <div style="display:flex;gap:7px;align-items:center;">
     <input type="range" id="sndConf" min="400" max="1600" step="20" style="flex:1;" oninput="sndChange('conf',this.value)">
     <button class="btn" onclick="sndTest(true)" style="padding:3px 9px;font-size:11.5px;flex:none;">试听</button>
@@ -204,8 +211,30 @@ select{appearance:none;-webkit-appearance:none;
     <input type="range" id="sndCand" min="400" max="1600" step="20" style="flex:1;" oninput="sndChange('cand',this.value)">
     <button class="btn" onclick="sndTest(false)" style="padding:3px 9px;font-size:11.5px;flex:none;">试听</button>
   </div>
-  <div style="font-size:10.5px;color:#565a66;margin-top:10px;line-height:1.6;">延续触发（同一信号再次确认）也会响铃，自动按类别选音色；设置自动保存在本机。</div>
-  <div style="border-top:1px solid #2a2e39;margin-top:11px;padding-top:10px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:13px;">
+    <span style="font-size:12px;">候选类弹卡</span>
+    <div style="display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;" title="A类/B类候选、观察类事件要不要弹卡+发系统横幅；关=候选只进事件流（下方事件列表），确认/触发类不受影响">
+      <button id="candCardOff" onclick="candChange('cl_popup_cand_card',false)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">关</button>
+      <button id="candCardOn" onclick="candChange('cl_popup_cand_card',true)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">开</button>
+    </div>
+  </div>
+  <div style="font-size:10.5px;color:#565a66;margin-top:5px;line-height:1.5;">只关候选类的页面弹卡与系统横幅；确认/触发类（红色确认、B类触发）始终弹。</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:11px;">
+    <span style="font-size:12px;">候选类响铃</span>
+    <div style="display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;" title="候选/观察类事件要不要响铃；关=候选静默（弹卡设置不受影响），确认/触发类始终响铃">
+      <button id="candBeepOff" onclick="candChange('cl_popup_cand_beep',false)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">关</button>
+      <button id="candBeepOn" onclick="candChange('cl_popup_cand_beep',true)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">开</button>
+    </div>
+  </div>
+  <div style="font-size:10.5px;color:#565a66;margin-top:5px;line-height:1.5;">延续触发（同一信号再次确认）也响铃，自动按类别选音色。正式预警同时发系统横幅（跨应用，macOS 样式建议"持续"）。</div>
+</div>
+<div id="sndPanel" style="display:none;position:fixed;top:52px;right:16px;z-index:130;background:#1e222d;
+     border:1px solid #f0b90b66;border-radius:12px;padding:13px 15px;width:260px;box-shadow:0 12px 36px #000d;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+    <b style="font-size:13px;">设置</b>
+    <span style="cursor:pointer;color:#787b86;" onclick="sndPanelToggle()">×</span>
+  </div>
+  <div style="border-top:0;margin-bottom:2px;">
     <div style="display:flex;justify-content:space-between;align-items:center;">
       <span style="font-size:12px;">详情页结构区间</span>
       <div style="display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;" title="从监控页点卡片/格子进详情页时，图上画一块该结构的区间色带（A类橙/B类紫）；关=详情页保持干净">
@@ -222,6 +251,14 @@ select{appearance:none;-webkit-appearance:none;
       </div>
     </div>
     <div style="font-size:10.5px;color:#565a66;margin-top:5px;line-height:1.5;">实验性规则：用于否定"价格反向脱离结构区间并在上方/下方形成新中枢"的老结构。开关状态服务端保存，所有端生效。</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:11px;">
+      <span style="font-size:12px;">A类区间破位取消</span>
+      <div style="display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;" title="实验性：A类确认（二买/二卖）报出后，取消线从背驰点（结构3点）改为结构区间边——做多=区间下沿（底1）、做空=区间上沿（顶1'，即详情页橙色矩形靠背驰点那一边）。确认（含确认笔自身）以来任意已完结K线破线 → 卡片直接永久作废，不回升/回落复活（实时破线 ⇒ 未来完成笔端点必然连到破线极值，破线不可避免）。确认成立条件不变（仍未破背驰点才确认）。切换会触发一次静默重扫（约18秒）">
+        <button id="confZoneOff" onclick="confZoneChange(false)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">关</button>
+        <button id="confZoneOn" onclick="confZoneChange(true)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">开</button>
+      </div>
+    </div>
+    <div style="font-size:10.5px;color:#565a66;margin-top:5px;line-height:1.5;">实验性规则：A类确认的取消线不再等背驰点（结构最低/最高点），改成结构区间（详情页橙色矩形）靠背驰点那一边被破坏就取消。做多盯下沿、做空盯上沿，别搞反。开关状态服务端保存，所有端生效。</div>
   </div>
   <div style="border-top:1px solid #2a2e39;margin-top:11px;padding-top:10px;">
     <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -318,7 +355,6 @@ select{appearance:none;-webkit-appearance:none;
 const $=id=>document.getElementById(id);
 let PERIODS=[],CONTRACTS=[],CELLS={};   // CELLS: 'sym|period' -> cell
 let _muted=localStorage.getItem('cl_matrix_mute')==='1';
-let _titleTimer=null,_baseTitle=document.title;
 
 /* ---------- 矩阵渲染 ---------- */
 function render(){
@@ -494,85 +530,42 @@ function renderStream(){
 /* ---------- 提醒：分类提示音（确认/触发 vs 候选，音调可调） + 标题闪烁 + 系统通知 ---------- */
 let _snd={conf:1200,cand:700};   // 确认/触发类与候选类的基准频率
 try{const s=JSON.parse(localStorage.getItem('cl_matrix_snd')||'null');if(s&&s.conf&&s.cand)_snd=s;}catch(e){}
-function evIsConf(m){
-  if(m.snapshot||m.state)return m.state==='conf_a'||m.state==='trig_b';
-  const p=(m.pattern||'');
-  return p.indexOf('CONF')>=0||p.indexOf('TRIG')>=0;
-}
-function beepTone(freq,conf){
-  if(_muted)return;
-  try{
-    const ctx=window.__audio||(window.__audio=new (window.AudioContext||window.webkitAudioContext)());
-    const seq=conf?[[0,freq],[0.16,freq*1.3]]:[[0,freq]];   // 确认=上行双音更急促；候选=单长音
-    seq.forEach(([dt,fr])=>{
-      const o=ctx.createOscillator(),g=ctx.createGain();
-      o.connect(g);g.connect(ctx.destination);
-      o.type=conf?'square':'sine';o.frequency.value=fr;
-      const t0=ctx.currentTime+dt;
-      g.gain.setValueAtTime(.001,t0);
-      g.gain.exponentialRampToValueAtTime(.25,t0+.02);
-      g.gain.exponentialRampToValueAtTime(.001,t0+(conf?.14:.3));
-      o.start(t0);o.stop(t0+(conf?.16:.32));
-    });
-  }catch(e){}
-}
-function beepFor(m){
-  if(_muted)return;
-  const conf=evIsConf(m);
-  beepTone(conf?_snd.conf:_snd.cand,conf);
-}
-function flashTitle(txt){
-  if(_titleTimer)clearInterval(_titleTimer);
-  let on=true;
-  _titleTimer=setInterval(()=>{
-    document.title=(on?'🔴 '+txt:_baseTitle);on=!on;
-  },700);
-  setTimeout(()=>{clearInterval(_titleTimer);document.title=_baseTitle;_titleTimer=null;},10000);
-}
-function notify(m){
-  if(_muted||!('Notification' in window)||Notification.permission!=='granted')return;
-  try{new Notification('形态预警',{body:m.text});}catch(e){}
-}
-/* 右上角弹卡：全局组件 popup_cards.js（与详情/列表页共用）。
-   多卡叠叠乐各自 12 秒；延续触发原位刷新重新计时；卡片多时弹卡区可滚动 */
-function showPatternPopup(m,isUpdate){
-  const long=(m.side||'long')==='long';
-  const st=(m.pattern||'').indexOf('CONF')>=0?'确认':(m.pattern||'').indexOf('TRIG')>=0?'触发':'候选';
-  const kd=(m.kind==='A'?'A类':'B类')+(long?'买点':'卖点');
-  PopupCards.push({
-    fp:m.fingerprint,
-    tone:(m.kind==='B')?(long?'gold':'purple'):(long?'up':'down'),   // 4色对齐矩阵图例（2026-10-13）
-    title:(m.name||m.symbol||'')+' '+({'3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分'}[m.period]||m.period||''),   // 品种+级别置顶大字（2026-10-13 定稿；顶层作用域不可用 IIFE 内 P_LAB）
-    info:'<b class="pp-main">'+kd+' · '+st+'</b>'+                        // 买卖点+状态突出标注
-      (m.bi_formed?'<span class="pp-pill pp-g">✅已成笔</span>':'')+
-      (isUpdate?'<span class="pp-pill pp-b">🔔延续</span>':'')+
-      '<br>价 <b>'+m.price+'</b>　触发 '+String(m.trigger_time||m.time||'').replace('T',' ').slice(5,16)+
-      '<br><span class="pp-txt">'+(m.text||'')+'</span>',
-    onClick:()=>{location.href='/pc/detail?sym='+encodeURIComponent(m.symbol);},
-    href:'/pc/detail?sym='+encodeURIComponent(m.symbol)   // 跨页面恢复后仍可点击（popup_cards.js）
-  });
-}
-/* 时效闸门：事件触发时刻距今超过 3 分钟 = 天勤断线窗口错过扫描后恢复的补发，
-   只进事件流，不弹卡/响铃/闪标题（否则恢复瞬间"新事件+一串旧闻"齐弹齐响） */
-function evIsFresh(m){
-  try{
-    const t=String(m.trigger_time||m.time||'').replace(' ','T');
-    if(!t)return true;
-    return (Date.now()-new Date(t).getTime())/1000 <= 180;
-  }catch(e){return true;}
-}
+/* 弹卡/响铃/闪标题/系统通知/持仓离场预警已收编进全局组件 popup_cards.js（2026-10-22 跨浏览器升级：
+   组件自带 WS + init.history 补弹，任何页面引入即有全套；本页只保留事件流与静音按钮。
+   静音经 pc_mute 事件实时同步给组件 */
+/* 右上角弹卡组装与时效闸门已收编进 popup_cards.js（2026-10-22） */
 function toggleMute(){
   _muted=!_muted;
   try{localStorage.setItem('cl_matrix_mute',_muted?'1':'0');}catch(e){}
   paintMute();
+  try{window.dispatchEvent(new CustomEvent('pc_mute',{detail:_muted}));}catch(e){}   // 实时同步给 popup_cards 组件
   if(!_muted&&'Notification' in window&&Notification.permission==='default')Notification.requestPermission();
 }
-/* ---------- 声音分类设置面板 ---------- */
+function muteChange(on){ if(_muted===!on)return; toggleMute(); }
+/* ---------- 提示音面板（🔊 按钮）：开关+音量+候选类弹卡/响铃 ---------- */
+function sndQuickToggle(){
+  const p=$('sndQuick');
+  const show=p.style.display!=='block';
+  p.style.display=show?'block':'none';
+  if(show){$('sndPanel').style.display='none';paintCandToggles();}
+}
+/* ---------- 技术设置面板（♪ 按钮）：只放技术/结构性开关 ---------- */
 function sndPanelToggle(){
   const p=$('sndPanel');
   const show=p.style.display!=='block';
   p.style.display=show?'block':'none';
-  if(show){$('sndConf').value=_snd.conf;$('sndCand').value=_snd.cand;}
+  if(show){$('sndQuick').style.display='none';}
+}
+/* ---------- 候选类弹卡/响铃开关（只影响候选/观察类；确认/触发类始终弹+响） ---------- */
+function paintCandToggles(){
+  let card=true,beep=true;
+  try{card=localStorage.getItem('cl_popup_cand_card')!=='0';beep=localStorage.getItem('cl_popup_cand_beep')!=='0';}catch(e){}
+  paintSeg('candCardOn','candCardOff',card);
+  paintSeg('candBeepOn','candBeepOff',beep);
+}
+function candChange(key,on){
+  try{localStorage.setItem(key,on?'1':'0');}catch(e){}
+  paintCandToggles();
 }
 function sndChange(kind,val){
   _snd[kind]=+val;
@@ -580,13 +573,12 @@ function sndChange(kind,val){
 }
 function sndTest(conf){
   const f=conf?+$('sndConf').value:+$('sndCand').value;
-  const keep=_muted;_muted=false;
-  beepTone(f,conf);
-  _muted=keep;
+  PopupCards.beep(f,conf);   // 组件暴露的强制响铃（绕过静音，测试用）
 }
 function paintMute(){
   $('muteBtn').textContent=_muted?'🔇 提示音关':'🔊 提示音开';
   $('muteBtn').classList.toggle('off',_muted);
+  paintSeg('muteOn','muteOff',!_muted);   // 提示音面板里的开关 seg 同步
 }
 
 /* ---------- WS ---------- */
@@ -602,28 +594,11 @@ function connect(){
       (m.history||[]).forEach(x=>{if(x.type==='pattern_alert')upsertEvent(x);});
       renderStream();
     }else if(m.type==='pattern_alert'){
-      const changed=upsertEvent(m);renderStream();
-      if(changed&&m.first!==false&&evIsFresh(m)){
-        // 弹卡第一位、各步独立容错（2026-10-13 修复：响铃后某步抛错会连坐弹卡不出现）
-        // 持仓相关经 window 调用（posPopups/posRefreshIfAny 在尾部 IIFE 内，顶层不可直接引用）
-        try{showPatternPopup(m,false);}catch(e){console.error('[弹卡]',e);}
-        try{beepFor(m);}catch(e){}
-        try{flashTitle(m.text);}catch(e){}
-        try{notify(m);}catch(e){}
-        try{window.posPopups&&window.posPopups(m);}catch(e){console.error('[持仓弹卡]',e);}
-      }
+      /* 弹卡/响铃/闪标题/通知/持仓弹卡由 popup_cards.js 自有 WS 处理（2026-10-22 收编） */
+      upsertEvent(m);renderStream();
       try{window.posRefreshIfAny&&window.posRefreshIfAny();}catch(e){}
     }else if(m.type==='pattern_alert_update'){
-      const changed=upsertEvent(m);renderStream();
-      // 延续触发：内容有实质变化（触发时刻/价格变了）也响铃+弹卡；同刻重复推送不重复吵；
-      // 补发的陈旧事件只进流不提醒（evIsFresh）；成笔补报是刚发生的 inherently 新鲜 → 绕过时效闸门
-      if(changed&&(m.bi_formed||evIsFresh(m))){
-        try{showPatternPopup(m,true);}catch(e){console.error('[弹卡]',e);}
-        try{beepFor(m);}catch(e){}
-        try{flashTitle((m.text||'').replace(/<[^>]+>/g,''));}catch(e){}   // text 缺失不再连坐
-        try{notify(m);}catch(e){}
-        try{window.posPopups&&window.posPopups(m);}catch(e){console.error('[持仓弹卡]',e);}
-      }
+      upsertEvent(m);renderStream();
       try{window.posRefreshIfAny&&window.posRefreshIfAny();}catch(e){}
     }else if(m.type==='pattern_state'){
       applyCell(m.cell);
@@ -671,7 +646,15 @@ function paintOppKill(on){
 }
 function oppKillChange(on){
   fetch('/api/pattern_flags',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({opp_zs_kill:on})})
-    .then(r=>r.json()).then(d=>paintOppKill(!!d.opp_zs_kill)).catch(()=>paintOppKill(!on));
+    .then(r=>r.json()).then(d=>{paintOppKill(!!d.opp_zs_kill);if(d.conf_zone_kill!==undefined)paintConfZoneKill(!!d.conf_zone_kill);}).catch(()=>paintOppKill(!on));
+}
+/* ---------- A类区间破位取消开关（实验性，服务端持久化，切换触发静默重扫） ---------- */
+function paintConfZoneKill(on){
+  paintSeg('confZoneOn','confZoneOff',on);
+}
+function confZoneChange(on){
+  fetch('/api/pattern_flags',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conf_zone_kill:on})})
+    .then(r=>r.json()).then(d=>{paintConfZoneKill(!!d.conf_zone_kill);if(d.opp_zs_kill!==undefined)paintOppKill(!!d.opp_zs_kill);}).catch(()=>paintConfZoneKill(!on));
 }
 
 /* ---------- 启动 ---------- */
@@ -679,7 +662,7 @@ function oppKillChange(on){
   paintMute();
   paintStructVis();
   syncBiConf();
-  fetch('/api/pattern_flags').then(r=>r.json()).then(d=>paintOppKill(!!d.opp_zs_kill)).catch(()=>{});
+  fetch('/api/pattern_flags').then(r=>r.json()).then(d=>{paintOppKill(!!d.opp_zs_kill);paintConfZoneKill(!!d.conf_zone_kill);}).catch(()=>{});
   try{setTab(localStorage.getItem('cl_evt_tab')==='conf'?'conf':'all');}catch(e){}   // 恢复上次选的页签
   fetch('/api/pattern_matrix').then(r=>r.json()).then(d=>paintMon(d.mon_enabled!==false)).catch(()=>{});
   const r=await fetch('/api/pattern_matrix');
@@ -784,27 +767,7 @@ function posStatHtml(p){
   return `<div class="pstat"><div class="phead"><span>持仓监控 · 实时</span><span>${P_LAB[p.period]||p.period} ${long?'多单':'空单'}</span></div>`+
     `<div class="pbig ${bigCls}">${big}</div>`+rows+'</div>';
 }
-/* 持仓弹卡（离场/升级，持仓专属蓝色；确认/触发级事件才弹） */
-function posPopups(m){
-  if(!POSITIONS.length||!isConf(m))return;
-  POSITIONS.forEach(p=>{
-    const long=posIsLong(p), exitSide=long?'short':'long', side=(m.side||'long');
-    const det=()=>{location.href='/pc/detail?sym='+encodeURIComponent(m.symbol);};
-    if(m.symbol===p.symbol&&m.period===p.period&&side===exitSide){
-      PopupCards.push({fp:'posx_'+m.fingerprint,tone:'pos',onClick:det,
-        href:'/pc/detail?sym='+encodeURIComponent(m.symbol),
-        title:'📌 离场预警 · '+p.name+' '+p.symbol+'（'+(P_LAB[p.period]||p.period)+'持仓）',
-        info:(m.kind==='A'?'A类':'B类')+(long?'卖点':'买点')+(m.kind==='A'?'确认':'触发（无条件全平）')+(m.bi_formed?' · 已成笔':'')+'<br>价 <b>'+m.price+'</b>　'+fmtT(m.trigger_time||m.time)});
-    }
-    const r=P_RANK[m.period]||0;
-    if(m.symbol===p.symbol&&r>(P_RANK[p.period]||0)&&side===(long?'long':'short')){
-      PopupCards.push({fp:'posu_'+m.fingerprint,tone:'pos',onClick:det,
-        href:'/pc/detail?sym='+encodeURIComponent(m.symbol),
-        title:'📌 可升级 · '+p.name+' → '+(P_LAB[m.period]||m.period),
-        info:'更大级别同向'+(m.kind==='A'?'A类确认':'B类触发')+'，本级别卖点后可留底仓过户'+(P_LAB[m.period]||m.period)+'<br>价 <b>'+m.price+'</b>　'+fmtT(m.trigger_time||m.time)});
-    }
-  });
-}
+/* 持仓弹卡（离场/升级）已收编进 popup_cards.js（2026-10-22，组件自带持仓列表 30s 刷新） */
 function posRefreshIfAny(){ if(POSITIONS.length) renderPos(); }   // 顶层 WS 处理器经 window 调用（IIFE 作用域桥接）
 function renderPos(){
   const st=$('posCards');
@@ -963,7 +926,7 @@ function pcSel(b){
 })();
 
   // 暴露给 inline onclick 与顶层 WS 处理器（本块在 IIFE 内，函数默认局部）
-  Object.assign(window,{togglePosPanel,loadPositions,renderPos,posFormOpen,posFormClose,pfDeriveExit,posSubmit,posDel,posDelConfirm,pcSel,posSavePos,posEdit,posPopups,posRefreshIfAny});
+  Object.assign(window,{togglePosPanel,loadPositions,renderPos,posFormOpen,posFormClose,pfDeriveExit,posSubmit,posDel,posDelConfirm,pcSel,posSavePos,posEdit,posRefreshIfAny});
   window.__matrixReady=true;
 })();
 </script>

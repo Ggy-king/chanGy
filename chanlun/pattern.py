@@ -114,6 +114,15 @@ def _left_confirm_zone(merged, fx_k, fx_side):
 # 突破背驰点 3' → 原结构作废（不可借"回到确认区"复活）。破背驰点走原有逻辑。
 OPP_ZS_KILL = False
 
+# A类确认取消线（实验性，用户 2026-10-21 定稿，监控页⚙设置面板开关，默认关）：
+# 默认关=A类确认报出后，等背驰点 3（做多最低点/做空最高点）被破坏才取消（原逻辑）；
+# 开=取消线改为结构区间（详情页橙色矩形 1-2 区间）靠背驰点那一边：
+#   做多=区间下沿（底1=p1），做空=区间上沿（顶1'=p1）。确认成立条件不变。
+# **破线即永久作废，无"回升复活"**（用户纠正定稿）：实时价破了区间边，未来完成笔
+# 的端点必然连到这个破线极值（笔端点=极值，不会消失），破线不可避免——
+# 所以确认（含确认笔自身）以来任意已完结K线破线 → 卡片直接作废，不等完成笔。
+CONF_ZONE_KILL = False
+
 
 def _dead_by_opposite_zs(tail, p1, side):
     """反向中枢否定判定：tail 最近三笔的重叠区是否完全脱离原结构区间——
@@ -182,8 +191,8 @@ def _eval_a_long(bi_list, merged, reported):
         if b['direction'] == 'down':
             if state == 'watch' and b['end_price'] < struct['p3']:
                 state, struct = 'idle', None      # 新低 → 旧结构作废，立即重建检查（§3.4）
-            if since_conf and b['end_price'] < last_conf[0]['p3']:
-                since_conf = False   # 确认后跌破背驰点 → 假确认作废（用户定稿：破背驰点=假确认，转新观察）
+            if since_conf and b['end_price'] < (last_conf[0]['p1'] if CONF_ZONE_KILL else last_conf[0]['p3']):
+                since_conf = False   # 确认后跌破取消线 → 假确认作废（默认=背驰点；实验开关=区间下沿p1，转新观察）
             if since_fire and state == 'idle':
                 if b['end_price'] > last_fire[0]['p3']:
                     # A类确认：回调笔成立 且 未破坏背驰点(3)——进场关注期开始
@@ -227,6 +236,13 @@ def _eval_a_long(bi_list, merged, reported):
         c_struct, c_ev, _, ci = last_conf
         if _left_confirm_zone(merged, *ci):
             since_conf = False   # 价格已向上离开确认分型区域 → 确认阶段结束（跌回来会重新显示）
+        elif CONF_ZONE_KILL:
+            # 实验口径：确认（含确认笔自身）以来任意已完结K线破区间下沿 → 永久作废。
+            # 实时破线 ⇒ 未来完成笔端点必然连到该极值、破线不可避免，不存在回升复活。
+            if float(merged['low'].iloc[ci[0]:].min()) < c_struct['p1']:
+                since_conf = False
+            else:
+                return {'state': 'conf_a', 'struct': c_struct, 'fired': events}
         elif float(merged.iloc[-1]['low']) < c_struct['p3']:
             since_conf = False   # 现价实时跌破背驰点 → 假确认，确认窗口关闭（回升则重开）
         else:
@@ -269,8 +285,8 @@ def _eval_a_short(bi_list, merged, reported):
         if b['direction'] == 'up':
             if state == 'watch' and b['end_price'] > struct['p3']:
                 state, struct = 'idle', None          # 新高 → 旧结构作废，立即重建检查
-            if since_conf and b['end_price'] > last_conf[0]['p3']:
-                since_conf = False   # 确认后涨破背驰点 → 假确认作废（用户定稿：破背驰点=假确认，转新观察）
+            if since_conf and b['end_price'] > (last_conf[0]['p1'] if CONF_ZONE_KILL else last_conf[0]['p3']):
+                since_conf = False   # 确认后涨破取消线 → 假确认作废（默认=背驰点；实验开关=区间上沿p1，转新观察）
             if since_fire and state == 'idle':
                 if b['end_price'] < last_fire[0]['p3']:
                     # A类确认：反抽笔成立 且 未破坏背驰点(3')——进场关注期开始
@@ -312,6 +328,12 @@ def _eval_a_short(bi_list, merged, reported):
         c_struct, c_ev, _, ci = last_conf
         if _left_confirm_zone(merged, *ci):
             since_conf = False   # 价格已向下离开确认分型区域 → 确认阶段结束（涨回来会重新显示）
+        elif CONF_ZONE_KILL:
+            # 实验口径（多头镜像）：确认以来任意已完结K线涨破区间上沿 → 永久作废，不回落复活。
+            if float(merged['high'].iloc[ci[0]:].max()) > c_struct['p1']:
+                since_conf = False
+            else:
+                return {'state': 'conf_a', 'struct': c_struct, 'fired': events}
         elif float(merged.iloc[-1]['high']) > c_struct['p3']:
             since_conf = False   # 现价实时涨破背驰点 → 假确认，确认窗口关闭（回落则重开）
         else:

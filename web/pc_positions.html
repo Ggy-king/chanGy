@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>持仓驾驶舱 · chanGy</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
 body{background:#131722;color:#d1d4dc;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
@@ -19,9 +20,10 @@ header h1 span{color:#4a9eff;}
 .btn{border:1px solid #2a2e39;background:#2a2e39;color:#d1d4dc;border-radius:8px;padding:5px 11px;
   font-size:12px;cursor:pointer;text-decoration:none;display:inline-block;}
 .btn:hover{border-color:#4a9eff;color:#4a9eff;}
-/* ===== 2×2 四仓一屏：每格竖向四模块长条（压缩版） ===== */
+/* ===== 2×2 四宫格：小头(品种条) + 迷你K线笔图 / 添加 ===== */
 main{flex:1;overflow-y:auto;scrollbar-width:thin;padding:8px;}
-#wrap{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:minmax(0,1fr);gap:8px;}
+#wrap{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:repeat(2,minmax(0,1fr));
+  height:100%;min-height:540px;gap:8px;}
 .strip{background:#161b22;border:1px solid #2a2e39;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;min-height:0;}
 .shead{display:flex;align-items:center;gap:8px;padding:6px 12px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;flex-wrap:wrap;}
 .shead .pname{font-size:15px;font-weight:800;}
@@ -42,70 +44,17 @@ main{flex:1;overflow-y:auto;scrollbar-width:thin;padding:8px;}
   background:transparent;border:1px solid #2a2e39;color:#d1d4dc;}
 .shead button:hover{border-color:#4a9eff;color:#4a9eff;}
 .shead button.close{color:#ff7b7b;border-color:rgba(255,92,92,.45);background:rgba(255,92,92,.08);}
-/* 四模块竖轨：左侧贯穿线 + ①②③④ 节点 */
-.rail{position:relative;padding:9px 12px 9px 42px;flex:1;min-height:0;overflow:hidden;}
-.rail:before{content:'';position:absolute;left:19px;top:14px;bottom:14px;width:2px;
-  background:linear-gradient(#26a69a,#4a9eff,#f0b90b,#b388ff);opacity:.45;border-radius:2px;}
-.mod{position:relative;margin-bottom:9px;}
-.mod:last-child{margin-bottom:0;}
-.mod .node{position:absolute;left:-32px;top:0;width:22px;height:22px;border-radius:50%;
-  background:#1e222d;border:2px solid #4a9eff;color:#4a9eff;font-size:11px;font-weight:800;
-  display:flex;align-items:center;justify-content:center;}
-.mod.m1 .node{border-color:#26a69a;color:#26a69a;}
-.mod.m2 .node{border-color:#4a9eff;color:#4a9eff;}
-.mod.m3 .node{border-color:#f0b90b;color:#f0b90b;}
-.mod.m4 .node{border-color:#b388ff;color:#b388ff;}
-.mod .mt{font-size:9.5px;color:#787b86;letter-spacing:1.5px;margin-bottom:5px;font-weight:700;}
-.mod .mt b{color:#9aa0b0;}
-/* ① 三个价 */
-.ptiles{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
-.ptile{background:#0d1117;border:1px solid #2a2e39;border-radius:9px;padding:6px 9px;position:relative;min-width:0;}
-.ptile .k{font-size:9.5px;color:#787b86;letter-spacing:.3px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.ptile .k em{font-style:normal;color:#9aa0b0;}
-.ptile .v{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap;}
-.ptile .s{font-size:9.5px;color:#787b86;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.ptile.hot{border-color:#ef5350;background:linear-gradient(180deg,rgba(239,83,80,.13),#0d1117);}
-.ptile.hot .v{color:#ef5350;}
-.ptile.near{border-color:#f0b90b;}
-.ptile.gold .v{color:#f0b90b;}
-.ptile.dim .v{color:#56606f;}
-.ptile input{width:64px;background:#131722;border:1px solid #2a2e39;color:#d1d4dc;border-radius:6px;
-  padding:2px 5px;font-size:13px;font-weight:700;}
-.ptile .set{font-size:9.5px;color:#4a9eff;cursor:pointer;text-decoration:underline;margin-left:4px;}
-/* ② 进场参考（当时推的确认卡） */
-.refcard{display:inline-flex;align-items:center;gap:9px;background:#0d1117;border:1px solid rgba(74,158,255,.4);
-  border-radius:9px;padding:5px 12px;cursor:pointer;}
-.refcard:hover{background:rgba(74,158,255,.08);}
-.refcard .rk{font-size:9px;color:#787b86;letter-spacing:1px;}
-.refcard .rv{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;}
-.refcard .rm{font-size:10px;color:#9aa0b0;}
-.refnone{font-size:11px;color:#787b86;padding:4px 2px;}
-/* ③ 判决 */
-.vbox{border-radius:10px;padding:7px 12px;border:1.5px solid;}
-.vbox.hold{border-color:rgba(38,166,154,.55);background:linear-gradient(135deg,rgba(38,166,154,.13),rgba(38,166,154,.03));}
-.vbox.warn{border-color:rgba(240,185,11,.55);background:linear-gradient(135deg,rgba(240,185,11,.11),rgba(240,185,11,.02));}
-.vbox.stop{border-color:rgba(239,83,80,.65);background:linear-gradient(135deg,rgba(239,83,80,.14),rgba(239,83,80,.03));animation:pulse 1.2s ease infinite;}
-.vbox .vw{font-size:14.5px;font-weight:800;margin-right:9px;}
-.vbox.hold .vw{color:#26a69a;}.vbox.warn .vw{color:#f0b90b;}.vbox.stop .vw{color:#ef5350;}
-.vbox .vt{font-size:11.5px;font-weight:600;line-height:1.7;display:inline;}
-.vbox.stop .vt{color:#ef5350;}
-/* ④ 升级链：扁块 + 箭头 */
-.chain{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
-.lvb{background:#0d1117;border:1px solid #2a2e39;border-radius:8px;padding:3px 9px;cursor:pointer;min-width:64px;}
-.lvb:hover{background:rgba(74,158,255,.07);}
-.lvb.own{border-color:rgba(74,158,255,.5);}
-.lvb .l1{font-size:9px;color:#787b86;display:flex;gap:4px;align-items:center;}
-.lvb .l1 .own{background:#4a9eff;color:#fff;border-radius:5px;padding:0 4px;font-size:8px;font-weight:800;line-height:12px;}
-.lvb .l2{font-size:11px;font-weight:800;margin-top:1px;white-space:nowrap;}
-.arr{color:#3a3f4d;font-size:12px;font-weight:800;}
-.chip{font-size:10.5px;padding:3px 9px;border-radius:8px;background:#0d1117;border:1px solid #2a2e39;color:#9aa0b0;white-space:nowrap;}
-.chip.bad{color:#ef5350;border-color:rgba(239,83,80,.55);font-weight:800;}
-.chip.gold{color:#f0b90b;border-color:rgba(240,185,11,.5);}
-.chip.blue{color:#4a9eff;border-color:rgba(74,158,255,.5);}
-.hintErr{font-size:11px;color:#787b86;padding:4px 2px;}
-.empty{border:1.5px dashed #2a2e39;border-radius:14px;padding:30px 0;text-align:center;color:#3a3f4d;}
-.empty .big{font-size:22px;font-weight:800;letter-spacing:2px;}
-/* 平仓阻尼 + 交易简报弹层 */
+.shead button.hold{color:#b388ff;border-color:rgba(179,136,255,.5);background:rgba(179,136,255,.07);}
+.shead button.hold:hover{border-color:#b388ff;color:#d1c4ff;}
+/* 迷你图容器 / 空槽 */
+.chartbox{flex:1;min-height:0;position:relative;}
+.chartbox .emsg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:#56606f;font-size:12px;}
+.slotbody{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;}
+.addbig{background:transparent;border:1.5px dashed #3a3f4d;color:#56606f;border-radius:14px;
+  padding:22px 44px;font-size:15px;font-weight:800;letter-spacing:2px;cursor:pointer;}
+.addbig:hover{border-color:#4a9eff;color:#4a9eff;}
+/* 弹层 */
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;display:none;align-items:center;justify-content:center;}
 .modal .box{background:#1e222d;border-radius:14px;padding:22px 24px;min-width:400px;}
 #damp .box{border:2px solid #ef5350;}
@@ -116,18 +65,58 @@ main{flex:1;overflow-y:auto;scrollbar-width:thin;padding:8px;}
 #damp .ops button{border:none;border-radius:9px;height:38px;padding:0 20px;font-size:13.5px;font-weight:700;cursor:pointer;}
 #damp .ok{background:#ef5350;color:#fff;}
 #damp .no{background:#2a2e39;color:#26a69a;border:1px solid #26a69a;}
+.frow{display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:9px;}
+.frow label{width:56px;color:#787b86;flex:none;}
+.frow select,.frow input{flex:1;background:#131722;border:1px solid #2a2e39;color:#d1d4dc;border-radius:8px;padding:7px 9px;}
+.frow .seg{display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;flex:1;}
+.frow .seg button{flex:1;border:none;background:#1e222d;color:#787b86;padding:7px 0;font-size:12.5px;cursor:pointer;}
+.frow .seg button.on{background:#b388ff;color:#131722;font-weight:800;}
 </style>
 </head>
 <body>
 <header>
   <h1>🚗 持仓<span>驾驶舱</span></h1>
-  <span class="mut">三个价 · 进场参考 · 买点有选择权，卖点没有——卖点从宽，一切归锚</span>
+  <span class="mut">添加≠持仓 · 盯笔看图 · 买点有选择权，卖点没有——卖点从宽，一切归锚</span>
   <span class="sp"></span>
   <span class="conn" style="display:flex;align-items:center;gap:6px;font-size:12px;color:#787b86;">
     <span class="dot" id="dot"></span><span id="connTx">连接中…</span></span>
   <a class="btn" href="/pc/matrix">← 矩阵</a>
 </header>
 <main><div id="wrap"></div></main>
+
+<!-- 添加观察（≠持仓） -->
+<div class="modal" id="addModal">
+  <div class="box">
+    <h3 style="margin:0 0 14px;font-size:15px;">添加盯盘块 <span class="mut" style="font-size:11.5px;">（只是看图，不进持仓）</span></h3>
+    <div class="frow"><label>品种</label><select id="addSymbol"></select></div>
+    <div class="frow"><label>级别</label><select id="addPeriod">
+      <option value="3">3分</option><option value="5">5分</option><option value="15" selected>15分</option>
+      <option value="30m">30分</option><option value="60">60分</option></select></div>
+    <div style="display:flex;gap:9px;margin-top:16px;justify-content:flex-end;">
+      <button class="btn" onclick="document.getElementById('addModal').style.display='none'">取消</button>
+      <button class="btn" style="background:#4a9eff;color:#131722;font-weight:700;border:none;" onclick="addWatchGo()">添加</button>
+    </div>
+  </div>
+</div>
+<!-- 确认持仓 -->
+<div class="modal" id="holdModal">
+  <div class="box">
+    <h3 style="margin:0 0 6px;font-size:15px;">添加持仓</h3>
+    <p id="holdInfo" style="margin:0 0 14px;font-size:12.5px;color:#9aa0b0;line-height:1.8;"></p>
+    <div class="frow"><label>进场类型</label>
+      <select id="holdEntry" onchange="holdDeriveExit()">
+        <option value="二买">A类二买点</option><option value="二卖">A类二卖点</option>
+        <option value="三买">B类三买点</option><option value="三卖">B类三卖点</option></select></div>
+    <div class="frow"><label>离场类型</label><select id="holdExit">
+      <option value="二卖">A类二卖点</option><option value="二买">A类二买点</option>
+      <option value="三卖">B类三卖点</option><option value="三买">B类三买点</option></select></div>
+    <div class="frow"><label>备注</label><input id="holdNote" placeholder="选填"></div>
+    <div style="display:flex;gap:9px;margin-top:16px;justify-content:flex-end;">
+      <button class="btn" onclick="document.getElementById('holdModal').style.display='none'">取消</button>
+      <button class="btn" id="holdGo" style="background:#b388ff;color:#131722;font-weight:700;border:none;" onclick="holdGo()">确认持仓</button>
+    </div>
+  </div>
+</div>
 
 <div class="modal" id="damp" onclick="if(event.target===this)dampClose()">
   <div class="box">
@@ -170,24 +159,22 @@ main{flex:1;overflow-y:auto;scrollbar-width:thin;padding:8px;}
   <div class="box">
     <h3 style="margin:0 0 14px;font-size:15px;">编辑持仓</h3>
     <div style="display:flex;flex-direction:column;gap:9px;font-size:13px;">
-      <div style="display:flex;align-items:center;gap:10px;"><label style="width:40px;color:#787b86;">品种</label>
-        <select id="pfSymbol" disabled style="flex:1;background:#131722;border:1px solid #2a2e39;color:#d1d4dc;border-radius:8px;padding:7px 9px;"></select></div>
-      <div style="display:flex;align-items:center;gap:10px;"><label style="width:40px;color:#787b86;">级别</label>
-        <select id="pfPeriod" style="flex:1;background:#131722;border:1px solid #2a2e39;color:#d1d4dc;border-radius:8px;padding:7px 9px;">
-          <option value="3">3分</option><option value="5">5分</option><option value="15">15分</option>
-          <option value="30m">30分</option><option value="60">60分</option></select></div>
-      <div style="display:flex;align-items:center;gap:10px;"><label style="width:40px;color:#787b86;">进场</label>
-        <select id="pfEntry" onchange="pfDeriveExit()" style="flex:1;background:#131722;border:1px solid #2a2e39;color:#d1d4dc;border-radius:8px;padding:7px 9px;">
+      <div class="frow"><label style="width:40px;">品种</label>
+        <select id="pfSymbol" disabled style="flex:1;"></select></div>
+      <div class="frow"><label style="width:40px;">级别</label><select id="pfPeriod" style="flex:1;">
+        <option value="3">3分</option><option value="5">5分</option><option value="15">15分</option>
+        <option value="30m">30分</option><option value="60">60分</option></select></div>
+      <div class="frow"><label style="width:40px;">进场</label>
+        <select id="pfEntry" onchange="pfDeriveExit()" style="flex:1;">
           <option value="二买">A类二买点</option><option value="二卖">A类二卖点</option>
           <option value="三买">B类三买点</option><option value="三卖">B类三卖点</option></select></div>
-      <div style="display:flex;align-items:center;gap:10px;"><label style="width:40px;color:#787b86;">离场</label>
-        <select id="pfExit" style="flex:1;background:#131722;border:1px solid #2a2e39;color:#d1d4dc;border-radius:8px;padding:7px 9px;">
-          <option value="二卖">A类二卖点</option><option value="二买">A类二买点</option>
-          <option value="三卖">B类三卖点</option><option value="三买">B类三买点</option></select></div>
-      <div style="display:flex;align-items:center;gap:10px;"><label style="width:40px;color:#787b86;">进场价</label>
-        <input id="pfPrice" placeholder="选填，用于保本价与锁定利润测算" style="flex:1;background:#131722;border:1px solid #2a2e39;color:#d1d4dc;border-radius:8px;padding:7px 9px;"></div>
-      <div style="display:flex;align-items:center;gap:10px;"><label style="width:40px;color:#787b86;">备注</label>
-        <input id="pfNote" placeholder="选填" style="flex:1;background:#131722;border:1px solid #2a2e39;color:#d1d4dc;border-radius:8px;padding:7px 9px;"></div>
+      <div class="frow"><label style="width:40px;">离场</label><select id="pfExit" style="flex:1;">
+        <option value="二卖">A类二卖点</option><option value="二买">A类二买点</option>
+        <option value="三卖">B类三卖点</option><option value="三买">B类三买点</option></select></div>
+      <div class="frow"><label style="width:40px;">进场价</label>
+        <input id="pfPrice" placeholder="选填，用于保本价与锁定利润测算" style="flex:1;"></div>
+      <div class="frow"><label style="width:40px;">备注</label>
+        <input id="pfNote" placeholder="选填" style="flex:1;"></div>
     </div>
     <div style="display:flex;gap:9px;margin-top:16px;justify-content:flex-end;">
       <button class="btn" onclick="posFormClose()">取消</button>
@@ -200,14 +187,11 @@ main{flex:1;overflow-y:auto;scrollbar-width:thin;padding:8px;}
 <script src="/posbi_cards.js"></script>
 <script>
 const $=id=>document.getElementById(id);
-let POSITIONS=[],QUOTES={},SL={},CONTRACTS=[],CELLS={},ws=null,posEditId=null;
+let POSITIONS=[],QUOTES={},CONTRACTS=[],CELLS={},ws=null,posEditId=null;
 const POS_EXIT={'二买':'二卖','二卖':'二买','三买':'三卖','三卖':'三买'};
 const P_RANK={'3':3,'5':5,'15':15,'30m':30,'60':60};
-const PERIODS=['3','5','15','30m','60'];
 const P_LAB={'3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分'};
-const ST_TXT={watch_a:'观察',cand_a:'候选',cand_b:'候选',conf_a:'确认',trig_b:'触发'};
 const UP_RANK={idle:0,watch_a:1,cand_a:2,cand_b:2,conf_a:3,trig_b:3,gone_b:1};
-const KIND_OF={watch_a:'a',cand_a:'a',conf_a:'a',cand_b:'b',trig_b:'b',gone_b:'a'};
 const FP_PAT={'VREV_CONF_LONG':'A类·二买确认','VREV_LONG':'A类·二买候选',
   'VREV_CONF_SHORT':'A类·二卖确认','VREV_SHORT':'A类·二卖候选',
   '3BUY_CAND':'B类·三买候选','3BUY_TRIG':'B类·三买触发',
@@ -221,8 +205,7 @@ const durTxt=p=>{
   return days>=1?('第 '+(days+1)+' 天'):(Math.floor((Date.now()-new Date(p.open_iso))/3600000)+' 小时');
 };
 
-/* ---------- 进场参考：解析 entry_fp（进场时推的确认卡指纹 PATTERN|p1|p2） ----------
-   p1 恰好就是四种买点的硬止损：A类=一买低点/一卖高点，B类=原中枢上沿/下沿。零计算。 */
+/* ---------- 进场参考指纹（硬止损=进场卡结构点，判决/阻尼用） ---------- */
 function fpStruct(p){
   const parts=(p.entry_fp||'').split('|');
   if(parts.length>=3){
@@ -231,8 +214,6 @@ function fpStruct(p){
   }
   return null;
 }
-
-/* ---------- 判决（提示性）：现价 vs 硬止损（进场卡结构点），锚接入前只有两态 ---------- */
 function verdictOf(p){
   const q=(QUOTES[p.symbol]||{}).price;
   if(q==null)return null;
@@ -242,127 +223,239 @@ function verdictOf(p){
     return {key:'stop',txt:'危险价到了：现价'+(long?'跌破':'反弹触及')+' '+s.hard+'（进场卡结构'+(long?'低点':'高点')+'，做空/做多的依据已坏）——无条件平仓，别等回头',px:q};
   const d=Math.abs(q-s.hard).toFixed(1);
   return {key:'hold',
-    txt:'现价离危险价 '+s.hard+' 还有 <b style="color:#26a69a">'+d+'</b> 点，'+(long?'多单':'空单')+'安全，拿着不用动。能让你平仓的只有三件事：① '+(long?'跌破':'反弹到')+' '+s.hard+'（硬止损）→ 无条件走 ② 破止盈锚 → 止盈走（锚待接入）③ 回抽进枢 → 保本走',
-    px:q};
+    txt:'现价离危险价 '+s.hard+' 还有 <b style="color:#26a69a">'+d+'</b> 点，'+(long?'多单':'空单')+'安全，拿着不用动。',px:q};
 }
 
-/* ---------- 渲染 ---------- */
-function render(){
-  const wrap=$('wrap');
-  wrap.innerHTML='';
-  if(!POSITIONS.length){
-    wrap.innerHTML='<div class="empty"><div class="big">暂无持仓</div><div class="mut" style="margin-top:8px;">等矩阵信号响了再加仓</div></div>';
-    return;
-  }
-  POSITIONS.forEach(p=>wrap.appendChild(stripEl(p)));
-  for(let i=POSITIONS.length;i<4;i++){          // 凑满 4 格：空位占格，一屏不滚动
-    const s=document.createElement('div');
-    s.className='empty';
-    s.innerHTML='<div class="big">空仓位</div><div class="mut" style="margin-top:6px;">等矩阵信号响了再加仓</div>';
-    wrap.appendChild(s);
-  }
+/* ---------- 槽位：持仓自动占槽 + 观察(添加≠持仓)填空位，共 4 格 ----------
+   观察存 localStorage(cl_cockpit_watches)，与服务端持仓互不干扰。 */
+const NSLOT=4;
+let WATCHES=[];
+try{WATCHES=JSON.parse(localStorage.getItem('cl_cockpit_watches')||'[]');}catch(e){WATCHES=[];}
+function saveWatches(){try{localStorage.setItem('cl_cockpit_watches',JSON.stringify(WATCHES));}catch(e){}}
+let _slotList=[],_slotSig='';
+
+function buildSlots(){
+  const slots=[];
+  POSITIONS.forEach(p=>slots.push({pos:p}));
+  WATCHES.forEach(w=>{
+    if(watchesDup(w))return;
+    if(slots.length<NSLOT)slots.push({watch:w});
+  });
+  while(slots.length<NSLOT)slots.push({});
+  _slotList=slots;
+  return slots;
 }
-function stripEl(p){
-  const long=posIsLong(p),unit=P_LAB[p.period]||p.period;
-  const v=verdictOf(p),q=(QUOTES[p.symbol]||{}).price;
-  const p0=p.price?parseFloat(p.price):null;
-  const profit=(p0&&v)?(long?(v.px-p0):(p0-v.px)):null;
+function watchesDup(w){return POSITIONS.some(p=>p.symbol===w.symbol&&String(p.period)===String(w.period));}
+
+/* ---------- 渲染：结构变了才重建（保图表），否则只刷新小头动态数字 ---------- */
+function render(){
+  const slots=buildSlots();
+  const sig=JSON.stringify(slots.map(s=>s.pos?s.pos.id:(s.watch?s.watch.symbol+'|'+s.watch.period:'')));
+  if(sig===_slotSig){updateDyn();return;}
+  _slotSig=sig;
+  destroyCharts();
+  const wrap=$('wrap');wrap.innerHTML='';
+  slots.forEach((s,i)=>wrap.appendChild(slotEl(s,i)));
+  slots.forEach((s,i)=>{
+    const sym=s.pos?s.pos.symbol:(s.watch?s.watch.symbol:null);
+    if(sym)mountChart(i,sym,s.pos?s.pos.period:s.watch.period);
+  });
+  updateDyn();
+}
+function slotEl(s,i){
   const div=document.createElement('div');
   div.className='strip';
-  div.innerHTML=
-    '<div class="shead">'+
-      '<span class="pname">'+p.name+'</span><span class="psym">'+p.symbol+'</span>'+
+  let head='';
+  if(s.pos){
+    const p=s.pos,long=posIsLong(p);
+    head='<span class="pname">'+p.name+'</span><span class="psym">'+p.symbol+'</span>'+
       '<span class="dir '+(long?'long':'short')+'">'+(long?'▲ 多单':'▼ 空单')+'</span>'+
-      '<span class="mut">'+unit+' · '+posLabel(p.entry)+' 进 · 已持 '+durTxt(p)+'</span>'+
+      '<span class="mut">'+(P_LAB[p.period]||p.period)+' · '+posLabel(p.entry)+' 进 · 已持 '+durTxt(p)+'</span>'+
       '<span class="sp"></span>'+
-      '<span class="px">'+(v?v.px:'—')+'</span>'+
-      (profit==null?'':'<span class="pnl '+(profit>=0?'pos':'neg')+'">'+(profit>=0?'+':'')+profit.toFixed(1)+' 点</span>')+
-      (v?'<span class="vbadge '+v.key+'">'+(v.key==='hold'?'🟢':v.key==='warn'?'🟡':'🔴')+' '+V_WORD[v.key]+'</span>':'')+
+      '<span class="px" id="px_'+i+'">—</span>'+
+      '<span class="pnl" id="pnl_'+i+'" style="display:none;"></span>'+
+      '<span class="vbadge warn" id="vb_'+i+'" style="display:none;"></span>'+
       '<button onclick="posEdit(\''+p.id+'\')">编辑</button>'+
-      '<button class="close" onclick="askClose(\''+p.id+'\')">平仓</button></div>'+
-    '<div class="rail">'+
-      mod1(p,v,p0,long)+
-      mod2(p,long)+
-      mod3(v)+
-      mod4(p,long)+
-    '</div>';
+      '<button class="close" onclick="askClose(\''+p.id+'\')">平仓</button>';
+  }else if(s.watch){
+    const w=s.watch;
+    head='<span class="pname">'+(cname(w.symbol))+'</span><span class="psym">'+w.symbol+'</span>'+
+      '<span class="mut">'+(P_LAB[w.period]||w.period)+' · 只看</span>'+
+      '<span class="sp"></span>'+
+      '<span class="px" id="px_'+i+'" style="font-size:13px;color:#9aa0b0;">—</span>'+
+      '<button class="hold" onclick="holdOpen('+i+')">➕ 持仓</button>'+
+      '<a class="btn" style="padding:4px 9px;" href="/pc/detail?sym='+encodeURIComponent(w.symbol)+'&period='+encodeURIComponent(w.period)+'" target="_blank">📊</a>'+
+      '<button onclick="removeWatch('+i+')">移除</button>';
+  }else{
+    head='<span class="mut">空槽位 · 添加后在这里盯笔</span>';
+  }
+  const body=s.pos||s.watch
+    ?'<div class="chartbox" id="chart_'+i+'"><div class="emsg">加载行情…</div></div>'
+    :'<div class="slotbody"><button class="addbig" onclick="addOpen('+i+')">＋ 添加</button></div>';
+  div.innerHTML='<div class="shead">'+head+'</div>'+body;
   return div;
 }
-/* ① 三个价 */
-function mod1(p,v,p0,long){
-  const s=fpStruct(p);
-  const q=v?v.px:null;
-  const dist=(ref)=>(q&&ref!=null)?(Math.abs(q-ref).toFixed(1)+' 点'):('—');
-  const hardHot=v&&v.key==='stop';
-  const hardVal=s?s.hard:'—';
-  const hardSub=s?(hardHot?'⛔ 已到！无条件平仓，别等回头':'现价距它 '+dist(s.hard)+'（'+(long?'多单跌到':'空单反弹到')+'这就平）'):('未记录进场卡——手动防守');
-  const eHtml=p0?p0:('<input id="ep_'+p.id+'" placeholder="录入" size="5"><span class="set" onclick="savePrice(\''+p.id+'\')">存</span>');
-  const eSub=(p0&&q!=null)?(Math.abs(q-p0).toFixed(1)+' 点缓冲'):('回抽进枢时挂成本价平仓');
-  const tile=(cls,k,em,vHtml,sub)=>'<div class="ptile '+cls+'"><div class="k">'+k+' <em>'+em+'</em></div>'+
-    '<div class="v">'+vHtml+'</div><div class="s">'+sub+'</div></div>';
-  let body='<div class="ptiles">'+
-    tile(hardHot?'hot':'','硬止损',long?'多单跌到就走':'空单涨到就走',hardVal,hardSub)+
-    tile('','保本价','离开失败挂这里',eHtml,eSub)+
-    tile('gold dim','移动止盈锚','破它就止盈','—','待中枢模块定稿接入')+
-    '</div>';
-  const sl=SL[p.symbol];
-  if(sl)body+='<div class="hintErr" style="margin-top:5px;">另有矩阵⚙一键止损线：<b style="color:#9aa0b0">'+sl+'</b>（与结构硬止损不一致时，以更近者先触发）</div>';
-  return '<div class="mod m1"><span class="node">①</span><div class="mt">三个价 · <b>持仓期只跟这三个价，不做主观决策</b></div>'+body+'</div>';
+function cname(sym){const c=CONTRACTS.find(x=>x.symbol===sym);return c?c.name:sym;}
+/* 小头动态数字：价格/盈亏/判决徽标（不动图表） */
+function updateDyn(){
+  _slotList.forEach((s,i)=>{
+    const px=$('px_'+i);if(!px)return;
+    if(s.pos){
+      const p=s.pos,v=verdictOf(p),q=v?v.px:null;
+      const p0=p.price?parseFloat(p.price):null;
+      px.textContent=q!=null?q:'—';
+      const pnl=$('pnl_'+i);
+      if(p0&&q!=null){
+        const profit=posIsLong(p)?(q-p0):(p0-q);
+        pnl.style.display='';pnl.className='pnl '+(profit>=0?'pos':'neg');
+        pnl.textContent=(profit>=0?'+':'')+profit.toFixed(1)+' 点';
+      }else pnl.style.display='none';
+      const vb=$('vb_'+i);
+      if(v){
+        vb.style.display='';vb.className='vbadge '+v.key;
+        vb.textContent=(v.key==='hold'?'🟢':v.key==='warn'?'🟡':'🔴')+' '+V_WORD[v.key];
+        vb.title=v.txt;
+      }else vb.style.display='none';
+    }else if(s.watch){
+      const q=(QUOTES[s.watch.symbol]||{}).price;
+      if(px&&q!=null)px.textContent=q;
+    }
+  });
 }
-/* ② 进场参考（当时推的确认卡区间） */
-function mod2(p,long){
-  const s=fpStruct(p);
-  let body;
-  if(s){
-    const col=s.pat.indexOf('LONG')>=0||s.pat.indexOf('BUY')>=0?'#ef5350':'#26a69a';
-    body='<div class="refcard" onclick="gotoDetail(\''+p.symbol+'\',\''+p.period+'\')">'+
-      '<div><div class="rk">进场参考 · 当时推的确认卡</div>'+
-      '<div class="rv" style="color:'+col+'">'+s.patTxt+'　'+s.p1+' → '+s.p2+'</div></div>'+
-      '<div class="rm">'+(P_LAB[p.period]||p.period)+'<br>结构区间</div></div>';
-  }else{
-    body='<div class="refnone">未记录进场结构卡（旧持仓）——升级与硬止损先按品种/级别监控，锚待中枢模块定稿后回填</div>';
-  }
-  return '<div class="mod m2"><span class="node">②</span><div class="mt">进场参考 · <b>拿当时推的那张卡当第一段结构，不另算</b></div>'+body+'</div>';
+
+/* ---------- 迷你K线+笔图（/api/live，与详情页同一套笔配置） ---------- */
+const TZ_OFFSET=28800;
+const fixTime=data=>data.map(x=>({...x,time:x.time+TZ_OFFSET}));
+const BI_DEFAULTS={bi_algo:'normal',is_strict:'1',bi_fx_check:'strict',
+                   bi_end_is_peak:'1',bi_allow_sub_peak:'1',gap_as_kl:'0'};
+let biConf={...BI_DEFAULTS};
+try{
+  const saved=JSON.parse(localStorage.getItem('cl_bi_conf')||'null');
+  if(saved)Object.keys(BI_DEFAULTS).forEach(k=>{if(saved[k]!=null)biConf[k]=String(saved[k]);});
+}catch(e){}
+function biQuery(){
+  return '&subpeak='+biConf.bi_allow_sub_peak+'&algo='+biConf.bi_algo+
+         '&strict='+biConf.is_strict+'&fxcheck='+biConf.bi_fx_check+
+         '&endpeak='+biConf.bi_end_is_peak+'&gap='+biConf.gap_as_kl;
 }
-/* ③ 判决 */
-function mod3(v){
-  let body;
-  if(!v)body='<div class="hintErr">判决等待行情…</div>';
-  else body='<div class="vbox '+v.key+'"><span class="vw">'+(v.key==='hold'?'🟢':v.key==='warn'?'🟡':'🔴')+' '+V_WORD[v.key]+'</span>'+
-    '<span class="vt">'+v.txt+'</span></div>';
-  return '<div class="mod m3"><span class="node">③</span><div class="mt">判决 · <b>次级别波动和顶分型都是噪音，不是卖出理由</b></div>'+body+'</div>';
+const CHARTS={};
+/* 缩放按槽位记（0~3），存 localStorage：换品种/重开页面都按该槽位的缩放来 */
+const ZOOM_KEY='cl_cockpit_zoom';
+let ZOOMS={};
+try{ZOOMS=JSON.parse(localStorage.getItem(ZOOM_KEY)||'{}');}catch(e){ZOOMS={};}
+let _zoomT={};
+function zoomSaveSoon(i){
+  if(_zoomT[i])return;
+  _zoomT[i]=setTimeout(()=>{_zoomT[i]=null;
+    const c=CHARTS[i];if(!c||!c.chart)return;
+    try{
+      const bs=c.chart.timeScale().options().barSpacing;
+      if(isFinite(bs)&&bs>0){ZOOMS[i]=bs;localStorage.setItem(ZOOM_KEY,JSON.stringify(ZOOMS));}
+    }catch(e){}
+  },300);
 }
-/* ④ 升级（动态）：本级别 → 更大级别，同方向形态链；确认/触发=红色可能要升级 */
-function mod4(p,long){
-  const side=long?'long':'short';
-  const myRank=P_RANK[p.period]||0;
-  const lvls=[p.period].concat(PERIODS.filter(x=>(P_RANK[x]||0)>myRank));
-  let anyRed=false,anyState=false;
-  const blocks=lvls.map((lv,i)=>{
-    const c=CELLS[p.symbol+'|'+lv]||{};
-    const st=c.state||'idle';
-    const mine=st!=='idle'&&st!=='gone_b'&&c.side===side;
-    if(mine)anyState=true;
-    const hot=mine&&(st==='conf_a'||st==='trig_b');
-    if(hot)anyRed=true;
-    const col=!mine?'#56606f'
-      :(KIND_OF[st]==='a'?(side==='long'?'#ef5350':'#26a69a'):(side==='long'?'#f0b90b':'#b388ff'));
-    const txt=mine?((KIND_OF[st]==='a'?'A类·':'B类·')+(ST_TXT[st]||'')):'监控中';
-    const ownTag=lv===p.period?'<span class="own">本</span>':'';
-    const arrow=i?'<span class="arr">→</span>':'';
-    return arrow+'<div class="lvb'+(lv===p.period?' own':'')+'" style="border-color:'+col+'55" '+
-      'onclick="gotoDetail(\''+p.symbol+'\',\''+lv+'\')">'+
-      '<div class="l1">'+(P_LAB[lv]||lv)+ownTag+'</div>'+
-      '<div class="l2" style="color:'+col+'">'+txt+'</div></div>';
-  }).join('');
-  let tail;
-  if(anyRed)tail='<span class="chip bad">⚠ 可能要升级 —— 更大级别同向已确认</span>';
-  else if(anyState)tail='<span class="chip gold">大级别同向酝酿中</span>';
-  else tail='<span class="chip">监控中 · 更大级别暂无同向形态</span>';
-  return '<div class="mod m4"><span class="node">④</span><div class="mt">升级 · <b>更大级别出现同方向同类型，才标升级</b></div>'+
-    '<div class="chain">'+blocks+tail+'</div></div>';
+function zoomApply(i){
+  const c=CHARTS[i];if(!c||!c.chart)return;
+  try{
+    const bs=ZOOMS[i];
+    if(isFinite(bs)&&bs>0)c.chart.timeScale().applyOptions({barSpacing:bs,rightOffset:3});
+    c.chart.timeScale().scrollToRealTime();
+  }catch(e){}
 }
-function gotoDetail(sym,period){location.href='/pc/detail?sym='+encodeURIComponent(sym)+'&period='+encodeURIComponent(period);}
+function destroyCharts(){
+  Object.values(CHARTS).forEach(c=>{try{c.timer&&clearInterval(c.timer);}catch(e){}try{c.chart.remove();}catch(e){}});
+  Object.keys(CHARTS).forEach(k=>delete CHARTS[k]);
+}
+function mountChart(i,sym,period){
+  const box=$('chart_'+i);if(!box||!window.LightweightCharts)return;
+  const chart=LightweightCharts.createChart(box,{
+    layout:{background:{type:'solid',color:'#131722'},textColor:'#787b86',fontSize:10},
+    grid:{vertLines:{visible:false},horzLines:{visible:false}},
+    rightPriceScale:{borderColor:'#2a2e39'},
+    timeScale:{borderColor:'#2a2e39',timeVisible:true,secondsVisible:false,rightOffset:3},
+    crosshair:{mode:0},autoSize:true});
+  const candle=chart.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',
+    borderUpColor:'#26a69a',borderDownColor:'#ef5350',wickColor:'#787b86'});
+  const bi=chart.addLineSeries({color:'#f0b90b',lineWidth:1,
+    priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+  CHARTS[i]={sym,period,chart,candle,bi,lastBi:'',timer:null};
+  refreshChart(i);
+  ctimer(i);
+}
+function ctimer(i){CHARTS[i].timer=setInterval(()=>{if(!document.hidden)refreshChart(i);},40000+i*3500);}
+async function refreshChart(i){
+  const c=CHARTS[i];if(!c||!c.chart)return;
+  try{
+    const r=await fetch('/api/live?sym='+encodeURIComponent(c.sym)+'&period='+c.period+biQuery()+'&mk=price');
+    const s=await r.json();
+    if(s.error||!s.kline)return;
+    const biStr=JSON.stringify(s.bi||[]);
+    if(biStr!==c.lastBi){
+      c.lastBi=biStr;
+      c.candle.setData(fixTime(s.kline||[]));
+      c.bi.setData(fixTime(s.bi||[]));
+      zoomApply(i);
+      if(!c.zoomHooked){
+        c.zoomHooked=true;
+        c.chart.timeScale().subscribeVisibleLogicalRangeChange(()=>zoomSaveSoon(i));
+      }
+    }else{
+      c.candle.update(fixTime(s.kline||[]).slice(-1)[0]);
+    }
+    const box=$('chart_'+i);
+    if(box){const e=box.querySelector('.emsg');if(e)e.remove();}
+  }catch(e){}
+}
+
+/* ---------- 添加观察（≠持仓） ---------- */
+let addSlot=0;
+function addOpen(slot){
+  addSlot=slot;
+  const sel=$('addSymbol');
+  if(CONTRACTS.length)sel.innerHTML=CONTRACTS.map(c=>'<option value="'+c.symbol+'">'+c.name+' '+c.symbol+'</option>').join('');
+  $('addPeriod').value='15';
+  $('addModal').style.display='flex';
+}
+function addWatchGo(){
+  const w={symbol:$('addSymbol').value,period:$('addPeriod').value};
+  if(!w.symbol)return;
+  WATCHES=WATCHES.filter(x=>!(x.symbol===w.symbol&&x.period===w.period));
+  WATCHES.push(w);saveWatches();
+  $('addModal').style.display='none';
+  _slotSig='';render();
+}
+function removeWatch(slot){
+  const s=_slotList[slot];if(!s||!s.watch)return;
+  WATCHES=WATCHES.filter(x=>!(x.symbol===s.watch.symbol&&x.period===s.watch.period));
+  saveWatches();_slotSig='';render();
+}
+
+/* ---------- 持仓（观察块 → 正式持仓） ---------- */
+let holdSlot=0;
+function holdOpen(slot){
+  const s=_slotList[slot];if(!s||!s.watch)return;
+  holdSlot=slot;
+  const w=s.watch;
+  $('holdInfo').innerHTML='<b style="color:#d1d4dc">'+cname(w.symbol)+'（'+w.symbol+'）</b> '+(P_LAB[w.period]||w.period)+
+    ' —— 确认后进入持仓系统（三个价/判决/平仓阻尼全部接管）';
+  $('holdEntry').value='二买';holdDeriveExit();$('holdNote').value='';
+  $('holdModal').style.display='flex';
+}
+function holdDeriveExit(){$('holdExit').value=POS_EXIT[$('holdEntry').value]||'';}
+async function holdGo(){
+  const s=_slotList[holdSlot];if(!s||!s.watch)return;
+  const w=s.watch;
+  try{
+    const r=await fetch('/api/positions/add',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({symbol:w.symbol,period:w.period,entry:$('holdEntry').value,
+                           exit:$('holdExit').value,note:$('holdNote').value.trim()})});
+    const d=await r.json();
+    if(d.error){alert(d.error);return;}
+    POSITIONS=d.positions||[];
+    $('holdModal').style.display='none';
+    _slotSig='';render();
+  }catch(e){alert('添加持仓失败：'+e);}
+}
 
 /* ---------- 平仓：判决红灯直通，绿/黄弹阻尼（软熔断） ---------- */
 function askClose(id){
@@ -403,13 +496,13 @@ async function posDelConfirm(){
   const res=selB?selB.dataset.v:'';
   const raw=$('pcPnl').value.trim();
   const pnl=parseFloat(raw);
-  /* 结果与盈亏符号交叉校验（2026-10-19）：负数不可能是止盈，正数不可能是止损——弹层确认防手滑 */
+  /* 结果与盈亏符号交叉校验（2026-10-19）：负数不可能是止盈，正数不可能是止损 */
   if(raw&&!isNaN(pnl)&&pnl!==0&&((res==='止盈'&&pnl<0)||(res==='止损'&&pnl>0))){
     $('pwB').innerHTML='盈亏填的是 <b style="color:'+(pnl<0?'#26a69a':'#ef5350')+'">'+(pnl>0?'+':'')+pnl+
       '</b>，结果选的却是 <b style="color:#f0b90b">'+res+'</b>——'+
       (pnl<0?'亏了钱一般不是止盈，<b>是不是把止损点成止盈了？</b>':'赚了钱一般不是止损，<b>是不是把止盈点成止损了？</b>');
     $('pcWarn').style.display='flex';
-    return;   // 拦下，等用户决定
+    return;
   }
   await posDelGo();
 }
@@ -434,7 +527,7 @@ function pcSel(b){
   b.classList.add('sel');
 }
 
-/* ---------- 编辑持仓 / 进场价录入 ---------- */
+/* ---------- 编辑持仓 ---------- */
 function posEdit(id){posFormOpen(id);}
 function posFormOpen(editId){
   posEditId=editId||null;
@@ -469,20 +562,8 @@ async function posSubmit(){
   }catch(e){alert('保存失败：'+e);}
   posFormClose();
 }
-async function savePrice(id){
-  const el=$('ep_'+id);if(!el)return;
-  const v=parseFloat(el.value);
-  if(!v||v<=0){alert('请输入有效的价格');return;}
-  try{
-    const r=await fetch('/api/positions/update',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({id,price:v})});
-    const d=await r.json();
-    if(d.error){alert(d.error);return;}
-    POSITIONS=d.positions||[];render();
-  }catch(e){alert('保存失败：'+e);}
-}
 
-/* ---------- 升级推送：更大级别同方向形态推进（观察→候选→确认/触发）→ 右上角红色弹卡 ---------- */
+/* ---------- 升级推送：更大级别同方向形态推进 → 右上角红色弹卡 ---------- */
 const _prevCell={};
 function onCell(c){
   if(!c||!c.symbol)return;
@@ -506,8 +587,9 @@ function onCell(c){
     }
   }
   CELLS[k]=c;
-  render();
 }
+const KIND_OF={watch_a:'a',cand_a:'a',conf_a:'a',cand_b:'b',trig_b:'b',gone_b:'a'};
+function gotoDetail(sym,period){location.href='/pc/detail?sym='+encodeURIComponent(sym)+'&period='+encodeURIComponent(period);}
 
 /* ---------- 数据 ---------- */
 async function loadPositions(){
@@ -517,8 +599,11 @@ async function loadQuotes(){
   try{
     const r=await fetch('/api/quotes');const d=await r.json();
     const qq=d.quotes||d;
-    POSITIONS.forEach(p=>{if(qq[p.symbol])QUOTES[p.symbol]=qq[p.symbol];});
-    render();
+    _slotList.forEach(s=>{
+      const sym=s.pos?s.pos.symbol:(s.watch?s.watch.symbol:null);
+      if(sym&&qq[sym])QUOTES[sym]=qq[sym];
+    });
+    updateDyn();
   }catch(e){}
 }
 function connect(){
@@ -540,14 +625,11 @@ function connect(){
   }catch(e){}
   await loadPositions();
   loadQuotes();
-  try{POSITIONS.forEach(async p=>{
-    const r=await fetch('/api/sl_line?sym='+encodeURIComponent(p.symbol));
-    const d=await r.json();SL[p.symbol]=d.price;render();
-  });}catch(e){}
   connect();
-  setInterval(loadQuotes,10000);      // 现价 10s（判决实时复算）
+  setInterval(loadQuotes,10000);      // 现价 10s（小头实时价/判决实时复算）
   setInterval(loadPositions,30000);   // 持仓 30s
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden){loadPositions();loadQuotes();}});
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden){loadPositions();loadQuotes();
+    Object.keys(CHARTS).forEach(i=>refreshChart(i));}});
 })();
 </script>
 </body>

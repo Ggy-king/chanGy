@@ -327,7 +327,9 @@ except Exception:
 _PATTERN_FLAGS_FILE = os.path.join(_HERE, 'data', 'pattern_flags.json')
 try:
     with open(_PATTERN_FLAGS_FILE, encoding='utf-8') as _f:
-        _pattern_mod.OPP_ZS_KILL = bool(json.load(_f).get('opp_zs_kill'))
+        _pf = json.load(_f)
+    _pattern_mod.OPP_ZS_KILL = bool(_pf.get('opp_zs_kill'))
+    _pattern_mod.CONF_ZONE_KILL = bool(_pf.get('conf_zone_kill'))
 except Exception:
     pass
 
@@ -1370,34 +1372,36 @@ async def api_pattern_bi_conf(request: Request):
 
 @app.get('/api/pattern_flags')
 async def api_pattern_flags_get():
-    """反向中枢否定开关当前状态（矩阵页⚙设置面板启动时读取）。"""
-    return JSONResponse({'opp_zs_kill': bool(_pattern_mod.OPP_ZS_KILL)})
+    """实验开关当前状态（矩阵页⚙设置面板启动时读取）。conf_zone_kill 为新增可选字段。"""
+    return JSONResponse({'opp_zs_kill': bool(_pattern_mod.OPP_ZS_KILL),
+                         'conf_zone_kill': bool(_pattern_mod.CONF_ZONE_KILL)})
 
 
 @app.post('/api/pattern_flags')
 async def api_pattern_flags(request: Request):
-    """反向中枢否定开关（用户定稿 2026-10-14）。
-    开=A类结构被反向脱离区间的新中枢否定后作废重算；关=保持原有逻辑。
+    """实验开关（opp_zs_kill=反向中枢否定 2026-10-14；conf_zone_kill=A类确认取消线改区间边 2026-10-21）。
     变更时与笔配置同步同款：清空基线 → 静默重扫全量（85单元约18秒）→ 重推机会快照；
-    持久化到 data/pattern_flags.json，重启后保持。"""
+    持久化到 data/pattern_flags.json，重启后保持。只传一个键时另一个保持不变（向前兼容）。"""
     try:
         raw = await request.json()
     except Exception:
         raw = {}
-    new = bool(raw.get('opp_zs_kill'))
-    old = bool(_pattern_mod.OPP_ZS_KILL)
-    if new == old:
-        return JSONResponse({'ok': True, 'changed': False, 'opp_zs_kill': new})
-    _pattern_mod.OPP_ZS_KILL = new
+    cur = {'opp_zs_kill': bool(_pattern_mod.OPP_ZS_KILL),
+           'conf_zone_kill': bool(_pattern_mod.CONF_ZONE_KILL)}
+    new = {k: (bool(raw[k]) if k in raw else cur[k]) for k in cur}
+    if new == cur:
+        return JSONResponse({'ok': True, 'changed': False, **new})
+    _pattern_mod.OPP_ZS_KILL = new['opp_zs_kill']
+    _pattern_mod.CONF_ZONE_KILL = new['conf_zone_kill']
     try:
         with open(_PATTERN_FLAGS_FILE, 'w', encoding='utf-8') as f:
-            json.dump({'opp_zs_kill': new}, f, ensure_ascii=False)
+            json.dump(new, f, ensure_ascii=False)
     except Exception:
         pass
     _pattern_cells.clear()
     _pattern_reported.clear()
     _push_rescan_task()
-    return JSONResponse({'ok': True, 'changed': True, 'opp_zs_kill': new})
+    return JSONResponse({'ok': True, 'changed': True, **new})
 
 
 # ==================== 持仓状态（监控页/详情页/手机端，2026-10-09） ====================
@@ -2795,6 +2799,24 @@ async def api_trading_status():
 async def api_contracts():
     """盯盘合约清单（按 config.py 顺序），供详情页上下切换合约。"""
     return JSONResponse({'contracts': [{'symbol': c['symbol'], 'name': c['name']} for c in config.CONTRACTS]})
+
+
+@app.post('/api/popups/dismiss')
+async def api_popups_dismiss(request: Request):
+    """弹卡全局叉掉（2026-10-22 跨浏览器定稿）：任一端点 × → 广播 popup_dismiss → 所有端同步消失。
+    消息记入 WS 历史：晚打开的端消化历史时先处理叉掉记录，被叉的卡不复活。
+    全新端点，不动任何既有接口字段。"""
+    try:
+        raw = await request.json()
+    except Exception:
+        raw = {}
+    fp = str(raw.get('fp') or '')
+    if not fp:
+        return JSONResponse({'ok': False, 'error': 'missing fp'})
+    msg = {'type': 'popup_dismiss', 'fp': fp, 'ts': time.time()}
+    manager.remember(msg)
+    await manager.broadcast(msg)
+    return JSONResponse({'ok': True})
 
 
 @app.get('/api/alerts')
