@@ -571,25 +571,42 @@ function nextContract(){ gotoContract(contractIdx+1); }
 // ===== 图表视图状态持久化 =====
 const VIEW_KEY='cl_chart_view';
 let _saveT=null;
+let _klen=0;   // 当前K线根数：切品种/级别时把"最后一根K线位置"按新数据长度换算原位还原
 function saveView(){
   try{
-    const bs=chart.timeScale().options().barSpacing;
-    if(isFinite(bs)&&bs>0) localStorage.setItem(VIEW_KEY,JSON.stringify({barSpacing:bs}));
+    const ts=chart.timeScale();
+    const bs=ts.options().barSpacing;
+    const lr=ts.getVisibleLogicalRange();
+    if(isFinite(bs)&&bs>0&&lr&&isFinite(lr.to)){
+      // rel=最后一根K线到右缘的距离（根，可为负=被拖出右缘）；span=一屏K线根数
+      const rel=lr.to-(_klen-1);
+      localStorage.setItem(VIEW_KEY,JSON.stringify({barSpacing:bs,rel:rel,span:Math.max(2,lr.to-lr.from)}));
+    }
   }catch(e){}
 }
 function saveViewSoon(){ if(_saveT)return; _saveT=setTimeout(()=>{_saveT=null;saveView();},300); }
 function applyView(){
   let raw=null; try{raw=localStorage.getItem(VIEW_KEY);}catch(e){}
-  let barSpacing=null;
+  let bs=null,rel=null,span=null;
   if(raw){
     try{
       const r=JSON.parse(raw);
-      if(r&&isFinite(r.barSpacing)&&r.barSpacing>0){ barSpacing=r.barSpacing; }
+      if(r&&isFinite(r.barSpacing)&&r.barSpacing>0)bs=r.barSpacing;
+      if(r&&r.rel!=null&&isFinite(r.rel)&&isFinite(r.span)&&r.span>1){rel=r.rel;span=r.span;}
     }catch(e){}
   }
-  // 直接用 applyOptions 设置位置，不用 scrollToRealTime/fitContent（避免过场动画）
-  if(barSpacing){
-    chart.timeScale().applyOptions({barSpacing:barSpacing,rightOffset:3});
+  const ts=chart.timeScale();
+  if(rel!=null&&_klen>0){
+    // 文华式全量还原：最后一根K线锚在原位（不管切品种还是切级别）
+    const to=(_klen-1)+rel;
+    if(bs)ts.applyOptions({barSpacing:bs});
+    ts.applyOptions({rightOffset:Math.max(0,rel)});
+    try{ts.setVisibleLogicalRange({from:to-span,to:to});}catch(e){}
+    return;
+  }
+  // 旧记录/无记录：退回老行为（只记缩放，最新K线贴右）
+  if(bs){
+    chart.timeScale().applyOptions({barSpacing:bs,rightOffset:3});
   }else{
     chart.timeScale().applyOptions({rightOffset:3});
   }
@@ -1099,6 +1116,7 @@ function renderKlineData(s, period, isRefresh){
   if(isRefresh && candle.data().length){
     // 定时刷新/⟳按钮：增量合并，视图不动
     mergeRefresh(candle, fixTime(s.kline));
+    _klen=candle.data().length;
     mergeRefresh(vol, fixTime(s.vol||[]));
     if(biStr!==_lastBiStr){ setBiData(fixTime(s.bi||[]), _biMarkers); }
     if(mkStr!==_lastMarkerStr){ _biMarkers=fixTime(s.markers||[]); if(candle) candle.setMarkers(biVisible?_biMarkers:[]); }
@@ -1106,6 +1124,7 @@ function renderKlineData(s, period, isRefresh){
   }else{
     // 切换级别/首次/缓存显示：全量渲染
     candle.setData(fixTime(s.kline));
+    _klen=(s.kline||[]).length;
     vol.setData(fixTime(s.vol||[]));
     setBiData(fixTime(s.bi||[]), fixTime(s.markers||[]));
     setZsData(s.zs||[]);
