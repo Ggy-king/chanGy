@@ -62,30 +62,48 @@ var U_REASON=params.get('reason')||'';
 var N=160;
 var chart,candle,bi;
 
-// ===== 图表视图状态持久化：只记住"缩放力度"（页面容纳多少根K线），
-// 位置永远锚定右侧最新K线——返回列表再进、换品种、刷新都一致 =====
+// ===== 图表视图状态持久化：缩放 + 最后一根K线的位置（文华财经式全量还原）。
+// rel=最后一根K线到右缘的根数（可为负），span=一屏K线根数；
+// 返回列表再进、换品种、刷新都按新数据长度换算原位还原 =====
 var VIEW_KEY='cl_chart_view';
 var _saveT=null;
+var _klen=0;
 function saveView(){
   try{
-    var bs=chart.timeScale().options().barSpacing;
-    if(isFinite(bs)&&bs>0) localStorage.setItem(VIEW_KEY,JSON.stringify({barSpacing:bs}));
+    var ts=chart.timeScale();
+    var bs=ts.options().barSpacing;
+    var lr=ts.getVisibleLogicalRange();
+    if(isFinite(bs)&&bs>0&&lr&&isFinite(lr.to)){
+      var rel=lr.to-(_klen-1);
+      localStorage.setItem(VIEW_KEY,JSON.stringify({barSpacing:bs,rel:rel,span:Math.max(2,lr.to-lr.from)}));
+    }
   }catch(e){}
 }
 function saveViewSoon(){ if(_saveT)return; _saveT=setTimeout(function(){_saveT=null;saveView();},300); }
 function applyView(){
   var raw=null; try{raw=localStorage.getItem(VIEW_KEY);}catch(e){}
+  var bs=null,rel=null,span=null;
   if(raw){
     try{
       var r=JSON.parse(raw);
-      if(r&&isFinite(r.barSpacing)&&r.barSpacing>0){
-        chart.timeScale().applyOptions({barSpacing:r.barSpacing,rightOffset:3});
-        chart.timeScale().scrollToRealTime();
-        return;
-      }
+      if(r&&isFinite(r.barSpacing)&&r.barSpacing>0)bs=r.barSpacing;
+      if(r&&r.rel!=null&&isFinite(r.rel)&&isFinite(r.span)&&r.span>1){rel=r.rel;span=r.span;}
     }catch(e){}
   }
-  chart.timeScale().fitContent();
+  var ts=chart.timeScale();
+  if(rel!=null&&_klen>0){
+    var to=(_klen-1)+rel;
+    if(bs)ts.applyOptions({barSpacing:bs});
+    ts.applyOptions({rightOffset:Math.max(0,rel)});
+    try{ts.setVisibleLogicalRange({from:to-span,to:to});}catch(e){}
+    return;
+  }
+  if(bs){
+    ts.applyOptions({barSpacing:bs,rightOffset:3});
+    ts.scrollToRealTime();
+    return;
+  }
+  ts.fitContent();
 }
 
 function chartW(){
@@ -111,6 +129,7 @@ function buildChart(k,markers,biArr){
     borderUpColor:'#ef5350',borderDownColor:'#26a69a',wickUpColor:'#ef5350',wickDownColor:'#26a69a'});
   bi=chart.addLineSeries({color:'#f0b90b',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
   candle.setData(fixTime(k));
+  _klen=k.length;
   bi.setData(fixTime(biArr));
   candle.setMarkers(fixTime(markers));
   applyView();
