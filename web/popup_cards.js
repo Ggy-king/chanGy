@@ -59,6 +59,7 @@ const PopupCards = (function () {
 .alert-pop .pp-pill{display:inline-block;font-size:10.5px;padding:1px 8px;border-radius:9px;margin-left:6px;vertical-align:1px;font-weight:700;}
 .alert-pop .pp-g{background:rgba(240,185,11,.16);border:1px solid #f0b90b;color:#f0b90b;}
 .alert-pop .pp-b{background:rgba(74,158,255,.14);border:1px solid #4a9eff;color:#4a9eff;}
+.alert-pop .pp-r{background:rgba(255,122,69,.14);border:1px solid #ff7a45;color:#ff9b6a;}
 .alert-pop .pp-txt{color:#787b86;font-size:11.5px;}
 .alert-pop .x{position:absolute;top:5px;right:10px;color:#787b86;cursor:pointer;font-size:16px;}
 @keyframes pcSlide{from{transform:translateX(110%);opacity:0;}to{transform:translateX(0);opacity:1;}}`;
@@ -278,6 +279,7 @@ const PopupCards = (function () {
       info: '<b class="pp-main">' + kd + ' · ' + st + '</b>' +
         (m.bi_formed ? '<span class="pp-pill pp-g">✅已成笔</span>' : '') +
         (isUpdate ? '<span class="pp-pill pp-b">🔔延续</span>' : '') +
+        (m.ptag ? '<span class="pp-pill pp-r">' + m.ptag + '</span>' : '') +
         '<br>价 <b>' + m.price + '</b>　触发 ' + fmtT(m.trigger_time || m.time) +
         '<br><span class="pp-txt">' + (m.text || '') + '</span>',
       href: '/pc/detail?sym=' + encodeURIComponent(m.symbol)

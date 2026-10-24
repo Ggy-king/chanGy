@@ -44,6 +44,10 @@
   td.cell.trig_b.short{background:rgba(179,136,255,.85);border:2px solid #d1c4ff;color:#fff;font-size:11.5px;}
   td.cell.gone_b{border:1px dashed #787b86;color:#787b86;font-size:11px;}
   .clr{position:absolute;top:1px;right:3px;font-size:11px;color:rgba(255,255,255,.75);cursor:pointer;}
+  .cellmark{position:absolute;top:2px;right:2px;font-size:9px;line-height:1;font-style:normal;
+            padding:1px 3px;border-radius:4px;font-weight:800;pointer-events:none;}
+  .cellmark.shun{background:rgba(255,255,255,.18);color:rgba(255,255,255,.9);}
+  .cellmark.ni{background:#ff7a45;color:#131722;}
   td.cell.cand_b .clr,td.cell.gone_b .clr{color:#787b86;}
   /* ===== 图例 ===== */
   .legend{display:flex;gap:14px;font-size:11.5px;color:#787b86;flex:none;flex-wrap:wrap;align-items:center;}
@@ -258,7 +262,7 @@ select{appearance:none;-webkit-appearance:none;
         <button id="confZoneOn" onclick="confZoneChange(true)" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">开</button>
       </div>
     </div>
-    <div style="font-size:10.5px;color:#565a66;margin-top:5px;line-height:1.5;">实验性规则：A类确认的取消线不再等背驰点（结构最低/最高点），改成结构区间（详情页橙色矩形）靠背驰点那一边被破坏就取消。做多盯下沿、做空盯上沿，别搞反。开关状态服务端保存，所有端生效。</div>
+    <div style="font-size:10.5px;color:#565a66;margin-top:5px;line-height:1.5;">实验性规则：A类确认的取消线不再等背驰点（结构最低/最高点），改成结构区间（详情页橙色矩形）靠背驰点那一边被破坏就取消。多-下沿、空-上沿。开关状态服务端保存，所有端生效。</div>
   </div>
   <div style="border-top:1px solid #2a2e39;margin-top:11px;padding-top:10px;">
     <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -342,6 +346,14 @@ select{appearance:none;-webkit-appearance:none;
     <div class="ph">实时事件流
       <button class="btn tab on" id="tabAll" onclick="setTab('all')">全部</button>
       <button class="btn tab" id="tabConf" onclick="setTab('conf')">确认</button>
+      <span style="font-weight:400;font-size:11px;margin-left:8px">级别
+        <button class="btn tab lvb" data-lv="" onclick="setLvflt('')">全部</button>
+        <button class="btn tab lvb" data-lv="3" onclick="setLvflt('3')">3分</button>
+        <button class="btn tab lvb" data-lv="5" onclick="setLvflt('5')">5分</button>
+        <button class="btn tab lvb" data-lv="15" onclick="setLvflt('15')">15分</button>
+        <button class="btn tab lvb" data-lv="30m" onclick="setLvflt('30m')">30分</button>
+        <button class="btn tab lvb" data-lv="60" onclick="setLvflt('60')">60分</button>
+      </span>
       <span class="mut" style="font-weight:400;font-size:11px;margin-left:6px" id="streamCap"></span>
       <span style="float:right;font-weight:400;font-size:11px">回看
         <button class="btn tab" id="dBtn2" onclick="setDays(2)" title="保留最近2个交易日（不含今天，0点起卡）">2天</button>
@@ -397,6 +409,9 @@ function paintCell(cell){
   else if(cell.state==='cand_b'){txt='B'+side+' 候选';td.title=`${cell.pattern} @${cell.price}\n${fmtT(cell.time)}\n结构 ${cell.p1} / ${cell.p2} / ${cell.p3}`;}
   else if(cell.state==='trig_b'){txt='B'+side+' 触发';td.title=`B类触发（三买/三卖进场关注）@${cell.price}\n${fmtT(cell.time)}`;}
   else if(cell.state==='gone_b'){txt='B× 作废';}
+  // 顺大逆小角标（2026-10-23）：确认/触发类格子右上角一个小字，顺白逆橙
+  if((cell.state==='conf_a'||cell.state==='trig_b')&&cell.pstate)
+    txt+=`<i class="cellmark ${cell.pstate==='逆'?'ni':'shun'}">${cell.pstate}</i>`;
   td.innerHTML=txt;
 }
 function fmtT(t){if(!t)return '';return String(t).replace('T',' ').slice(5,16);}
@@ -416,7 +431,9 @@ function zoneQuery(m){
   // 格子没有 kind 字段，从 state 推导（conf_a/watch_a/cand_a→A，trig_b/cand_b→B）
   const kind=m.kind||(String(m.state||'').includes('_a')?'A':(String(m.state||'').includes('_b')?'B':''));
   if(!kind) return '';
-  return '&szp='+encodeURIComponent([m.p1,m.p2,m.p3??'',t1,kind,m.side||''].join('|'));
+  // 报时（触发时刻）带进详情页：K线下方画信号箭头，翻老卡一眼定位爆发点（2026-10-23）
+  const st=m.trigger_time||m.time||'';
+  return '&szp='+encodeURIComponent([m.p1,m.p2,m.p3??'',t1,kind,m.side||''].join('|'))+(st?'&st='+encodeURIComponent(st):'');
 }
 function go(sym,period,cell){location.href='/pc/detail?sym='+sym+'&period='+period+zoneQuery(cell);}
 function cellClick(sym,period){go(sym,period,CELLS[sym+'|'+period]);}
@@ -434,6 +451,16 @@ function setTab(t){
   try{localStorage.setItem('cl_evt_tab',t);}catch(e){}   // 页签记忆（用户定稿 2026-10-12）：
   $('tabAll').classList.toggle('on',t==='all');           // 点确认一直确认、点全部一直全部，
   $('tabConf').classList.toggle('on',t==='conf');         // 详情页返回/重开浏览器都不回"全部"
+  renderStream();
+}
+
+/* ---------- 级别子筛选（2026-10-23）：全部/确认页签下的子分类，本地记忆，默认全部 ---------- */
+let LVFLT='';
+const LV_LAB={'3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分'};
+function setLvflt(v){
+  LVFLT=v||'';
+  try{localStorage.setItem('cl_evt_lvflt',LVFLT);}catch(e){}
+  document.querySelectorAll('.lvb').forEach(b=>b.classList.toggle('on',b.dataset.lv===LVFLT));
   renderStream();
 }
 
@@ -497,10 +524,11 @@ function cardEl(m){
   const bif=confCard?(m.bi_formed
     ?`<span class="bif on">已成笔</span>`
     :`<span class="bif">未成笔</span>`):'';
+  const ptag=m.ptag?`<span class="bif" style="color:#ff9b6a;border-color:#ff7a45;font-weight:700">${m.ptag}</span>`:'';
   div.className='evt '+cls;
   div.dataset.fp=evKey(m);
   div.onclick=()=>location.href='/pc/detail?sym='+encodeURIComponent(m.symbol)+'&period='+encodeURIComponent(m.period||'15')+zoneQuery(m);
-  div.innerHTML=`<div class="r1"><span class="kind">${kind}</span><span>${contTag}${fmtT(trigT(m))}</span>${bif}</div>
+  div.innerHTML=`<div class="r1"><span style="display:flex;align-items:center;gap:4px"><span class="kind">${kind}</span>${ptag}</span><span style="display:flex;align-items:center;gap:4px"><span>${contTag}${fmtT(trigT(m))}</span>${bif}</span></div>
     <div class="r2">${m.name} <span class="mut" style="font-size:11px">${periodLabel(m.period)}</span>
       <span style="float:right;color:${long?'#ef5350':'#26a69a'}">${long?'▲多':'▼空'}</span></div>
     <div class="r3">${m.price??''}</div>
@@ -513,6 +541,7 @@ const trigT=m=>m.trigger_time||m.time||'';
 function renderStream(){
   const firstT=m=>m.first_time||m.time||'';
   const list=(TAB==='conf'?EVTS.filter(isConf):EVTS)
+    .filter(m=>!LVFLT||String(m.period)===LVFLT)
     .slice().sort((a,b)=>{
       const d=trigT(b)>trigT(a)?1:trigT(b)<trigT(a)?-1:0;   // 按触发时刻降序（主序，时间说话）
       if(d)return d;
@@ -524,7 +553,7 @@ function renderStream(){
   const view=list.slice(0,CAP[TAB]);
   const st=$('stream');st.innerHTML='';
   view.forEach(m=>st.appendChild(cardEl(m)));
-  $('streamCap').textContent=`（${TAB==='all'?'候选+确认':'仅确认/触发'} ${view.length}/${CAP[TAB]} 条）`;
+  $('streamCap').textContent=`（${TAB==='all'?'候选+确认':'仅确认/触发'}${LVFLT?' · '+LV_LAB[LVFLT]:''} ${view.length}/${CAP[TAB]} 条）`;
 }
 
 /* ---------- 提醒：分类提示音（确认/触发 vs 候选，音调可调） + 标题闪烁 + 系统通知 ---------- */
@@ -664,6 +693,7 @@ function confZoneChange(on){
   syncBiConf();
   fetch('/api/pattern_flags').then(r=>r.json()).then(d=>{paintOppKill(!!d.opp_zs_kill);paintConfZoneKill(!!d.conf_zone_kill);}).catch(()=>{});
   try{setTab(localStorage.getItem('cl_evt_tab')==='conf'?'conf':'all');}catch(e){}   // 恢复上次选的页签
+  try{setLvflt(localStorage.getItem('cl_evt_lvflt')||'');}catch(e){}   // 恢复级别子筛选（默认全部）
   fetch('/api/pattern_matrix').then(r=>r.json()).then(d=>paintMon(d.mon_enabled!==false)).catch(()=>{});
   const r=await fetch('/api/pattern_matrix');
   const d=await r.json();

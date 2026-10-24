@@ -57,6 +57,7 @@ data/gitee_conf.json
 # 它们仍会出现在 git status 里；彻底移出 GitHub 需要 git rm --cached（用户暂不执行）
 # 形态监控事件流快照：每轮扫描重写，重启自动重建
 data/pattern_snapshot.json
+data/*.tmp
 # 手续费缓存：启动自动联网刷新
 data/fees_cache.json
 # 统计页缓存：自动重建

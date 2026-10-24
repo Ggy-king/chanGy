@@ -97,3 +97,34 @@ def build_zs(bi_list, zs_extend=True, zs_merge=False, zs_first_bi=False):
         zs_list = merged_lst
 
     return zs_list
+
+
+def zs_trend(bi_list, zs_list=None):
+    """中枢序列方向（顺大逆小影子打标 v1，2026-10-23 与用户对齐定稿）。
+
+    返回 'up' / 'down'（永远二值，没有"震荡"桶）：
+    1. 分离：后中枢整体高于前中枢 → up；低于 → down；
+    2. 重叠但重心漂移（中枢扩张）：重心上移 → up，下移 → down
+       （15分向下扩张 = 15分还是向下，方向照定）；
+    3. 真·喇叭口扩展（后中枢上下沿都包住前中枢、重心判不动）：跳过这对往前翻；
+    4. 兜底：翻遍都定不了 → 最后一笔方向；无笔 → None。"""
+    if zs_list is None:
+        zs_list = build_zs(bi_list)
+    if not zs_list:
+        return (bi_list[-1]['direction'] if bi_list else None)
+    i = len(zs_list) - 1
+    while i >= 1:
+        a, b = zs_list[i - 1], zs_list[i]
+        if b['low'] > a['high']:
+            return 'up'                      # 分离：整体在上
+        if b['high'] < a['low']:
+            return 'down'                    # 分离：整体在下
+        if not (b['low'] <= a['low'] and b['high'] >= a['high']):   # 喇叭口（后包前）→ 跳过往前翻
+            ca = (a['high'] + a['low']) / 2.0
+            cb = (b['high'] + b['low']) / 2.0
+            if cb > ca:
+                return 'up'                  # 重叠但重心上漂（向上扩张）
+            if cb < ca:
+                return 'down'                # 重叠但重心下漂（向下扩张）
+        i -= 1
+    return (bi_list[-1]['direction'] if bi_list else None)
