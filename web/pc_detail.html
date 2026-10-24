@@ -717,6 +717,7 @@ function switchPeriod(p){
   currentPeriod=p;
   try{localStorage.setItem('cl_chart_period',p);}catch(e){}
   StructZone.set(null);   // 结构区间只属于进入时的级别，切级别即清
+  _sigMarker=null;        // 报时箭头同理：只属于卡片带来的那个级别
   document.querySelectorAll('#periodSeg button').forEach(b=> b.classList.toggle('on', b.dataset.p===p));
   loadPeriod(p);
 }
@@ -734,6 +735,41 @@ try{
 let biVisible=true;
 try{ biVisible=localStorage.getItem('cl_bi_visible')!=='0'; }catch(e){}
 let _biMarkers=[];
+/* —— 卡片报时箭头（2026-10-23）：从监控卡点进来时（&st=触发时刻），在报时所在K线下方
+   画一个蓝色小箭头——翻老卡不用对时间，一眼看到卡片是在哪根K线爆出来的 —— */
+const P_SEC={'3':180,'5':300,'15':900,'30m':1800,'60':3600};
+const SIG_T=params.get('st')||'';
+let _sigMarker=null;
+function _parseBJ(s){
+  s=String(s).trim().replace(' ','T');
+  if(/\+\d{2}:?\d{2}$/.test(s)) return Date.parse(s);   // 已带时区后缀（部分事件 trigger_time 自带 +08:00）
+  return Date.parse(s+'+08:00');                        // 裸墙上时间按北京时间解析
+}
+function computeSigMarker(rawKline){
+  _sigMarker=null;
+  if(!SIG_T||!rawKline||!rawKline.length) return;
+  const ms=_parseBJ(SIG_T);
+  if(isNaN(ms)) return;
+  const trig=ms/1000;
+  const psec=P_SEC[currentPeriod]||900;
+  // 报告K线 = 触发时刻(=该K线完结时刻) 减一个周期；无精确匹配(停盘缝隙)则取触发前最近一根
+  const want=trig-psec;
+  let bar=null;
+  for(let i=rawKline.length-1;i>=0;i--){
+    const t=rawKline[i].time;
+    if(t===want || t<want){ bar=rawKline[i]; break; }
+  }
+  if(bar) _sigMarker={time:bar.time+TZ_OFFSET, position:'belowBar', shape:'arrowUp', color:'#4a9eff', text:''};
+}
+function applyMarkers(){
+  if(!candle) return;
+  let ms=biVisible?_biMarkers:[];
+  if(_sigMarker){
+    const d=candle.data();
+    if(d.length&&_sigMarker.time>=d[0].time) ms=ms.concat([_sigMarker]);   // 报时K线还在数据窗口内才画
+  }
+  candle.setMarkers(ms);
+}
 function biConfIsDefault(){ return Object.keys(BI_DEFAULTS).every(k=>biConf[k]===BI_DEFAULTS[k]); }
 function saveBiConf(){ try{localStorage.setItem('cl_bi_conf',JSON.stringify(biConf));}catch(e){} }
 function biQuery(){
@@ -746,7 +782,7 @@ function applyBiVisibility(save){
   if(cb) cb.checked=biVisible;
   if(txt) txt.textContent=biVisible?'开':'关';
   if(bi) bi.applyOptions({visible:biVisible});
-  if(candle) candle.setMarkers(biVisible?_biMarkers:[]);
+  applyMarkers();
   if(save!==false){
     try{ localStorage.setItem('cl_bi_visible', biVisible?'1':'0'); }catch(e){}
   }
@@ -754,7 +790,7 @@ function applyBiVisibility(save){
 function setBiData(lineData, markers){
   _biMarkers=markers||[];
   if(bi) bi.setData(lineData||[]);
-  if(candle) candle.setMarkers(biVisible?_biMarkers:[]);
+  applyMarkers();
 }
 function applyBiConf(reload){
   saveBiConf();
@@ -1119,12 +1155,13 @@ function renderKlineData(s, period, isRefresh){
     _klen=candle.data().length;
     mergeRefresh(vol, fixTime(s.vol||[]));
     if(biStr!==_lastBiStr){ setBiData(fixTime(s.bi||[]), _biMarkers); }
-    if(mkStr!==_lastMarkerStr){ _biMarkers=fixTime(s.markers||[]); if(candle) candle.setMarkers(biVisible?_biMarkers:[]); }
+    if(mkStr!==_lastMarkerStr){ _biMarkers=fixTime(s.markers||[]); applyMarkers(); }
     if(zsStr!==_lastZsStr){ setZsData(s.zs||[]); }
   }else{
     // 切换级别/首次/缓存显示：全量渲染
     candle.setData(fixTime(s.kline));
     _klen=(s.kline||[]).length;
+    computeSigMarker(s.kline);   // 卡片报时箭头（当前级别K线上定位）
     vol.setData(fixTime(s.vol||[]));
     setBiData(fixTime(s.bi||[]), fixTime(s.markers||[]));
     setZsData(s.zs||[]);

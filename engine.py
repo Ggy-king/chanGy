@@ -17,6 +17,7 @@ sys.path.insert(0, _HERE)
 
 import akshare as ak
 from chanlun import merge_klines, find_fenxing, build_bi, build_zs
+from chanlun.zs import zs_trend
 from chanlun.pattern import evaluate as pattern_evaluate, _effective_bis
 import config, fees
 import tqsdk_data as tq
@@ -640,6 +641,31 @@ def get_live(symbol, period='15', bi_conf=None, zs_conf=None, force=False):
 # ==================== 背驰-V反 形态预警（docs/背驰反转形态预警系统设计.md） ====================
 
 
+def bi_series(symbol, period, data_length=1000, bi_conf=None):
+    """拉K线并返回笔列表（与 pattern_snapshot 同一套清洗/剔除forming bar/成笔规则）。
+    顺大逆小老卡回填用（server._backfill_parent_tags）：按事件时刻截断后重算中枢方向。"""
+    period_sec = _TQ_PERIOD.get(period, 900)
+    df = tq.fetch_kline(symbol, period_sec, data_length=data_length)
+    if df is None or len(df) == 0:
+        raise RuntimeError(f'empty {period} data for {symbol}')
+    df = df.reset_index(drop=True)
+    if df['datetime'].dt.tz is None:
+        df['datetime'] = __import__('pandas').to_datetime(df['datetime'])
+    df = df.dropna(subset=['open', 'high', 'low', 'close'])
+    if len(df) > 1:
+        _pd = __import__('pandas')
+        _last = df['datetime'].iloc[-1]
+        _now = _pd.Timestamp.now(tz=_last.tz) if _last.tzinfo else _pd.Timestamp.now()
+        if (_now - _last).total_seconds() < period_sec:
+            df = df.iloc[:-1]
+    merged = merge_klines(df)
+    top_fx, bottom_fx = find_fenxing(merged)
+    conf = dict(BI_CONF_DEFAULT)
+    if bi_conf:
+        conf.update({k: v for k, v in bi_conf.items() if k in conf})
+    return build_bi(top_fx, bottom_fx, merged, **conf)
+
+
 def pattern_snapshot(symbol, period, reported_keys=None, bi_conf=None):
     """形态预警单单元评估：拉数 + 算笔 + 形态评估（server.pattern_loop 调度调用）。
 
@@ -683,6 +709,8 @@ def pattern_snapshot(symbol, period, reported_keys=None, bi_conf=None):
     # 成笔判定按"最新笔"算（用户定稿 2026-10-13：黄线出来就算成笔，不等锁死确认）
     eff = _effective_bis(bi_list, merged)
     return {'name': name, 'bi_count': len(bi_list), 'result': result,
+            # 中枢序列方向（顺大逆小影子打标 2026-10-23）：本级别 up/down，server 缓存当父级别状态用
+            'zs_trend': zs_trend(bi_list),
             'bi_tail': [{'d': b['direction'],
                          'st': str(b.get('start_datetime') or ''),
                          'en': str(b.get('end_datetime') or ''),

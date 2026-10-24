@@ -407,17 +407,31 @@ function zoomSaveSoon(i){
   _zoomT[i]=setTimeout(()=>{_zoomT[i]=null;
     const c=CHARTS[i];if(!c||!c.chart)return;
     try{
-      const bs=c.chart.timeScale().options().barSpacing;
-      if(isFinite(bs)&&bs>0){ZOOMS[i]=bs;localStorage.setItem(ZOOM_KEY,JSON.stringify(ZOOMS));}
+      const ts=c.chart.timeScale();
+      const bs=ts.options().barSpacing;
+      const lr=ts.getVisibleLogicalRange();
+      if(isFinite(bs)&&bs>0&&lr&&isFinite(lr.to)&&c.klen>0){
+        // 文华式全量记忆：rel=最后一根K线到右缘根数，span=一屏根数（2026-10-23 与详情页同款）
+        ZOOMS[i]={bs:bs,rel:lr.to-(c.klen-1),span:Math.max(2,lr.to-lr.from)};
+        localStorage.setItem(ZOOM_KEY,JSON.stringify(ZOOMS));
+      }
     }catch(e){}
   },300);
 }
 function zoomApply(i){
   const c=CHARTS[i];if(!c||!c.chart)return;
   try{
-    const bs=ZOOMS[i];
-    if(isFinite(bs)&&bs>0)c.chart.timeScale().applyOptions({barSpacing:bs,rightOffset:3});
-    c.chart.timeScale().scrollToRealTime();
+    const ts=c.chart.timeScale();
+    const z=ZOOMS[i];
+    if(z&&z.rel!=null&&isFinite(z.rel)&&isFinite(z.span)&&z.span>1&&c.klen>0){
+      if(isFinite(z.bs)&&z.bs>0)ts.applyOptions({barSpacing:z.bs});
+      ts.applyOptions({rightOffset:Math.max(0,z.rel)});
+      const to=(c.klen-1)+z.rel;
+      try{ts.setVisibleLogicalRange({from:to-z.span,to:to});}catch(e){}
+      return;
+    }
+    if(isFinite(z)&&z>0)ts.applyOptions({barSpacing:z,rightOffset:3});   // 旧格式(纯数字)兼容：只还原缩放
+    ts.scrollToRealTime();
   }catch(e){}
 }
 /* ---------- 设置面板：右侧价格轴开关（存本机，实时作用于全部模块图） ---------- */
@@ -453,8 +467,8 @@ function mountChart(i,sym,period){
     rightPriceScale:{borderColor:'#2a2e39'},
     timeScale:{borderColor:'#2a2e39',timeVisible:true,secondsVisible:false,rightOffset:3},
     crosshair:{mode:0},autoSize:true});
-  const candle=chart.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',
-    borderUpColor:'#26a69a',borderDownColor:'#ef5350',wickColor:'#787b86'});
+  const candle=chart.addCandlestickSeries({upColor:'#ef5350',downColor:'#26a69a',
+    borderUpColor:'#ef5350',borderDownColor:'#26a69a',wickColor:'#787b86'});   // 中国习惯：红涨绿跌
   const bi=chart.addLineSeries({color:'#f0b90b',lineWidth:1,
     priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
   CHARTS[i]={sym,period,chart,candle,bi,lastBi:'',timer:null};
@@ -474,6 +488,7 @@ async function refreshChart(i){
       c.lastBi=biStr;
       c.candle.setData(fixTime(s.kline||[]));
       c.bi.setData(fixTime(s.bi||[]));
+      c.klen=(s.kline||[]).length;
       zoomApply(i);
       if(!c.zoomHooked){
         c.zoomHooked=true;
@@ -481,6 +496,7 @@ async function refreshChart(i){
       }
     }else{
       c.candle.update(fixTime(s.kline||[]).slice(-1)[0]);
+      c.klen=(s.kline||[]).length;
     }
     const box=$('chart_'+i);
     if(box){const e=box.querySelector('.emsg');if(e)e.remove();}

@@ -110,6 +110,7 @@ class _TeeLog:
 sys.stdout = _TeeLog(sys.stdout)
 sys.stderr = _TeeLog(sys.stderr)
 from chanlun.pattern import fingerprint as pattern_fingerprint
+from chanlun.zs import zs_trend as _zs_trend
 import chanlun.pattern as _pattern_mod
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
@@ -263,6 +264,132 @@ _PATTERN_LABEL = {'30': '30秒', '1': '1分', '3': '3分', '5': '5分', '15': '1
 _CELL_RANK = {'conf_a': 5, 'trig_b': 4, 'cand_a': 3, 'cand_b': 2, 'watch_a': 1, 'gone_b': 0, 'idle': 0}
 _pattern_cells = {}      # (symbol, period) -> cell dict（矩阵页全量状态）
 _pattern_reported = {}   # (symbol, period) -> set(结构指纹)，进程内去重
+# —— 顺大逆小影子打标（2026-10-23 对齐定稿）——
+# _lv_trend: (symbol, period) -> 'up'/'down'，各周期扫描时由 engine.zs_trend 算好缓存。
+# 映射单一父级别链：3→15、5→30m、15→60、30m→60；元组首位=打标用主参考，其余只进审计快照。
+# 只打标不拦截（影子模式），逆才显示；父方向未知（重启空窗）不打标，宁可缺不误标。
+_lv_trend = {}           # (symbol, period) -> 'up'/'down'
+_PARENT_OF = {'3': ('15', '30m'), '5': ('30m', '15'), '15': ('60',), '30m': ('60',)}
+_PARENT_LAB = {'15': '15', '30m': '30', '60': '60'}
+
+
+def _parent_tag(sym, period, side):
+    """子信号相对唯一父级别的影子标签：逆才给字（如'逆30'），顺/未知给 None。"""
+    chain = _PARENT_OF.get(period)
+    pq = chain[0] if chain else None
+    if not pq:
+        return None
+    tr = _lv_trend.get((sym, pq))
+    if not tr:
+        return None
+    my = 'up' if side == 'long' else 'down'
+    if my == tr:
+        return None
+    return '逆' + _PARENT_LAB.get(pq, pq)
+
+
+def _parent_dirs(sym, period):
+    """父级别方向快照（审计统计备用，v2 选父级别/判拦截都用它）：15/30/60 有算过才带。"""
+    out = {}
+    for pq in _PARENT_OF.get(period, ()):
+        tr = _lv_trend.get((sym, pq))
+        if tr:
+            out[{'15': 'parent_15', '30m': 'parent_30', '60': 'parent_60'}[pq]] = tr
+    return out
+
+
+def _parent_state(sym, period, side):
+    """格子角标用：只给一个字（顺/逆）。父方向未知 → None。"""
+    chain = _PARENT_OF.get(period)
+    pq = chain[0] if chain else None
+    if not pq:
+        return None
+    tr = _lv_trend.get((sym, pq))
+    if not tr:
+        return None
+    my = 'up' if side == 'long' else 'down'
+    return '顺' if my == tr else '逆'
+
+
+async def _backfill_parent_tags():
+    """老卡回填（2026-10-23 顺大逆小）：快照恢复的旧事件没有 ptag/parent_* 字段。
+    用当前K线序列在每张卡的触发时刻截断父级别笔序列重算中枢方向（历史近似：
+    截断时刻仍在进行中的笔不计入）。一次性后台任务：每 (品种,父级别) 只拉一次行情，
+    做完落盘即止；之后的新事件走 _apply_pattern 正常路径，本任务不再有任何开销。"""
+    await asyncio.sleep(25)          # 等基线扫描与行情连接稳定
+    if not _MON['enabled']:          # 监控总开关为关：与 keepwarm 同一原则，零行情拉取
+        print('[ptag回填] 监控关闭，跳过回填')
+        return
+    try:
+        # 覆盖所有映射周期的老卡：基线期产生的信号父级别可能尚未缓存（ptag=None），
+        # 且"按事件时刻截断重算"本就比拿当前方向套历史更准——每次启动全量重算，幂等自愈
+        need = [m for m in _pattern_events
+                if m.get('period') in _PARENT_OF and m.get('side')]
+        if not need:
+            print('[ptag回填] 无需回填（无映射周期的老卡）')
+            return
+        pairs = {}
+        for m in need:
+            for pq in _PARENT_OF[m['period']]:
+                pairs.setdefault((m['symbol'], pq), None)
+        for (sym, pq) in list(pairs):
+            try:
+                pairs[(sym, pq)] = await asyncio.to_thread(
+                    engine.bi_series, sym, pq, 1000, _pattern_bi_conf)
+            except Exception as e:
+                print(f'[ptag回填] {sym} {pq} 拉数失败：{str(e)[:80]}')
+        n = 0
+        for m in need:
+            try:
+                t = dt.datetime.fromisoformat(str(m.get('trigger_time') or m.get('time')))
+            except Exception:
+                continue
+            dirs = {}
+            for pq in _PARENT_OF[m['period']]:
+                bl = pairs.get((m['symbol'], pq)) or []
+                trunc = [b for b in bl
+                         if b.get('end_datetime') and _to_dt(b['end_datetime']) <= t]
+                if len(trunc) < 3:
+                    continue
+                tr = _zs_trend(trunc)
+                if tr:
+                    dirs[pq] = tr
+            if not dirs:
+                continue
+            for pq, tr in dirs.items():
+                m[{'15': 'parent_15', '30m': 'parent_30', '60': 'parent_60'}[pq]] = tr
+            chain = _PARENT_OF[m['period']]
+            tr0 = dirs.get(chain[0])
+            if tr0:
+                my = 'up' if m.get('side') == 'long' else 'down'
+                m['ptag'] = None if my == tr0 else '逆' + _PARENT_LAB.get(chain[0], chain[0])
+            n += 1
+        if n:
+            # 顺手刷新现存格子的顺逆角标（基线期父方向可能还没缓存，此处自愈）并广播
+            for key, cell in list(_pattern_cells.items()):
+                if not cell.get('side'):
+                    continue
+                old = (cell.get('ptag'), cell.get('pstate'))
+                cell['ptag'] = _parent_tag(key[0], key[1], cell['side'])
+                cell['pstate'] = _parent_state(key[0], key[1], cell['side'])
+                if (cell.get('ptag'), cell.get('pstate')) != old:
+                    asyncio.ensure_future(manager.broadcast(
+                        {'type': 'pattern_state', 'cell': cell, 'ts': time.time()}))
+            _pattern_save_snapshot()
+            print(f'[ptag回填] 完成：{n}/{len(need)} 张老卡已补方向标签（刷新页面可见）')
+        else:
+            print('[ptag回填] 老卡均无法回填（截断后笔不足），跳过')
+    except Exception as e:
+        print(f'[ptag回填] 异常终止：{str(e)[:120]}')
+
+
+def _to_dt(v):
+    if isinstance(v, str):
+        try:
+            return dt.datetime.fromisoformat(v)
+        except Exception:
+            return None
+    return v
 # 事件流容量规划（用户定稿 2026-10-15）：容量必须 ≥ 两个交易日的推送量。
 # 曾用 100 时 3 天窗口的转移事件总数已顶满（~100），FIFO 挤压 + 形态A全量重放复活
 # 造成入队序与触发时间序脱节——焦煤5分确认卡（触发时间居中）反被当"最老"挤掉
@@ -478,6 +605,9 @@ async def _pattern_scan_once(push, periods=None):
     if not push:
         _snapshot_msgs = []   # 每轮静默基线扫描重新收集
     periods = periods or config.PATTERN_PERIODS
+    # 大级别先扫（2026-10-23 顺大逆小）：父级别方向先入缓存，子级别信号打标才拿得到值，
+    # 否则基线期 3/5分信号会全部打不出标（60→30m→15→5→3）
+    periods = sorted(periods, key=lambda p: -{'3': 3, '5': 5, '15': 15, '30m': 30, '60': 60}.get(p, 0))
     for c in config.CONTRACTS:
         sym, name = c['symbol'], c['name']
         for period in periods:
@@ -490,6 +620,9 @@ async def _pattern_scan_once(push, periods=None):
             except Exception:
                 continue   # 掐线重连窗口/空数据 → 跳过该单元本轮，下轮自然恢复
             try:
+                # 中枢序列方向入缓存（顺大逆小）：zs_trend 挂在快照外层，_apply_pattern 拿的是内层 result
+                if snap.get('zs_trend') in ('up', 'down'):
+                    _lv_trend[(sym, period)] = snap['zs_trend']
                 await _apply_pattern(sym, name, period, snap['result'], push,
                                      snap.get('bi_tail'))
             except Exception as e:
@@ -703,6 +836,9 @@ async def _apply_pattern(sym, name, period, result, push, bi_tail=None):
                    'fingerprint': f'{sym}|{period}|{ev["fingerprint"]}',
                    'text': _pattern_text(name, period, ev), 'ts': time.time(),
                    'first_time': ev['time']}   # 快照重建时首检时刻≈触发时刻（内存流不丢首次显示）
+            # 顺大逆小影子打标（2026-10-23）：ptag=逆才给字；parent_* 只进审计/快照，v2 统计用
+            msg['ptag'] = _parent_tag(sym, period, msg['side'])
+            msg.update(_parent_dirs(sym, period))
             if push:
                 await _upsert_event_card(msg)
             else:
@@ -733,7 +869,9 @@ async def _apply_pattern(sym, name, period, result, push, bi_tail=None):
         new_state, act = 'idle', None            # 10 分钟后自动回 idle
 
     cell = {'symbol': sym, 'name': name, 'period': period, 'state': new_state,
-            'side': act['side'] if act else None, 'ts': now}
+            'side': act['side'] if act else None, 'ts': now,
+            'ptag': _parent_tag(sym, period, act['side']) if act else None,   # 影子标签随格子实时刷新
+            'pstate': _parent_state(sym, period, act['side']) if act else None}   # 顺/逆单字（格子角标）
     if act:
         s = act['struct']
         cell.update({'pattern': act.get('pattern'), 'price': act.get('price'),
@@ -1065,10 +1203,12 @@ async def lifespan(app: FastAPI):
     fees_task = asyncio.create_task(fees_refresh_loop())
     posbi_task = asyncio.create_task(posbi_loop())
     warm_task = asyncio.create_task(keepwarm_loop())
+    ptag_task = asyncio.create_task(_backfill_parent_tags())   # 老卡顺逆标签一次性回填
     yield
     task.cancel()
     alert_task.cancel()
     pattern_task.cancel()
+    ptag_task.cancel()
     fees_task.cancel()
     posbi_task.cancel()
     warm_task.cancel()
@@ -1667,6 +1807,7 @@ async def api_positions_add(request: Request):
         rec['sig_snap'] = {'t': now.isoformat(timespec='seconds'),
                            'same': ('none', 'early', 'signal')[sb],
                            'any': ('none', 'early', 'signal')[ab]}
+        rec['sig_snap'].update(_parent_dirs(sym, period))   # 开仓瞬间父级别方向（顺大逆小 v2 统计用）
         for k in ('open_price', 'lots'):   # 可选开仓价/手数：填了才参与 2% 风险审计
             v = _fnum(p.get(k))
             if v:
