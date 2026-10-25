@@ -263,6 +263,19 @@ select{appearance:none;-webkit-appearance:none;
       </div>
     </div>
     <div style="font-size:10.5px;color:#565a66;margin-top:5px;line-height:1.5;">实验性规则：A类确认的取消线不再等背驰点（结构最低/最高点），改成结构区间（详情页橙色矩形）靠背驰点那一边被破坏就取消。多-下沿、空-上沿。开关状态服务端保存，所有端生效。</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:11px;">
+      <span style="font-size:12px;">A类背驰确认</span>
+      <div style="display:flex;border:1px solid #2a2e39;border-radius:8px;overflow:hidden;" title="背驰点分型必须整体在前低/前高外侧才算背驰的口径，三档：
+【严格】原版——分型三根合并K线全部在外侧。V反太快时分型自己长高（焦煤1374右肩差0.5个点），结构不成立。
+【三K】最低点左右5根合并K线内，有3根完全在外侧即可，允许间断（中间缩回区间的跳过）——价格在低位真实待过时间。
+【融合】严格/三K任一满足即过；都不满足时再看打穿深度：跌破前低的深度≥1-2笔区间高度的30%（真打穿，不是毛刺）。
+切换会触发一次静默重扫（约18秒）">
+        <button id="a3mStrict" onclick="a3ModeChange('strict')" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">严格</button>
+        <button id="a3mBars" onclick="a3ModeChange('bars')" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">三K</button>
+        <button id="a3mFusion" onclick="a3ModeChange('fusion')" style="background:#1e222d;color:#787b86;border:none;padding:5px 11px;font-size:12px;cursor:pointer;">融合</button>
+      </div>
+    </div>
+    <div style="font-size:10.5px;color:#565a66;margin-top:5px;line-height:1.5;">A类观察结构的成立口径（多空镜像）。严格=分型三根全在前低/前高外侧；三K=±5根内有3根完全外侧（可间断）；融合=前两种任一满足，或打穿深度≥1-2笔区间高度的30%。档位服务端保存，所有端生效。</div>
   </div>
   <div style="border-top:1px solid #2a2e39;margin-top:11px;padding-top:10px;">
     <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -685,13 +698,26 @@ function confZoneChange(on){
   fetch('/api/pattern_flags',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conf_zone_kill:on})})
     .then(r=>r.json()).then(d=>{paintConfZoneKill(!!d.conf_zone_kill);if(d.opp_zs_kill!==undefined)paintOppKill(!!d.opp_zs_kill);}).catch(()=>paintConfZoneKill(!on));
 }
+/* ---------- A类背驰确认三档（strict/bars/fusion，服务端持久化，切换触发静默重扫） ---------- */
+const A3_MODES=['strict','bars','fusion'];
+const A3_MID={strict:'a3mStrict',bars:'a3mBars',fusion:'a3mFusion'};
+function paintA3Mode(m){
+  A3_MODES.forEach(k=>{
+    const b=document.getElementById(A3_MID[k]);
+    if(b){const on=k===m;b.style.background=on?'#2c3140':'#1e222d';b.style.color=on?'#f0b90b':'#787b86';b.style.fontWeight=on?'700':'400';}
+  });
+}
+function a3ModeChange(m){
+  fetch('/api/pattern_flags',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({a3_diver_mode:m})})
+    .then(r=>r.json()).then(d=>{if(d.a3_diver_mode!==undefined)paintA3Mode(d.a3_diver_mode);}).catch(()=>{});
+}
 
 /* ---------- 启动 ---------- */
 (async function(){
   paintMute();
   paintStructVis();
   syncBiConf();
-  fetch('/api/pattern_flags').then(r=>r.json()).then(d=>{paintOppKill(!!d.opp_zs_kill);paintConfZoneKill(!!d.conf_zone_kill);}).catch(()=>{});
+  fetch('/api/pattern_flags').then(r=>r.json()).then(d=>{paintOppKill(!!d.opp_zs_kill);paintConfZoneKill(!!d.conf_zone_kill);paintA3Mode(d.a3_diver_mode||'strict');}).catch(()=>{});
   try{setTab(localStorage.getItem('cl_evt_tab')==='conf'?'conf':'all');}catch(e){}   // 恢复上次选的页签
   try{setLvflt(localStorage.getItem('cl_evt_lvflt')||'');}catch(e){}   // 恢复级别子筛选（默认全部）
   fetch('/api/pattern_matrix').then(r=>r.json()).then(d=>paintMon(d.mon_enabled!==false)).catch(()=>{});

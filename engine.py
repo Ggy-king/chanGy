@@ -704,7 +704,7 @@ def pattern_snapshot(symbol, period, reported_keys=None, bi_conf=None):
     if bi_conf:
         conf.update({k: v for k, v in bi_conf.items() if k in conf})
     bi_list = build_bi(top_fx, bottom_fx, merged, **conf)
-    result = pattern_evaluate(bi_list, merged, reported_keys)
+    result = pattern_evaluate(bi_list, merged, reported_keys, raw=df)
     # 图上实时笔（黄线画法）= 完成笔 + 进行中笔（同向延伸/反向新笔，跨度够就画）——
     # 成笔判定按"最新笔"算（用户定稿 2026-10-13：黄线出来就算成笔，不等锁死确认）
     eff = _effective_bis(bi_list, merged)
