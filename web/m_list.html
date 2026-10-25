@@ -241,6 +241,7 @@
         <div class="h-row1">
           <div class="ph-l"><div class="h-title">持仓</div><div class="ph-count" id="posCnt">0 / 4</div></div>
           <div class="h-row1">
+            <div class="icon-btn" onclick="ghSetupOpen()" title="Gitee 令牌设置" style="margin-right:9px;">🔑</div>
             <div class="icon-btn" onclick="posLoad()" title="刷新" style="margin-right:9px;">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
             </div>
@@ -335,9 +336,39 @@
 
 <!-- 平仓简报弹层由 positions_core.js 注入 -->
 
+<!-- Gitee 令牌设置层：令牌不再写死在页面里（2026-10-25，曾随页面进过 git 历史），首次输入存本机 -->
+<div id="ghSetup" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;align-items:center;justify-content:center;">
+  <div style="width:86%;max-width:340px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;">
+    <div style="font-size:15px;font-weight:700;margin-bottom:6px;">🔑 Gitee 令牌</div>
+    <div style="font-size:11.5px;color:var(--t3);line-height:1.7;margin-bottom:10px;">令牌只存本机浏览器、不进代码。在 Gitee「设置→私人令牌」生成（勾选 projects 权限）后粘贴到下面。换令牌点持仓页 🔑 重设。</div>
+    <input id="ghTokIn" type="password" placeholder="粘贴 Gitee 私人令牌" style="width:100%;box-sizing:border-box;background:var(--card2);border:1px solid var(--line);color:var(--t1);border-radius:10px;padding:10px 12px;font-size:13px;outline:none;">
+    <div style="display:flex;gap:9px;margin-top:13px;justify-content:flex-end;">
+      <button class="icon-btn" onclick="ghSetupClose()" style="width:auto;height:34px;border-radius:10px;padding:0 14px;">取消</button>
+      <button class="btn-add" style="height:34px;border-radius:10px;" onclick="ghSetupSave()">保存并重连</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ================= Gitee 直连（唯一权威数据源） ================= */
-const GH={owner:'ggy-king',repo:'chan-gy-data',branch:'master',token:'你的Gitee私人令牌'};
+/* 令牌由用户首次输入存 localStorage（不写死在页面里，曾随页面进过 git 历史 2026-10-25）。
+   与 APK 内置页各自独立存储（浏览器源不同），各输一次。 */
+const GH_DEFAULT={owner:'ggy-king',repo:'chan-gy-data',branch:'master',token:''};
+let GH=Object.assign({},GH_DEFAULT,JSON.parse(localStorage.getItem('gh_conf')||'{}'));
+let _ghSetupShown=false;
+function ghSetupOpen(){
+  document.getElementById('ghTokIn').value=GH.token||'';
+  document.getElementById('ghSetup').style.display='flex';
+}
+function ghSetupClose(){ document.getElementById('ghSetup').style.display='none'; }
+function ghSetupSave(){
+  const v=document.getElementById('ghTokIn').value.trim();
+  if(!v) return;
+  GH.token=v;
+  try{ localStorage.setItem('gh_conf',JSON.stringify(GH)); }catch(e){}
+  ghSetupClose();
+  if(typeof posLoad==='function') posLoad();
+}
 /* POS_EXIT/POS_LIMIT/POS_PNAME/posLabel/periodLabel/b64enc/b64dec/_delPend 由共享层 positions_core.js 提供 */
 let POS_SYMS=[];   // 从服务端 /api/contracts 动态加载（换合约只改 config.py，页面自动跟随）
 async function loadContracts(){
@@ -353,6 +384,7 @@ let POSITIONS=[], posEditId=null, _toastTimer=null;
 function ghApi(path){ return `https://gitee.com/api/v5/repos/${GH.owner}/${GH.repo}/contents/${path}`; }
 async function ghGet(path){
   const r=await fetch(ghApi(path)+'?access_token='+GH.token+'&_='+Date.now());   // 穿透边缘缓存
+  if(r.status===401 && !_ghSetupShown){ _ghSetupShown=true; ghSetupOpen(); }   // 令牌失效 → 自动弹重设
   if(!r.ok) throw 'GET '+path+' '+r.status;
   const d=await r.json();
   if(!d.sha) throw '远端不存在';
@@ -766,6 +798,7 @@ function posDel(id){
 }
 
 posRenderCache();
+if(!GH.token) setTimeout(ghSetupOpen,400);   // 首次使用（本机无令牌）自动弹设置层
 
 /* ================= WS：预警/留言/设备状态 ================= */
 const $=id=>document.getElementById(id);
