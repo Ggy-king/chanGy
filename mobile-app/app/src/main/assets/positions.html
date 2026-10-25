@@ -16,14 +16,14 @@
   #app{height:100dvh;display:flex;flex-direction:column;max-width:480px;margin:0 auto;position:relative;overflow:hidden;}
   .app-header{flex-shrink:0;padding:calc(8px + env(safe-area-inset-top)) 18px 12px;}
   .h-row1{display:flex;align-items:center;justify-content:space-between;}
-  .h-title{font-size:22px;font-weight:700;letter-spacing:.5px;}
-  .ph-l{display:flex;align-items:baseline;gap:10px;}
-  .ph-count{font-family:var(--mono);font-size:14px;font-weight:700;color:var(--gold);
+  .h-title{font-size:22px;font-weight:700;letter-spacing:.5px;white-space:nowrap;}
+  .ph-l{display:flex;align-items:baseline;gap:10px;flex-shrink:0;}
+  .ph-count{font-family:var(--mono);font-size:14px;font-weight:700;color:var(--gold);white-space:nowrap;
     background:rgba(245,184,61,.12);border:1px solid rgba(245,184,61,.25);padding:3px 10px;border-radius:9px;}
   .icon-btn{height:38px;padding:0 13px;border-radius:19px;background:var(--card);border:1px solid var(--line);
-    display:flex;align-items:center;justify-content:center;color:var(--t2);cursor:pointer;flex-shrink:0;font-size:14px;}
-  .btn-add{height:38px;padding:0 18px;border-radius:19px;background:var(--gold);color:#241A05;
-    font-size:14px;font-weight:700;display:flex;align-items:center;gap:5px;border:none;cursor:pointer;}
+    display:flex;align-items:center;justify-content:center;color:var(--t2);cursor:pointer;flex-shrink:0;font-size:14px;white-space:nowrap;}
+  .btn-add{height:38px;padding:0 16px;border-radius:19px;background:var(--gold);color:#241A05;flex-shrink:0;
+    font-size:14px;font-weight:700;display:flex;align-items:center;gap:5px;border:none;cursor:pointer;white-space:nowrap;}
   .conn{display:flex;align-items:center;gap:8px;height:34px;padding:0 11px;
     background:var(--card);border:1px solid var(--line);border-radius:17px;width:fit-content;max-width:100%;margin-top:11px;}
   .conn .cdot{width:8px;height:8px;border-radius:50%;background:#FF5C5C;flex-shrink:0;}
@@ -144,7 +144,7 @@
     <section class="view">
       <div class="app-header">
         <div class="h-row1">
-          <div class="ph-l"><div class="h-title">持仓</div><div class="ph-count" id="posCnt">0 / 4</div><span style="font-size:10px;color:#565a66;font-family:var(--mono);margin-left:8px;">v1.3</span></div>
+          <div class="ph-l"><div class="h-title">持仓</div><div class="ph-count" id="posCnt">0 / 4</div></div>
           <div class="h-row1">
             <div class="icon-btn" onclick="ghSetupOpen()" style="margin-right:9px;" title="Gitee 令牌设置">🔑</div>
             <div class="icon-btn" onclick="posLoad()" style="margin-right:9px;">⟳</div>
