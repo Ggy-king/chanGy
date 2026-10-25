@@ -146,6 +146,7 @@
         <div class="h-row1">
           <div class="ph-l"><div class="h-title">持仓</div><div class="ph-count" id="posCnt">0 / 4</div><span style="font-size:10px;color:#565a66;font-family:var(--mono);margin-left:8px;">v1.3</span></div>
           <div class="h-row1">
+            <div class="icon-btn" onclick="ghSetupOpen()" style="margin-right:9px;" title="Gitee 令牌设置">🔑</div>
             <div class="icon-btn" onclick="posLoad()" style="margin-right:9px;">⟳</div>
             <button class="btn-add" onclick="posFormOpen()">＋ 添加</button>
           </div>
@@ -212,14 +213,45 @@
 
 <!-- 平仓简报弹层由 positions_core.js 注入 -->
 
+<!-- Gitee 令牌设置层：令牌不再打进 APK（2026-10-25），首次使用输入一次存本机 -->
+<div id="ghSetup" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;align-items:center;justify-content:center;">
+  <div style="width:86%;max-width:340px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;">
+    <div style="font-size:15px;font-weight:700;margin-bottom:6px;">🔑 Gitee 令牌</div>
+    <div style="font-size:11.5px;color:var(--t3);line-height:1.7;margin-bottom:10px;">令牌只存本机、不进 App 安装包。在 Gitee「设置→私人令牌」生成（勾选 projects 权限）后粘贴到下面。覆盖安装不用重填；卸载或清 App 数据才需重输。令牌失效点持仓页 🔑 重设。</div>
+    <input id="ghTokIn" type="password" placeholder="粘贴 Gitee 私人令牌" style="width:100%;box-sizing:border-box;background:var(--card2);border:1px solid var(--line);color:var(--t1);border-radius:10px;padding:10px 12px;font-size:13px;outline:none;">
+    <div style="display:flex;gap:9px;margin-top:13px;justify-content:flex-end;">
+      <button class="icon-btn" onclick="ghSetupClose()" style="height:34px;border-radius:10px;">取消</button>
+      <button class="btn-add" style="height:34px;border-radius:10px;" onclick="ghSetupSave()">保存并重连</button>
+    </div>
+  </div>
+</div>
+
 <script>
-const GH={owner:'ggy-king',repo:'chan-gy-data',branch:'master',token:'你的Gitee私人令牌'};
+/* Gitee 连接配置：令牌由用户首次输入存 localStorage（不内置令牌进 APK）。
+   覆盖安装不清数据 → 只输一次；换令牌点持仓页 🔑。 */
+const GH_DEFAULT={owner:'ggy-king',repo:'chan-gy-data',branch:'master',token:''};
+let GH=Object.assign({},GH_DEFAULT,JSON.parse(localStorage.getItem('gh_conf')||'{}'));
+let _ghSetupShown=false;
+function ghSetupOpen(){
+  document.getElementById('ghTokIn').value=GH.token||'';
+  document.getElementById('ghSetup').style.display='flex';
+}
+function ghSetupClose(){ document.getElementById('ghSetup').style.display='none'; }
+function ghSetupSave(){
+  const v=document.getElementById('ghTokIn').value.trim();
+  if(!v) return;
+  GH.token=v;
+  try{ localStorage.setItem('gh_conf',JSON.stringify(GH)); }catch(e){}
+  ghSetupClose();
+  if(typeof posLoad==='function') posLoad();   // 保存后立即重拉持仓
+}
 /* POS_EXIT/POS_LIMIT/POS_PNAME/posLabel/periodLabel/b64enc/b64dec/_delPend 由共享层 positions_core.js 提供 */
 let POS_SYMS=[["jd2612", "鸡蛋"], ["UR2701", "尿素"], ["MA2611", "甲醇"], ["jm2701", "焦煤"], ["CF2701", "棉花"], ["SA2701", "纯碱"], ["SR2701", "白糖"], ["v2701", "PVC"], ["CJ2701", "红枣"], ["SP2611", "纸浆"], ["RU2701", "橡胶"], ["lh2611", "生猪"], ["AP2701", "苹果"], ["pg2611", "液化气"], ["RB2701", "螺纹钢"], ["NI2611", "沪镍"], ["PK2611", "花生"]];   // 仅离线兜底；正常启动会被云端 contracts.json 覆盖
 let POSITIONS=[], posEditId=null, _toastTimer=null, _curTab=0;
 function ghApi(path){ return `https://gitee.com/api/v5/repos/${GH.owner}/${GH.repo}/contents/${path}`; }
 async function ghGet(path){
   const r=await fetch(ghApi(path)+'?access_token='+GH.token+'&_='+Date.now());
+  if(r.status===401 && !_ghSetupShown){ _ghSetupShown=true; ghSetupOpen(); }   // 令牌失效 → 自动弹重设
   if(!r.ok) throw 'GET '+path+' '+r.status;
   const d=await r.json();
   if(!d.sha) throw '远端不存在';
@@ -461,6 +493,7 @@ function posDel(id){
 posRenderCache();
 posLoad();
 loadContracts();
+if(!GH.token) setTimeout(ghSetupOpen,400);   // 首次使用（本机无令牌）自动弹设置层
 </script>
 
 </body></html>

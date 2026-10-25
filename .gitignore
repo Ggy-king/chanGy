@@ -74,3 +74,6 @@ data/pattern_flags.json
 data/pattern_bi_conf.json
 # history 同步合并备份残留
 data/history.json.bak
+
+# APK 产物含设备配置，永不入库（2026-10-25）
+*.apk
