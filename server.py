@@ -457,6 +457,8 @@ try:
         _pf = json.load(_f)
     _pattern_mod.OPP_ZS_KILL = bool(_pf.get('opp_zs_kill'))
     _pattern_mod.CONF_ZONE_KILL = bool(_pf.get('conf_zone_kill'))
+    _m = str(_pf.get('a3_diver_mode') or 'strict')
+    _pattern_mod.A3_DIVER_MODE = _m if _m in ('strict', 'bars', 'fusion') else 'strict'
 except Exception:
     pass
 
@@ -1512,27 +1514,36 @@ async def api_pattern_bi_conf(request: Request):
 
 @app.get('/api/pattern_flags')
 async def api_pattern_flags_get():
-    """实验开关当前状态（矩阵页⚙设置面板启动时读取）。conf_zone_kill 为新增可选字段。"""
+    """实验开关当前状态（矩阵页⚙设置面板启动时读取）。conf_zone_kill / a3_diver_mode 为新增可选字段。"""
     return JSONResponse({'opp_zs_kill': bool(_pattern_mod.OPP_ZS_KILL),
-                         'conf_zone_kill': bool(_pattern_mod.CONF_ZONE_KILL)})
+                         'conf_zone_kill': bool(_pattern_mod.CONF_ZONE_KILL),
+                         'a3_diver_mode': str(getattr(_pattern_mod, 'A3_DIVER_MODE', 'strict'))})
 
 
 @app.post('/api/pattern_flags')
 async def api_pattern_flags(request: Request):
-    """实验开关（opp_zs_kill=反向中枢否定 2026-10-14；conf_zone_kill=A类确认取消线改区间边 2026-10-21）。
+    """实验开关（opp_zs_kill=反向中枢否定 2026-10-14；conf_zone_kill=A类确认取消线改区间边 2026-10-21；
+    a3_diver_mode=A类背驰确认三档口径 strict/bars/fusion 2026-10-24）。
     变更时与笔配置同步同款：清空基线 → 静默重扫全量（85单元约18秒）→ 重推机会快照；
-    持久化到 data/pattern_flags.json，重启后保持。只传一个键时另一个保持不变（向前兼容）。"""
+    持久化到 data/pattern_flags.json，重启后保持。只传一个键时其他保持不变（向前兼容）。"""
     try:
         raw = await request.json()
     except Exception:
         raw = {}
     cur = {'opp_zs_kill': bool(_pattern_mod.OPP_ZS_KILL),
-           'conf_zone_kill': bool(_pattern_mod.CONF_ZONE_KILL)}
-    new = {k: (bool(raw[k]) if k in raw else cur[k]) for k in cur}
+           'conf_zone_kill': bool(_pattern_mod.CONF_ZONE_KILL),
+           'a3_diver_mode': str(getattr(_pattern_mod, 'A3_DIVER_MODE', 'strict'))}
+    new = dict(cur)
+    for k in ('opp_zs_kill', 'conf_zone_kill'):
+        if k in raw:
+            new[k] = bool(raw[k])
+    if 'a3_diver_mode' in raw and str(raw['a3_diver_mode']) in ('strict', 'bars', 'fusion'):
+        new['a3_diver_mode'] = str(raw['a3_diver_mode'])
     if new == cur:
         return JSONResponse({'ok': True, 'changed': False, **new})
     _pattern_mod.OPP_ZS_KILL = new['opp_zs_kill']
     _pattern_mod.CONF_ZONE_KILL = new['conf_zone_kill']
+    _pattern_mod.A3_DIVER_MODE = new['a3_diver_mode']
     try:
         with open(_PATTERN_FLAGS_FILE, 'w', encoding='utf-8') as f:
             json.dump(new, f, ensure_ascii=False)

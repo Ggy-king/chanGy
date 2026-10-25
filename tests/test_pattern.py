@@ -330,3 +330,83 @@ r = evaluate(bis, merged21[:11], rep)                       # 回踩分型后不
 check('回踩确立未离开 → trig_b', r['long']['state'] == 'trig_b' and r['long']['fired'][0]['pattern'] == '3BUY_TRIG')
 r = evaluate(bis, merged21, rep)
 check('价格向上离开回踩区域 → idle', r['long']['state'] == 'idle')
+
+# ===== 26. A类背驰确认三档口径（2026-10-24 用户定稿）=====
+# 场景（焦煤1374实盘复刻）：分型右肩差一点破线 → strict 拒绝；
+# bars 档靠窗口内3根完全外侧K线（可间断）救回；fusion 再兜底打穿深度。
+print('[26] A类背驰确认三档')
+import chanlun.pattern as _pm
+
+# 分型在 k=5：三根 high = [108, 96, 100.5]，p1=100 → 右肩 100.5 超界 0.5（strict 拒绝）
+mh26 = [108.0] * 4 + [96.0, 100.5] + [104.0, 99.5, 108.5, 98.5, 99.0, 99.5, 104.0, 104.0]
+#                    └ 分型左肩   中(k=4)?  对齐下方注释
+merged26 = pd.DataFrame({'high': mh26, 'low': [m - 3 for m in mh26]})
+# 重排：让分型三根=idx4,5,6 → high: 96(中), 左右待定。直接构造：
+mh26 = [104.0, 104.0, 104.0, 104.0, 108.0, 96.0, 100.5, 99.5, 99.0, 104.0, 104.0, 104.0]
+merged26 = pd.DataFrame({'high': mh26, 'low': [m - 3 for m in mh26]})
+bis26 = [mk(0, 'up', 0, 2, 100.0, 110.0),
+         mk(1, 'down', 2, 5, 110.0, 95.0)]       # 3=95, p1=100, 分型在 end_idx=5
+# strict：右肩 100.5 > 100 → 拒绝
+_pm.A3_DIVER_MODE = 'strict'
+r = evaluate(bis26, merged26, set())
+check('strict 档：右肩差0.5 → IDLE（复刻焦煤1374）', r['long']['state'] == 'idle')
+# bars：窗口内完全在外侧的K线 = idx4(108)?否→ 96 ✓, 99.5 ✓, 99.0 ✓ = 3根 → WATCH
+_pm.A3_DIVER_MODE = 'bars'
+r = evaluate(bis26, merged26, set())
+check('bars 档：可间断3根在外侧 → WATCH', r['long']['state'] == 'watch_a'
+      and r['long']['struct']['p1'] == 100.0 and r['long']['struct']['p3'] == 95.0)
+# bars 不足3根 → 仍 IDLE（把窗口内其他外侧K线抬高）
+mh26b = [110.0, 110.0, 110.0, 110.0, 108.0, 96.0, 100.5, 108.0, 108.0, 110.0, 110.0, 110.0]
+merged26b = pd.DataFrame({'high': mh26b, 'low': [m - 3 for m in mh26b]})
+r = evaluate(bis26, merged26b, set())
+check('bars 档：外侧K线不足3根 → IDLE', r['long']['state'] == 'idle')
+# fusion：bars 也不足，但深度 (100-95)/(110-100)=50% ≥ 30% → WATCH
+_pm.A3_DIVER_MODE = 'fusion'
+r = evaluate(bis26, merged26b, set())
+check('fusion 档：打穿深度50%≥30% → WATCH', r['long']['state'] == 'watch_a')
+# fusion：深度不足（3=99，仅10%）→ IDLE
+bis26b = [mk(0, 'up', 0, 2, 100.0, 110.0),
+          mk(1, 'down', 2, 5, 110.0, 99.0)]
+r = evaluate(bis26b, merged26b, set())
+check('fusion 档：深度10%<30% → IDLE', r['long']['state'] == 'idle')
+# fusion 继承 strict 的通过面：strict 能过的 fusion 也能过
+merged26c = pd.DataFrame({'high': [97.0] * 12, 'low': [94.0] * 12})
+_pm.A3_DIVER_MODE = 'fusion'
+r = evaluate(bis26, merged26c, set())
+check('fusion 档继承 strict 通过面 → WATCH', r['long']['state'] == 'watch_a')
+# 空头镜像：顶分型左肩低点扎破 p1'（strict 拒绝），bars 靠3根外侧救回
+_pm.A3_DIVER_MODE = 'bars'
+ml26 = [90.0, 90.0, 90.0, 90.0, 86.0, 104.0, 99.5, 100.5, 101.0, 96.0, 96.0, 96.0]
+merged26s = pd.DataFrame({'high': [m + 3 for m in ml26], 'low': ml26})
+bis26s = [mk(0, 'down', 0, 2, 100.0, 90.0),
+          mk(1, 'up', 2, 5, 90.0, 105.0)]          # 3'=105 > p1'=100，顶分型在 end_idx=5
+r = evaluate(bis26s, merged26s, set())
+check('bars 档空头镜像 → WATCH', r['short']['state'] == 'watch_a'
+      and r['short']['struct']['p1'] == 100.0)
+_pm.A3_DIVER_MODE = 'strict'
+r = evaluate(bis26s, merged26s, set())
+check('strict 档空头镜像：分型扎破 p1' +chr(39)+ ' → IDLE', r['short']['state'] == 'idle')
+_pm.A3_DIVER_MODE = 'strict'   # 恢复默认，不影响其他用例
+
+# ===== 26b. bars 档原始K线口径（2026-10-24 用户定稿：不考虑合并）=====
+# 焦煤 10-22 复刻：合并把矮K线和邻边高K线捆死数不出来（2根<3），原始口径 4 根 ✓
+print('[26b] bars 档原始K线口径')
+raw26 = pd.DataFrame({
+    'high': [104.0, 104.0, 104.0, 104.0, 108.0, 96.0, 96.5, 96.5, 100.5, 96.5, 104.0, 104.0, 104.0],
+    'low':  [m - 1 for m in [104.0, 104.0, 104.0, 104.0, 108.0, 96.0, 96.5, 96.5, 100.5, 96.5, 104.0, 104.0, 104.0]],
+})
+mh26c = [104.0, 108.0, 96.5, 100.5, 96.5, 104.0, 104.0, 104.0, 104.0, 104.0, 104.0, 104.0]
+merged26c = pd.DataFrame({'high': mh26c, 'low': [m - 1 for m in mh26c],
+                          'start_idx': [0, 4, 5, 7, 8, 10, 11, 12, 13, 14, 15, 16],
+                          'end_idx':   [3, 4, 7, 7, 9, 10, 11, 12, 13, 14, 15, 16]})
+bis26c = [mk(0, 'up', 0, 2, 100.0, 110.0),
+          mk(1, 'down', 2, 2, 110.0, 95.0)]     # 笔端点在合并K线 idx2（含最低 95.0）
+_pm.A3_DIVER_MODE = 'bars'
+r = evaluate(bis26c, merged26c, set())                       # 不传 raw = 老合并口径
+check('bars 合并口径（未传raw）：2根<3 → IDLE', r['long']['state'] == 'idle')
+r = evaluate(bis26c, merged26c, set(), raw=raw26)            # 原始K线口径
+check('bars 原始K线口径：4根≥3 → WATCH（焦煤同款救回）', r['long']['state'] == 'watch_a'
+      and r['long']['struct']['p1'] == 100.0 and r['long']['struct']['p3'] == 95.0)
+# 间断规则：中间 100.5 那根缩回区间被跳过，后面 96.5 继续计数（上面 raw idx7→9 已体现）
+_pm.A3_DIVER_MODE = 'strict'
+print(f'\n全部 {PASS} 项断言通过')

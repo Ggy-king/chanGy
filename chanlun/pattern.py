@@ -44,6 +44,44 @@ def _fx_above_level(merged, k, level):
             and float(merged['low'].iloc[k + 1]) > level)
 
 
+def _bars_beyond(merged, k, level, side, raw=None):
+    """bars 档：最低点邻域内完全在 level 外侧的K线数，允许间断
+    （缩回区间里的K线自然不计数，后面仍在外侧的继续数——用户间断规则 2026-10-24）。
+    raw 给定时按【原始K线】数（用户定稿：不考虑合并——合并会把矮K线和邻边高K线
+    捆成一捆，导致"明明在低位待了好几根"数不出来，焦煤 10-22 实测 6 根数成 2 根）；
+    窗口 = 最低点左右 ±A3_BARS_WIN 根合并K线所覆盖的原始K线范围。
+    raw=None 时退化为合并K线口径（老测试/无原始数据的调用方）。"""
+    lo_m = max(0, k - A3_BARS_WIN)
+    hi_m = min(len(merged) - 1, k + A3_BARS_WIN)
+    if raw is not None:
+        r_lo = max(0, int(merged['start_idx'].iloc[lo_m]))
+        r_hi = min(len(raw) - 1, int(merged['end_idx'].iloc[hi_m]))
+        if side == 'long':
+            return int((raw['high'].iloc[r_lo:r_hi + 1] < level).sum())
+        return int((raw['low'].iloc[r_lo:r_hi + 1] > level).sum())
+    if side == 'long':
+        return sum(1 for j in range(lo_m, hi_m + 1) if float(merged['high'].iloc[j]) < level)
+    return sum(1 for j in range(lo_m, hi_m + 1) if float(merged['low'].iloc[j]) > level)
+
+
+def _a3_gate(merged, k, p1, p2, p3, side, raw=None):
+    """A类观察结构成立与否的统一入口（背驰确认三档口径，2026-10-24）。
+    多头：p1=底1 p2=顶2 p3=背驰低点(<p1)；空头镜像。返回 True=结构成立进观察。"""
+    strict_ok = _fx_below_level(merged, k, p1) if side == 'long' else _fx_above_level(merged, k, p1)
+    if strict_ok:
+        return True                      # bars/fusion 都完整继承 strict 的通过面
+    mode = A3_DIVER_MODE
+    if mode == 'strict':
+        return False
+    if _bars_beyond(merged, k, p1, side, raw) >= A3_BARS_NEED:
+        return True
+    if mode == 'fusion':
+        # 打穿深度：跌破前低的深度 ≥ 30% × 1-2 笔区间高度（真打穿，不是毛刺）
+        zone = abs(p2 - p1)
+        return zone > 0 and abs(p1 - p3) >= A3_DEPTH_RATIO * zone
+    return False
+
+
 # ---------------- 事件与指纹（§5.3） ----------------
 
 def _fmt(p):
@@ -124,6 +162,21 @@ OPP_ZS_KILL = False
 CONF_ZONE_KILL = False
 
 
+# A类背驰确认口径（三档，2026-10-24 用户定稿，矩阵页⚙设置面板控制，默认=原版）：
+#   strict = 原版 R3：背驰点分型的三根合并K线，high(多)/low(空) 全部严格在 p1 外侧。
+#            问题：V反太快时分型自己长高/扎低（焦煤1374右肩差0.5个点），结构永远不成立。
+#   bars   = 三K线：最低点左右 ±A3_BARS_WIN 根合并K线内，存在 ≥A3_BARS_NEED 根
+#            完全在 p1 外侧的K线即可，允许间断（中间K线缩回区间就跳过，
+#            后面仍在外侧的继续数）——"价格在低位真实待过时间"。
+#   fusion = 融合：strict / bars 任一满足即过；都不满足时再看打穿深度——
+#            (p1-p3)/(p2-p1) ≥ A3_DEPTH_RATIO（跌破前低的深度达到 1-2 笔
+#            区间高度的三成=真打穿不是毛刺），三条件任意成立即算背驰。
+A3_DIVER_MODE = 'strict'      # 'strict' | 'bars' | 'fusion'
+A3_DEPTH_RATIO = 0.30
+A3_BARS_WIN = 5               # bars 档：最低点左右各看多少根合并K线
+A3_BARS_NEED = 3              # bars 档：需要几根完全在外侧的K线
+
+
 def _dead_by_opposite_zs(tail, p1, side):
     """反向中枢否定判定：tail 最近三笔的重叠区是否完全脱离原结构区间——
     空头：重叠区最低价 > 顶1'（新中枢整个在上方）；多头：重叠区最高价 < 底1'。
@@ -160,7 +213,7 @@ def _finite(*vals):
     return all(isinstance(v, (int, float)) and math.isfinite(float(v)) for v in vals)
 
 
-def _eval_a_long(bi_list, merged, reported):
+def _eval_a_long(bi_list, merged, reported, raw=None):
     """做多：1(低)-2(高)-3(低,破1且分型全在1下方)。
     三阶段（用户术语）：观察（结构成立）→ 候选（向上笔突破2，VREV_LONG）
     → 确认（突破后第一根向下回调笔成立，VREV_CONF_LONG = 二买进场关注）。
@@ -213,7 +266,7 @@ def _eval_a_long(bi_list, merged, reported):
                 p2 = bi_list[i - 1]['end_price']      # 2 = 向上笔终点(顶)
                 p3 = b['end_price']                   # 3
                 if (p3 < p1 and _finite(p1, p2, p3)
-                        and _fx_below_level(merged, b['end_idx'], p1)):
+                        and _a3_gate(merged, b['end_idx'], p1, p2, p3, 'long', raw)):
                     struct = _mkstruct(bi_list[i - 1], b)
                     struct['anchor_i'] = i
                     state = 'watch'
@@ -256,7 +309,7 @@ def _eval_a_long(bi_list, merged, reported):
     return {'state': 'idle', 'struct': None, 'fired': events}
 
 
-def _eval_a_short(bi_list, merged, reported):
+def _eval_a_short(bi_list, merged, reported, raw=None):
     """做空镜像：1'(顶)-2'(低)-3'(新高,破1'且顶分型全在1'上方)。三阶段同 _eval_a_long。"""
     state, struct = 'idle', None
     since_fire, last_fire = False, None       # A候选: (struct, ev, is_new, fire_i)
@@ -305,7 +358,7 @@ def _eval_a_short(bi_list, merged, reported):
                 p2 = bi_list[i - 1]['end_price']      # 2' = 向下笔终点(低)
                 p3 = b['end_price']                   # 3'
                 if (p3 > p1 and _finite(p1, p2, p3)
-                        and _fx_above_level(merged, b['end_idx'], p1)):
+                        and _a3_gate(merged, b['end_idx'], p1, p2, p3, 'short', raw)):
                     struct = _mkstruct(bi_list[i - 1], b)
                     struct['anchor_i'] = i
                     state = 'watch'
@@ -521,10 +574,12 @@ def _merge(a, c):
     return {'state': st['state'], 'struct': st['struct'], 'fired': a['fired'] + c['fired']}
 
 
-def evaluate(bi_list, merged, reported_keys=None):
+def evaluate(bi_list, merged, reported_keys=None, raw=None):
     """形态评估总入口。
 
     bi_list: build_bi 输出（时间升序）；merged: merge_klines 输出（R3 分型位置检查用）。
+    raw: 原始K线 DataFrame（可选，bars 档按原始K线数"完全在外侧"的K线，用户定稿
+    2026-10-24 不考虑合并；不传时 bars 档退化合并口径）。
     reported_keys: 已报指纹集合（调用方按 (symbol,period) 持有并持久传入；
     本函数对首次触发的事件原地写入集合，并放入返回值 fired）。
     评估输入 = 完成笔 + 进行中笔（图上画出来的就要算，突破/成笔瞬间触发）。
@@ -532,6 +587,6 @@ def evaluate(bi_list, merged, reported_keys=None):
     rep = reported_keys if reported_keys is not None else set()
     bis = _effective_bis(bi_list, merged)
     return {
-        'long': _merge(_eval_a_long(bis, merged, rep), _eval_c_long(bis, merged, rep)),
-        'short': _merge(_eval_a_short(bis, merged, rep), _eval_c_short(bis, merged, rep)),
+        'long': _merge(_eval_a_long(bis, merged, rep, raw), _eval_c_long(bis, merged, rep)),
+        'short': _merge(_eval_a_short(bis, merged, rep, raw), _eval_c_short(bis, merged, rep)),
     }
