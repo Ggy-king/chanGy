@@ -268,7 +268,19 @@ _pattern_reported = {}   # (symbol, period) -> set(结构指纹)，进程内去�
 # _lv_trend: (symbol, period) -> 'up'/'down'，各周期扫描时由 engine.zs_trend 算好缓存。
 # 映射单一父级别链：3→15、5→30m、15→60、30m→60；元组首位=打标用主参考，其余只进审计快照。
 # 只打标不拦截（影子模式），逆才显示；父方向未知（重启空窗）不打标，宁可缺不误标。
-_lv_trend = {}           # (symbol, period) -> 'up'/'down'
+_lv_trend = {}           # (symbol, period) -> {'v': 'up'/'down', 'ts': 写入时刻}
+_TREND_TTL_MIN = {'3': 15, '5': 25, '15': 60, '30m': 120, '60': 240}   # 4倍扫描间隔：超龄视为未知
+
+
+def _lv_trend_get(sym, pq):
+    """带新鲜度守卫的父方向读取（2026-10-26 白糖逆15复盘）：扫描静默失败时旧方向
+    会被无限期沿用误标——超龄一律视为未知不打标（宁可缺不误标）。"""
+    e = _lv_trend.get((sym, pq))
+    if not e:
+        return None
+    if time.time() - e['ts'] > _TREND_TTL_MIN.get(pq, 120) * 60:
+        return None
+    return e['v']
 _PARENT_OF = {'3': ('15', '30m'), '5': ('30m', '15'), '15': ('60',), '30m': ('60',)}
 _PARENT_LAB = {'15': '15', '30m': '30', '60': '60'}
 
@@ -279,7 +291,7 @@ def _parent_tag(sym, period, side):
     pq = chain[0] if chain else None
     if not pq:
         return None
-    tr = _lv_trend.get((sym, pq))
+    tr = _lv_trend_get(sym, pq)
     if not tr:
         return None
     my = 'up' if side == 'long' else 'down'
@@ -292,7 +304,7 @@ def _parent_dirs(sym, period):
     """父级别方向快照（审计统计备用，v2 选父级别/判拦截都用它）：15/30/60 有算过才带。"""
     out = {}
     for pq in _PARENT_OF.get(period, ()):
-        tr = _lv_trend.get((sym, pq))
+        tr = _lv_trend_get(sym, pq)
         if tr:
             out[{'15': 'parent_15', '30m': 'parent_30', '60': 'parent_60'}[pq]] = tr
     return out
@@ -304,7 +316,7 @@ def _parent_state(sym, period, side):
     pq = chain[0] if chain else None
     if not pq:
         return None
-    tr = _lv_trend.get((sym, pq))
+    tr = _lv_trend_get(sym, pq)
     if not tr:
         return None
     my = 'up' if side == 'long' else 'down'
@@ -610,7 +622,15 @@ async def _pattern_scan_once(push, periods=None):
     # 大级别先扫（2026-10-23 顺大逆小）：父级别方向先入缓存，子级别信号打标才拿得到值，
     # 否则基线期 3/5分信号会全部打不出标（60→30m→15→5→3）
     periods = sorted(periods, key=lambda p: -{'3': 3, '5': 5, '15': 15, '30m': 30, '60': 60}.get(p, 0))
-    for c in config.CONTRACTS:
+    # 点击插队（2026-10-26）：用户兜底等待过的品种本轮排最先登记，其余保持原顺序
+    try:
+        _prio_syms = {k[0] for k in engine.tq.TqData().take_priority()}
+    except Exception:
+        _prio_syms = set()
+    _cl = config.CONTRACTS
+    if _prio_syms:
+        _cl = sorted(_cl, key=lambda c: 0 if engine.tq.to_tq_symbol(c['symbol']) in _prio_syms else 1)
+    for c in _cl:
         sym, name = c['symbol'], c['name']
         for period in periods:
             key = (sym, period)
@@ -624,7 +644,7 @@ async def _pattern_scan_once(push, periods=None):
             try:
                 # 中枢序列方向入缓存（顺大逆小）：zs_trend 挂在快照外层，_apply_pattern 拿的是内层 result
                 if snap.get('zs_trend') in ('up', 'down'):
-                    _lv_trend[(sym, period)] = snap['zs_trend']
+                    _lv_trend[(sym, period)] = {'v': snap['zs_trend'], 'ts': time.time()}
                 await _apply_pattern(sym, name, period, snap['result'], push,
                                      snap.get('bi_tail'))
             except Exception as e:
@@ -936,6 +956,7 @@ _SESSION_CLOSE_MIN = (11 * 60 + 30, 15 * 60, 23 * 60, 2 * 60 + 30)   # 各时段
 _last_catchup = None       # (日期, 收盘分钟) 防同一次收盘重复收尾
 _baseline_ts = 0.0         # 基线完成时刻（刚跑完基线就无需收尾，数据相同）
 _last_loop_ts = None       # 上一轮循环时刻（检测停摆：合盖休眠超 4 分钟 → 恢复后立即补扫）
+_in_sess_prev = False      # 上一轮循环的交易时段状态（检测时段开启边缘 → 开盘预热摸一次连接）
 
 # ============ 监控总开关（用户定稿 2026-10-12，语义 10-12 修正）============
 # 只管"形态监控"：pattern_loop（矩阵卡片）+ periodic（总览预警信号）。
@@ -1062,7 +1083,7 @@ async def pattern_loop():
     30s/60s）→ 恢复后立即补扫全级别，不等各自主对齐点（否则 3 分最多等 3 分钟、
     30 分要等 30 分钟、60 分等 1 小时）。阈值 4 分钟 > 最小级别 3 分钟，短断片由各级别
     自己的对齐点自愈，不触发全扫。"""
-    global _pattern_ready, _last_catchup, _baseline_ts, _last_loop_ts
+    global _pattern_ready, _last_catchup, _baseline_ts, _last_loop_ts, _in_sess_prev
     await asyncio.sleep(15)   # 等服务与其他初始化就绪
     while True:
         try:
@@ -1072,7 +1093,23 @@ async def pattern_loop():
             now = dt.datetime.now()
             gap = _last_loop_ts is not None and (now - _last_loop_ts).total_seconds() > 240
             _prune_reported()   # 每天首次进入循环时清一次 30 天前的旧指纹（日期判断，非定时器）
-            if trading_time.is_trading_time():
+            in_sess = trading_time.is_trading_time()
+            if in_sess and not _in_sess_prev:
+                # 时段开启边缘（08:55/13:25/20:55/00:00，含提前5分钟窗）：
+                # 天勤连接跨长休市（周末/隔夜）已死，先摸一个品种强制重连，
+                # 把"死亡判定→重建→重新订阅→等历史块"的成本消化在开盘前的窗口里，
+                # 而不是 09:00 第一波扫描+用户点击的排队里（2026-10-26 周一开盘拥堵复盘：
+                # 85单元+17品种同时撞死连接，详情接口 5-8s/请求，约15分钟才自愈）。
+                # 08:55 属于交易时段定义内，不违反"非交易时段完全不摸连接"的定稿。
+                try:
+                    w0 = time.time()
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: engine.fetch_kline(config.CONTRACTS[0]['symbol'], 900, data_length=30))
+                    print(f'[pattern_loop] {now:%H:%M} 时段开启预热完成（{time.time()-w0:.1f}s），连接就绪')
+                except Exception as e:
+                    print(f'[pattern_loop] {now:%H:%M} 时段开启预热失败（首轮扫描会自然重试）:', e)
+            _in_sess_prev = in_sess
+            if in_sess:
                 if not _pattern_ready:
                     # 启动基线：全级别立即扫一遍（否则 60 分级别要等下一个整点，矩阵空窗太长），
                     # 之后进入挂钟对齐节奏；基线静默不推送
@@ -1107,7 +1144,7 @@ async def pattern_loop():
                             except Exception as e:
                                 print('[收盘战报] 打印失败:', e)
                             try:
-                                _save_daily_audit()        # 日审计快照存档（复盘页周聚合用，防信号流滚动丢失）
+                                await asyncio.to_thread(_save_daily_audit)   # 日审计快照存档（内含 fees.load/审计CPU，2026-10-26 丢线程）
                             except Exception as e:
                                 print('[复盘] 日审计快照失败:', e)
                             break
@@ -1166,23 +1203,31 @@ async def keepwarm_loop():
     主动重建重新认证 → 重新订阅 → 等历史块落地（最多15s），前端转圈十几秒。
     监控开着时 pattern_loop 本身在持续摸连接，无需保温（零重复开销）。
     所以：仅当 _MON['enabled']=False 且有品种在交易时段，每 60s 把盯盘清单
-    全量过一遍（只拉数不算形态，缓存复用开销极小）。非交易时段不摸连接：
-    收市品种 _market_idle 直接回缓存，本就不需要活连接。"""
+    过一遍（只拉数不算形态）。2026-10-26 减量：每品种只摸 15分 一个周期——
+    保温要的只是"连接上有数据流动"，全周期摸（17×5≈85键/分钟）在连接刚被
+    重建清空时会变成 85键×15s 的锁内重订阅风暴，把用户点击饿死几分钟
+    （盘中卡死分钟级的共犯），减量后 17 键/分钟，保活效果等价。"""
     await asyncio.sleep(25)
     while True:
         try:
             if not _MON['enabled'] and trading_time.any_product_in_session():
                 loop = asyncio.get_event_loop()
-                for c in config.CONTRACTS:
-                    for period in config.PATTERN_PERIODS:
-                        psec = engine._TQ_PERIOD.get(period, 900)
-                        try:
-                            await loop.run_in_executor(
-                                None, engine.tq.fetch_kline, c['symbol'], psec, 1000)
-                        except engine.tq.TqAuthError:
-                            return   # 认证失败不可自愈，保温无意义，等改配置重启
-                        except Exception:
-                            pass     # 掐线重连窗口：本轮跳过，下轮自愈
+                # 点击插队（2026-10-26）：用户兜底等待过的品种排最前，登记不再按固定顺序傻排
+                try:
+                    _prio_syms = {k[0] for k in engine.tq.TqData().take_priority()}
+                except Exception:
+                    _prio_syms = set()
+                _cl = config.CONTRACTS
+                if _prio_syms:
+                    _cl = sorted(_cl, key=lambda c: 0 if engine.tq.to_tq_symbol(c['symbol']) in _prio_syms else 1)
+                for c in _cl:
+                    try:
+                        await loop.run_in_executor(
+                            None, engine.tq.fetch_kline, c['symbol'], 900, 1000)
+                    except engine.tq.TqAuthError:
+                        return   # 认证失败不可自愈，保温无意义，等改配置重启
+                    except Exception:
+                        pass     # 掐线重连窗口：本轮跳过，下轮自愈
         except Exception as e:
             print('[keepwarm] 保温循环异常:', e)
         await asyncio.sleep(60)
@@ -1206,6 +1251,7 @@ async def lifespan(app: FastAPI):
     posbi_task = asyncio.create_task(posbi_loop())
     warm_task = asyncio.create_task(keepwarm_loop())
     ptag_task = asyncio.create_task(_backfill_parent_tags())   # 老卡顺逆标签一次性回填
+    await asyncio.to_thread(trading_time.warmup)   # 预热交易日历（akshare 网络，2026-10-26 工程审计：丢线程）
     yield
     task.cancel()
     alert_task.cancel()
@@ -1339,7 +1385,8 @@ def _health_checks():
 
 @app.get('/api/health')
 async def api_health():
-    checks = _health_checks()
+    # 2026-10-26 工程审计：_health_checks 里有 fees.load（缓存过期时走 akshare 网络）+ 审计计算，丢线程
+    checks = await asyncio.get_event_loop().run_in_executor(None, _health_checks)
     return JSONResponse({
         'checks': checks,
         'all_ok': not any(c['lvl'] == 'red' for c in checks),
@@ -1783,7 +1830,10 @@ def _gitee_pull_if_stale():
 
 @app.get('/api/positions')
 async def api_positions():
-    _gitee_pull_if_stale()
+    # 2026-10-26 致命修复：回灌含 Gitee HTTP（timeout=8s，history 合并再来一次），
+    # 直接在主线程跑会把事件循环冻住 8-16s——驾驶舱每 30s 轮询即周期性冻结全服务。
+    # _LAST_PULL 先置位再发网络，天然防并发重复拉。丢线程池。
+    await asyncio.get_event_loop().run_in_executor(None, _gitee_pull_if_stale)
     if any(_POS_DIRTY.values()):
         _bg_sync()   # 有未推成功的变更（上轮失败/被互斥跳过）→ 补推
     return JSONResponse({'positions': _positions_load(), 'limit': _POS_LIMIT,
@@ -1880,7 +1930,9 @@ async def api_positions_delete(request: Request):
     pid = str(p.get('id', ''))
     result = str(p.get('close_result', '') or '')
     pnl = str(p.get('close_pnl', '') or '')
-    _history_pull_merge(force=True)   # 写前强拉远端合并，防止陈旧本地 history 推送覆盖手机记录
+    # 写前强拉远端合并，防止陈旧本地 history 推送覆盖手机记录（Gitee HTTP 8s+，2026-10-26 丢线程）
+    await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _history_pull_merge(force=True))
     with _POS_LOCK:
         positions = _positions_load()
         rec = next((x for x in positions if x['id'] == pid), None)
@@ -1917,7 +1969,8 @@ async def api_positions_delete(request: Request):
 
 @app.get('/api/positions/history')
 async def api_positions_history():
-    _history_pull_merge()   # 手机端简报先回灌，统计页看到的就是全量最新
+    await asyncio.get_event_loop().run_in_executor(
+        None, _history_pull_merge)   # 手机端简报先回灌，统计页看到的就是全量最新（Gitee HTTP 8s+，2026-10-26 丢线程）
     return JSONResponse({'history': _history_load()})
 
 
@@ -2008,7 +2061,8 @@ async def posbi_loop():
                             changed = True
                     for sym, period, name in pairs:
                         key = f'{sym}|{period}'
-                        info = _posbi_last_bi(sym, period)
+                        # 2026-10-26 工程审计：fetch_kline+缠论计算是分钟级重活，必须丢线程
+                        info = await asyncio.to_thread(_posbi_last_bi, sym, period)
                         if info is None:
                             continue
                         if key not in pb['seen']:
@@ -2079,7 +2133,9 @@ async def api_history_violation(request: Request):
     p = await request.json()
     hid = str(p.get('id', ''))
     vio = bool(p.get('violation'))
-    _history_pull_merge(force=True)   # 写前强拉合并，防覆盖手机端新简报
+    # 写前强拉合并，防覆盖手机端新简报（Gitee HTTP 8s+，2026-10-26 丢线程）
+    await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _history_pull_merge(force=True))
     with _POS_LOCK:
         hist = _history_load()
         rec = next((x for x in hist if x['id'] == hid), None)
@@ -2261,7 +2317,8 @@ def api_exit_hint(symbol: str, period: str, entry: str = '', price: float = 0):
 
 @app.get('/api/overview')
 async def api_overview():
-    return JSONResponse(engine.get_overview())
+    # 2026-10-26：缓存未热时首次构建=17品种×build_symbol（每个都可能等天勤），必须丢线程池
+    return JSONResponse(await asyncio.get_event_loop().run_in_executor(None, engine.get_overview))
 
 
 @app.get('/api/quotes')
@@ -2271,21 +2328,41 @@ async def api_quotes():
     return JSONResponse(await loop.run_in_executor(None, engine.get_quotes))
 
 
+@app.get('/api/tqstats')
+async def api_tqstats():
+    """天勤连接诊断计数（2026-10-26 盘中卡顿排查，新增端点，既有接口零改动）。
+    只读、零网络。stale_serves 高=锁被长任务霸占（重订阅风暴/全量扫描）；
+    recreates 高=free-api 掐线频繁或限流死亡循环。"""
+    d = engine.tq.TqData()
+    now = time.time()
+    return JSONResponse({
+        'stats': dict(getattr(d, '_stats', {})),
+        'subscribed': len(d._klines),
+        'snapshots': len(getattr(d, '_last_df', {})),
+        'seconds_since_recreate': round(time.time() - d._last_recreate, 1) if d._last_recreate else None,
+        'lv_trend': {f'{s}|{p}': {'v': e['v'], 'age_min': round((now - e['ts']) / 60, 1)}
+                     for (s, p), e in _lv_trend.items()},
+    })
+
+
 @app.get('/api/detail')
 async def api_detail(sym: str):
-    return JSONResponse(engine.get_detail(sym))
+    # 2026-10-26：缓存未命中时 get_detail 内部会 build_symbol（等天勤），丢线程池
+    return JSONResponse(await asyncio.get_event_loop().run_in_executor(None, engine.get_detail, sym))
 
 
 @app.get('/api/fees')
 async def api_fees():
-    return JSONResponse(fees.load())
+    # 2026-10-26 工程审计：fees.load 缓存过期时会同步走 akshare 网络，丢线程
+    return JSONResponse(await asyncio.get_event_loop().run_in_executor(None, fees.load))
 
 
 @app.get('/api/simulate')
 async def api_simulate(sym: str, side: str = 'buy'):
     if side not in ('buy', 'sell'):
         side = 'buy'
-    return JSONResponse(engine.simulate(sym, side))
+    return JSONResponse(await asyncio.get_event_loop().run_in_executor(
+        None, lambda: engine.simulate(sym, side)))
 
 
 @app.get('/api/backtest')
@@ -2294,7 +2371,10 @@ async def api_backtest(sym: str = 'ALL', months: int = 1, strategy: str = ''):
     if not sym or sym not in config.CONTRACT_MAP:
         sym = 'ALL'
     try:
-        return JSONResponse(backtest.run_backtest(sym, months, strategy or None))
+        # 2026-10-26：回测要拉全品种K线（分钟级重活），丢线程池
+        res = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: backtest.run_backtest(sym, months, strategy or None))
+        return JSONResponse(res)
     except Exception as e:
         return JSONResponse({'error': f'回测失败：{e}'})
 
@@ -2927,7 +3007,12 @@ async def api_live(sym: str, period: str = '15', subpeak: str = '1',
         'zs_first_bi': zsfirst == '1',
     }
     try:
-        s = engine.get_live(sym, period, bi_conf=bi_conf, zs_conf=zs_conf, force=force == '1')
+        # 2026-10-26 致命修复：取数是同步阻塞（锁内等待/重连/等历史块最坏分钟级），
+        # 直接在主线程跑会把整个事件循环冻住——连页面HTML都发不出去
+        # （浏览器左上角转圈圈、重启后8000全端口无响应的真凶）。一律丢线程池。
+        loop = asyncio.get_event_loop()
+        s = await loop.run_in_executor(
+            None, lambda: engine.get_live(sym, period, bi_conf=bi_conf, zs_conf=zs_conf, force=force == '1'))
         # 端点标记三档（⚙→📊 图表设置）：price=只有价格文字无圆点 / bs=原版箭头+买卖 / smart=2买3买2卖3卖（判不出不显示）
         if mk == 'bs':
             for m in s.get('markers') or []:

@@ -616,7 +616,8 @@ def get_live(symbol, period='15', bi_conf=None, zs_conf=None, force=False):
     完全独立，不写入 _cache_detail，不影响15分钟预警与回测。"""
     name = config.CONTRACT_MAP[symbol]['name']
     period_sec = _TQ_PERIOD.get(period, 900)
-    df = tq.fetch_kline(symbol, period_sec, data_length=2000, force=force)
+    # user=True：详情页/驾驶舱都是人在等——重建限频降5s、兜底时打插队标记（2026-10-26）
+    df = tq.fetch_kline(symbol, period_sec, data_length=2000, force=force, user=True)
     if df is None or len(df) == 0:
         raise RuntimeError(f'empty {period} data')
     snap = _build(df, symbol, name, bi_conf=bi_conf, zs_conf=zs_conf)

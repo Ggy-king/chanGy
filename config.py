@@ -27,9 +27,9 @@ CONTRACTS = [
     {"symbol": "RU2701", "name": "橡胶",   "exchange": "SHFE"},
     {"symbol": "lh2701", "name": "生猪",   "exchange": "DCE"},
     {"symbol": "AP2701", "name": "苹果",   "exchange": "CZCE"},
-    {"symbol": "pg2611", "name": "液化气", "exchange": "DCE"},
+    {"symbol": "pg2612", "name": "液化气", "exchange": "DCE"},
     {"symbol": "RB2701", "name": "螺纹钢", "exchange": "SHFE"},
-    {"symbol": "NI2611", "name": "沪镍",   "exchange": "SHFE"},
+    {"symbol": "NI2612", "name": "沪镍",   "exchange": "SHFE"},
     # {"symbol": "PK2611", "name": "花生",   "exchange": "CZCE"},
 ]
 
