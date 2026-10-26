@@ -187,7 +187,7 @@
   <div class="head-group right">
     <div class="price"><div class="p" id="p">–</div><div id="chg" class="mut"></div></div>
     <span id="tradeStatus" class="mut"></span>
-    <button class="btn icon-btn" onclick="loadPeriod(currentPeriod, true)" title="刷新（保持当前视图不动）">⟳</button>
+    <button class="btn icon-btn" onclick="loadPeriod(currentPeriod, true, false, true)" title="刷新（保持当前视图不动）">⟳</button>
     <button class="btn icon-btn" onclick="posAddOpen()" title="一键转为持仓状态（品种/级别/时间自动带入，二买→二卖默认推导；要改细节回监控页编辑）">＋</button>
     <button class="btn icon-btn" id="setBtn" onclick="toggleSetMenu(event)" title="设置：缠论笔 / 中枢 / 图表 / 使用说明（笔或中枢有非默认设置时右上角显示金点）">⚙</button>
     <button class="btn icon-btn alert-list-btn" id="alertListBtn" onclick="toggleAlertList()" title="预警列表">🔔<span class="badge" id="alertBadge">0</span></button>
@@ -502,9 +502,46 @@ let refreshTimer=null;
 let ws;
 const proto=location.protocol==='https:'?'wss':'ws';
 
-// ===== 前端K线缓存：切换级别时先显示缓存，新数据加载后再更新 =====
-const _klineCache={};  // {period: data}
+// ===== 前端K线缓存：切换级别/返回重进时先显示缓存，新数据加载后再更新 =====
+// 2026-10-26 升级：内存级 → sessionStorage 持久化。返回列表页再进同一品种不再白屏重拉
+// （骨架不变，仍是"先渲染缓存→后台刷新→回填"）。键=品种|级别；笔/中枢/标记配置变化
+// 时三处作废点全清。单条约300KB，上限8条（LRU），超6小时不回显只走网络。
+const _CACHE_KEY='cl_live_cache';
+const _CACHE_MAX=8;
+const _CACHE_TTL=6*3600*1000;
+const _klineCache={};  // {sym|period: data}
+const _cacheTs={};     // {sym|period: 存入时刻}
 let _cacheLoading={};  // {period: true}
+try{
+  const saved=JSON.parse(sessionStorage.getItem(_CACHE_KEY)||'{}');
+  const now=Date.now();
+  Object.keys(saved).forEach(k=>{
+    if(now-(saved[k].ts||0)<_CACHE_TTL){ _klineCache[k]=saved[k].data; _cacheTs[k]=saved[k].ts||now; }
+  });
+}catch(e){}
+function _cacheFlush(){
+  try{
+    const out={};
+    Object.keys(_klineCache).forEach(k=>{ out[k]={ts:_cacheTs[k]||0, data:_klineCache[k]}; });
+    sessionStorage.setItem(_CACHE_KEY, JSON.stringify(out));
+  }catch(e){/* 超配额：放弃持久化，内存缓存仍生效 */}
+}
+function cachePut(period, s){
+  const k=SYM+'|'+period;
+  _klineCache[k]=s; _cacheTs[k]=Date.now();
+  const keys=Object.keys(_klineCache);
+  if(keys.length>_CACHE_MAX){
+    keys.sort((a,b)=>(_cacheTs[a]||0)-(_cacheTs[b]||0))
+        .slice(0, keys.length-_CACHE_MAX)
+        .forEach(old=>{ delete _klineCache[old]; delete _cacheTs[old]; });
+  }
+  _cacheFlush();
+}
+function cacheClearAll(){
+  Object.keys(_klineCache).forEach(k=>delete _klineCache[k]);
+  Object.keys(_cacheTs).forEach(k=>delete _cacheTs[k]);
+  try{ sessionStorage.removeItem(_CACHE_KEY); }catch(e){}
+}
 
 // ===== 交易时段控制 =====
 const TRADE_SESSIONS=[[8,55,11,35],[13,25,15,5],[20,55,23,59],[0,0,2,35]];
@@ -802,7 +839,7 @@ function applyBiConf(reload){
   updateSetDot();
   if(reload){
     // 笔配置变了，K线缓存里的旧笔一并作废
-    Object.keys(_klineCache).forEach(k=>delete _klineCache[k]);
+    cacheClearAll();
     loadPeriod(currentPeriod, false, true);
   }
 }
@@ -901,7 +938,7 @@ document.querySelectorAll('#mkSeg button').forEach(b=>{
     CC.markerMode=b.dataset.m;
     saveChartConf();
     document.querySelectorAll('#mkSeg button').forEach(x=>x.classList.toggle('on',x===b));
-    Object.keys(_klineCache).forEach(k=>delete _klineCache[k]);   // 缓存里的旧标记作废
+    cacheClearAll();   // 标记模式变了，缓存里的旧标记作废
     loadPeriod(currentPeriod, false, true);
   });
 });
@@ -944,7 +981,7 @@ function applyZsConf(reload){
   updateSetDot();
   if(reload){
     // 中枢配置变了，缓存作废重拉（中枢从笔现算，笔配置变化同样会带到这里）
-    Object.keys(_klineCache).forEach(k=>delete _klineCache[k]);
+    cacheClearAll();
     loadPeriod(currentPeriod, false, true);
   }
 }
@@ -1052,7 +1089,7 @@ function toggleSidePanel(){ updateSidePanel(!sideVisible); hideCtxMenu(); }
 
 let _errRetryTimer=null;
 
-async function loadPeriod(period, isRefresh, onlyBi){
+async function loadPeriod(period, isRefresh, onlyBi, force){
   try{
     if(onlyBi){
       const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery()+zsQuery()+'&mk='+CC.markerMode);
@@ -1068,7 +1105,7 @@ async function loadPeriod(period, isRefresh, onlyBi){
       return;
     }
     // ===== 缓存优先：切换级别时先显示缓存数据，避免空白卡顿 =====
-    const cached=_klineCache[period];
+    const cached=_klineCache[SYM+'|'+period];
     if(cached && !isRefresh){
       // 先显示缓存
       renderKlineData(cached, period, false);
@@ -1076,7 +1113,8 @@ async function loadPeriod(period, isRefresh, onlyBi){
       if(_cacheLoading[period]) return;
     }
     _cacheLoading[period]=true;
-    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery()+zsQuery()+'&mk='+CC.markerMode+(isRefresh?'&force=1':''));
+    // force 只有 ⟳ 手动刷新才带：自动刷新走服务端兜底通道（锁忙碌回快照，不触发重建限频旁路）
+    const r=await fetch('/api/live?sym='+encodeURIComponent(SYM)+'&period='+period+biQuery()+zsQuery()+'&mk='+CC.markerMode+(force?'&force=1':''));
     const s=await r.json();
     _cacheLoading[period]=false;
     if(s.error){
@@ -1088,8 +1126,8 @@ async function loadPeriod(period, isRefresh, onlyBi){
       }
       return;
     }
-    // 存入缓存
-    _klineCache[period]=s;
+    // 存入缓存（持久化到 sessionStorage，跨导航生效）
+    cachePut(period, s);
     // 渲染新数据（如果当前显示的就是这个级别）
     if(currentPeriod===period){
       renderKlineData(s, period, isRefresh);
@@ -1482,7 +1520,9 @@ document.querySelectorAll('#periodSeg button').forEach(b=>{
   b.classList.toggle('on', b.dataset.p===currentPeriod);
   b.onclick=()=>switchPeriod(b.dataset.p);
 });
-refreshTimer=setInterval(()=>{ if(canAutoRefresh()) loadPeriod(currentPeriod, true); }, 30000);
+// 2026-10-26：30s→5s。数据是天勤推送的，服务端内存里每根K线都秒级新鲜，
+// 定时器只是"抄内存"的频率——抄得勤，盘中图表才跟手；非交易时段 canAutoRefresh 拦住，零开销
+refreshTimer=setInterval(()=>{ if(canAutoRefresh()) loadPeriod(currentPeriod, true); }, 5000);
 
 // ========== 价格预警 ==========
 let alertLines={};

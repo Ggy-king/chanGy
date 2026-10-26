@@ -18,6 +18,7 @@
 import datetime as dt
 import json
 import os
+import time
 
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.path.join('data', 'trading_days_cache.json'))
 
@@ -59,9 +60,20 @@ def _ensure_pylibs():
         sys.path.insert(0, p)
 
 
+_trading_days = None
+_last_cal_fail = 0.0   # 上次 akshare 拉日历失败时刻（失败后退避10分钟再试，2026-10-26 工程审计：
+                       # 原先失败置 None → 之后每次 is_trading_time（每30s）都重试 import+网络，
+                       # akshare 故障时周期性冻住调用方线程）
+
+
+def warmup():
+    """启动时预热交易日历（在线程里调，避免网络阻塞事件循环）。"""
+    _load_trading_days()
+
+
 def _load_trading_days():
     """加载交易日历集合，失败返回 None（降级模式）。结果缓存到内存和文件。"""
-    global _trading_days
+    global _trading_days, _last_cal_fail
     if _trading_days is not None:
         return _trading_days
 
@@ -79,13 +91,16 @@ def _load_trading_days():
     except Exception:
         pass
 
-    # 2) 拉 akshare
+    # 2) 拉 akshare（失败后退避：10 分钟内不再碰网络，直接降级周末+内置节假日）
+    if time.time() - _last_cal_fail < 600:
+        return None
     try:
         _ensure_pylibs()
         import akshare as ak
         df = ak.tool_trade_date_hist_sina()
         days = set(str(d)[:10] for d in df['trade_date'].tolist())
         _trading_days = days
+        _last_cal_fail = 0.0
         try:
             os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
             with open(CACHE_FILE, 'w', encoding='utf-8') as f:
@@ -94,7 +109,8 @@ def _load_trading_days():
             pass
         return days
     except Exception as e:
-        print(f'[trading_time] akshare 交易日历加载失败，降级为周末+内置节假日: {e}')
+        print(f'[trading_time] akshare 交易日历加载失败，降级为周末+内置节假日（10分钟后重试）: {e}')
+        _last_cal_fail = time.time()
         _trading_days = None
         return None
 

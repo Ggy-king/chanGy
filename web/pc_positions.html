@@ -83,6 +83,7 @@ main{flex:1;overflow-y:auto;scrollbar-width:thin;padding:8px;}
   <span class="sp"></span>
   <span class="conn" style="display:flex;align-items:center;gap:6px;font-size:12px;color:#787b86;">
     <span class="dot" id="dot"></span><span id="connTx">连接中…</span></span>
+  <span class="mut" id="updTx" title="现价来自新浪行情，每10秒拉一次；非交易时段价格不变属正常。灰色=本轮拉取失败，绿色=成功">行情 --:--:--</span>
   <button class="btn" onclick="cfgToggle()">⚙ 设置</button>
 </header>
 
@@ -691,16 +692,28 @@ function gotoDetail(sym,period){location.href='/pc/detail?sym='+encodeURICompone
 async function loadPositions(){
   try{const r=await fetch('/api/positions');const d=await r.json();POSITIONS=d.positions||[];render();}catch(e){}
 }
+let _lastUpdOk=null;   // 最后一次成功拉取行情的时刻（失败时显示它+失败标记）
 async function loadQuotes(){
+  const x=new Date();
+  const ts='行情 '+String(x.getHours()).padStart(2,'0')+':'+String(x.getMinutes()).padStart(2,'0')+':'+String(x.getSeconds()).padStart(2,'0');
+  const el=$('updTx');
   try{
     const r=await fetch('/api/quotes');const d=await r.json();
     const qq=d.quotes||d;
+    let fresh=0;
     _slotList.forEach(s=>{
       const sym=s.pos?s.pos.symbol:(s.watch?s.watch.symbol:null);
-      if(sym&&qq[sym])QUOTES[sym]=qq[sym];
+      if(sym&&qq[sym]){QUOTES[sym]=qq[sym];fresh++;}
     });
     updateDyn();
-  }catch(e){}
+    // 刷新时间戳三态：绿=本轮拉到行情；黄=拉通了但没拿到价（非交易时段，正常）；红=拉取失败
+    if(el){
+      if(fresh>0){_lastUpdOk=ts;el.textContent=ts;el.style.color='#26a69a';}
+      else{_lastUpdOk=ts;el.textContent=ts+' · 无行情';el.style.color='#f0b90b';}
+    }
+  }catch(e){
+    if(el){el.textContent=(_lastUpdOk||ts)+' · 拉取失败';el.style.color='#ef5350';el.title='本轮拉取失败（新浪接口），10秒后自动重试';}
+  }
 }
 function connect(){
   const proto=location.protocol==='https:'?'wss':'ws';
