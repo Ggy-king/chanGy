@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>形态监控矩阵</title>
+<title>监控页</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
   body{background:#131722;color:#d1d4dc;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
@@ -26,8 +26,9 @@
   table#matrix{border-collapse:separate;border-spacing:5px;width:100%;table-layout:fixed;}
   #matrix th{color:#787b86;font-weight:700;font-size:12.5px;padding:4px 2px;white-space:nowrap;overflow:hidden;}
   #matrix th.rowhead{text-align:center;color:#d1d4dc;font-size:13px;width:64px;}
-  #matrix th.colhead{cursor:pointer;}
+  #matrix th.colhead{cursor:grab;}
   #matrix th.colhead:hover{color:#f0b90b;}
+  #matrix th.colhead.dragover{outline:2px dashed #b388ff;outline-offset:-3px;}
   td.cell{width:64px;height:44px;text-align:center;background:#262b38;border:1px solid #2a2e39;border-radius:8px;
           font-size:13px;font-weight:800;cursor:pointer;transition:background .15s,border-color .15s;
           position:relative;user-select:none;}
@@ -293,10 +294,10 @@ select{appearance:none;-webkit-appearance:none;
 <!-- 持仓面板（可拖动竖条，位置记忆） -->
 <div id="posPanel">
   <div id="posPanelHead">
-    <span>持仓状态</span><span class="mut" id="posCount" style="font-weight:400;font-size:11.5px"></span>
+    <span>持仓卡片</span><span class="mut" id="posCount" style="font-weight:400;font-size:11.5px"></span>
     <span style="flex:1"></span>
     <button class="btn" id="posbiBtn" style="padding:2px 9px" onclick="PosBI.toggle(this)" title="开启后：持仓品种×级别每出现一根新确认笔，左上角强制弹卡提醒，点确认才消">🖊 确认笔提醒 关</button>
-    <a class="btn" style="padding:2px 9px;color:#4a9eff;border-color:#4a9eff66" href="/pc/positions" target="_blank">🚗 驾驶舱</a>
+    <a class="btn" style="padding:2px 9px;color:#4a9eff;border-color:#4a9eff66" href="/pc/positions" target="_blank">🚗 持仓页</a>
     <button class="btn" style="padding:2px 9px" onclick="posFormOpen()">+ 添加</button>
     <button class="btn" style="padding:2px 9px" onclick="togglePosPanel()">×</button>
   </div>
@@ -386,7 +387,7 @@ let _muted=localStorage.getItem('cl_matrix_mute')==='1';
 function render(){
   const tb=$('matrix');
   let h='<tr><th class="rowhead">级别＼品种</th>';
-  for(const c of CONTRACTS) h+=`<th class="colhead" onclick="go('${c.symbol}','15')">${c.name}</th>`;
+  for(const c of CONTRACTS) h+=`<th class="colhead" draggable="true" data-sym="${c.symbol}" onclick="go('${c.symbol}','15')" title="点击进详情 · 按住品种名拖动可排序">${c.name}</th>`;
   h+='</tr>';
   for(const p of PERIODS){
     h+=`<tr><th class="rowhead">${periodLabel(p)}</th>`;
@@ -398,6 +399,7 @@ function render(){
     h+='</tr>';
   }
   tb.innerHTML=h;
+  wireColDrag();
   for(const key in CELLS) paintCell(CELLS[key]);
   // 尚未有状态的格子标"扫描中"
   document.querySelectorAll('td.cell').forEach(td=>{
@@ -405,6 +407,26 @@ function render(){
   });
 }
 function cssKey(k){return k.replace(/[^a-zA-Z0-9]/g,'_');}
+/* ---------- 品种列拖动排序（2026-10-27 用户定稿）：按住列头品种名拖动换位，顺序存 localStorage ---------- */
+let _mDragSym=null;
+function wireColDrag(){
+  document.querySelectorAll('#matrix th.colhead').forEach(th=>{
+    th.ondragstart=e=>{_mDragSym=th.dataset.sym;e.dataTransfer.effectAllowed='move';};
+    th.ondragend=()=>{_mDragSym=null;document.querySelectorAll('#matrix th.colhead.dragover').forEach(x=>x.classList.remove('dragover'));};
+    th.ondragover=e=>{if(!_mDragSym||_mDragSym===th.dataset.sym)return;e.preventDefault();e.dataTransfer.dropEffect='move';
+      document.querySelectorAll('#matrix th.colhead.dragover').forEach(x=>x.classList.remove('dragover'));th.classList.add('dragover');};
+    th.ondragleave=()=>th.classList.remove('dragover');
+    th.ondrop=e=>{
+      e.preventDefault();th.classList.remove('dragover');
+      const src=CONTRACTS.findIndex(c=>c.symbol===_mDragSym), tgt=CONTRACTS.findIndex(c=>c.symbol===th.dataset.sym);
+      const sym=_mDragSym;_mDragSym=null;
+      if(src<0||tgt<0||src===tgt)return;
+      const[m]=CONTRACTS.splice(src,1);CONTRACTS.splice(tgt,0,m);
+      try{localStorage.setItem('cl_matrix_order',JSON.stringify(CONTRACTS.map(c=>c.symbol)));}catch(e2){}
+      render();
+    };
+  });
+}
 function periodLabel(p){return ({'30':'30秒','1':'1分','3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分','daily':'日线'})[p]||p;}
 function arrow(side){return side==='long'?'▲':'▼';}
 
@@ -725,6 +747,18 @@ function a3ModeChange(m){
   const r=await fetch('/api/pattern_matrix');
   const d=await r.json();
   PERIODS=d.periods||[];CONTRACTS=d.contracts||[];
+  try{   // 应用用户拖动排序（2026-10-27）：存的品种号顺序，新品种排末尾
+    const ord=JSON.parse(localStorage.getItem('cl_matrix_order')||'[]');
+    if(Array.isArray(ord)&&ord.length){
+      CONTRACTS.sort((a,b)=>{
+        const ia=ord.indexOf(a.symbol), ib=ord.indexOf(b.symbol);
+        if(ia===-1&&ib===-1)return 0;
+        if(ia===-1)return 1;
+        if(ib===-1)return -1;
+        return ia-ib;
+      });
+    }
+  }catch(e){}
   if(d.days_back)paintDays(d.days_back);   // 服务端值为准（可能从别的页面改过）
   (d.cells||[]).forEach(c=>{CELLS[c.symbol+'|'+c.period]=c;});
   render();
