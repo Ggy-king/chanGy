@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>持仓驾驶舱 · chanGy</title>
+<title>持仓页</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <style>
@@ -28,7 +28,9 @@ main{flex:1;overflow-y:auto;scrollbar-width:thin;padding:8px;}
 #wrap{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:repeat(2,minmax(0,1fr));
   height:100%;min-height:540px;gap:8px;}
 .strip{background:#161b22;border:1px solid #2a2e39;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;min-height:0;}
-.shead{display:flex;align-items:center;gap:8px;padding:6px 12px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;flex-wrap:wrap;}
+.shead{display:flex;align-items:center;gap:8px;padding:6px 12px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;flex-wrap:wrap;cursor:grab;}
+.shead:active{cursor:grabbing;}
+.shead button,.shead a,.shead select{cursor:pointer;}
 .grip{cursor:grab;color:#4a5264;font-size:14px;padding:0 2px;user-select:none;letter-spacing:-1px;}
 .grip:active{cursor:grabbing;color:#b388ff;}
 .strip.dragover{outline:2px dashed #b388ff;outline-offset:-3px;}
@@ -81,7 +83,7 @@ main{flex:1;overflow-y:auto;scrollbar-width:thin;padding:8px;}
 </head>
 <body>
 <header>
-  <h1>🚗 持仓<span>驾驶舱</span></h1>
+  <h1>🚗 持仓页</h1>
   <span class="mut">添加≠持仓 · 盯笔看图 · 买点有选择权，卖点没有——卖点从宽，一切归锚</span>
   <span class="sp"></span>
   <span class="conn" style="display:flex;align-items:center;gap:6px;font-size:12px;color:#787b86;">
@@ -346,7 +348,10 @@ function render(){
 }
 /* ---------- 拖动换位（2026-10-26 用户定稿：手动拖动排序，替代隐式自动排序） ---------- */
 let _dragIdx=-1;
-function dragStart(ev,i){_dragIdx=i;ev.dataTransfer.effectAllowed='move';try{ev.dataTransfer.setData('text/plain',String(i));}catch(e){}}
+function dragStart(ev,i){
+  // 头部整体可拖，但按在按钮/链接/下拉上时不启动拖动
+  if(ev.target&&ev.target.closest&&ev.target.closest('button,a,select')){ev.preventDefault();return;}
+  _dragIdx=i;ev.dataTransfer.effectAllowed='move';try{ev.dataTransfer.setData('text/plain',String(i));}catch(e){}}
 function dragOver(ev){if(_dragIdx<0)return;ev.preventDefault();ev.dataTransfer.dropEffect='move';
   document.querySelectorAll('.strip.dragover').forEach(x=>x.classList.remove('dragover'));
   const st=ev.target&&ev.target.closest?ev.target.closest('.strip'):null;
@@ -392,7 +397,7 @@ function slotEl(s,i){
   const body=s.pos||s.watch
     ?'<div class="chartbox" id="chart_'+i+'"><div class="emsg">加载行情…</div></div>'
     :'<div class="slotbody"><button class="addbig" onclick="addOpen('+i+')">＋ 添加</button></div>';
-  div.innerHTML='<div class="shead">'+head+'</div>'+body;
+  div.innerHTML='<div class="shead" draggable="true" ondragstart="dragStart(event,'+i+')" title="按住头部拖动换位">'+head+'</div>'+body;
   return div;
 }
 function cname(sym){const c=CONTRACTS.find(x=>x.symbol===sym);return c?c.name:sym;}

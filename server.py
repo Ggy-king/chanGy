@@ -2,7 +2,8 @@
 """
 缠论多品种预警 · 本地双向服务
 - 一个端口(8000)：
-    /pc            电脑总览仪表盘（17品种状态+统计）
+    /pc            电脑列表页（17品种状态+统计；页面命名定稿 2026-10-27：
+                   /pc=列表页 /pc/matrix=监控页 /pc/positions=持仓页 /pc/review=复盘页）
     /pc/detail     电脑单品种详情（?sym=MA2610）
     /m             手机预警列表
     /m/detail      手机单品种详情（?sym=MA2610）
@@ -262,7 +263,7 @@ async def alert_loop():
 _PATTERN_LABEL = {'30': '30秒', '1': '1分', '3': '3分', '5': '5分', '15': '15分',
                   '30m': '30分', '60': '60分', 'daily': '日线'}
 _CELL_RANK = {'conf_a': 5, 'trig_b': 4, 'cand_a': 3, 'cand_b': 2, 'watch_a': 1, 'gone_b': 0, 'idle': 0}
-_pattern_cells = {}      # (symbol, period) -> cell dict（矩阵页全量状态）
+_pattern_cells = {}      # (symbol, period) -> cell dict（监控页全量状态）
 _pattern_reported = {}   # (symbol, period) -> set(结构指纹)，进程内去重
 # —— 顺大逆小影子打标（2026-10-23 对齐定稿）——
 # _lv_trend: (symbol, period) -> 'up'/'down'，各周期扫描时由 engine.zs_trend 算好缓存。
@@ -449,7 +450,7 @@ _pattern_ready = False   # 首轮静默：只建基线不推送（§5.2）
 _snapshot_done = False   # 启动机会快照只推一次
 _snapshot_msgs = []      # 静默基线扫描期间收集的新鲜事件（快照用）
 
-# 笔六开关：监控跟随详情页⚙面板（localStorage cl_bi_conf），进矩阵页时前端同步过来。
+# 笔六开关：监控跟随详情页⚙面板（localStorage cl_bi_conf），进监控页时前端同步过来。
 # 变更后静默重扫全量（~18s/85单元）并重推机会快照；调试期频繁改动也只在实际进页面时才触发。
 # 持久化到 data/pattern_bi_conf.json：重启后立即用上次的笔配置（否则监控用默认配置算笔，
 # 与用户详情页图上黄线（自定义配置，笔数差一倍）对不上——成笔判定全错位（2026-10-13）。
@@ -690,7 +691,7 @@ def _fmt_time_str(time_val):
 
 
 _PATTERN_SCAN_DAYS = 3    # 扫描保留：固定最近 3 个交易日（最大回看档），展示时按用户选择再筛
-_pattern_days_back = 3    # 用户选的展示窗口（2/3 个交易日，不含今天）；矩阵页「回看」按钮控制
+_pattern_days_back = 3    # 用户选的展示窗口（2/3 个交易日，不含今天）；监控页「回看」按钮控制
 
 
 def _window_start(days_back=None):
@@ -921,7 +922,7 @@ def _fade_pattern_cells():
 
 async def _push_startup_snapshot():
     """静默基线扫描收集到的新鲜事件（候选+确认，均在回看窗口内）按时间升序统一推送。
-    不做候选/确认取舍——事件流全量入 deque(100)，矩阵页按页签裁剪（全部50/确认40）。"""
+    不做候选/确认取舍——事件流全量入 deque(100)，监控页按页签裁剪（全部50/确认40）。"""
     global _snapshot_done, _snapshot_msgs
     if _snapshot_done:
         return
@@ -1272,6 +1273,149 @@ def _page(name):
 
 _START_TS = time.time()   # server 进程启动时刻（自检页"连续运行"用）
 
+# ---------- 系统诊断：项目规模/数据体积/运行环境（2026-10-27 新增端点，既有接口零改动） ----------
+# 性能定稿（用户明确要求"一定要不浪费性能"）：第一次访问 /api/sysdiag 时在子线程算一次，
+# 结果常驻内存缓存，服务不重启不重算（代码在运行期不会变，重算毫无意义）；
+# 不在启动时统计，也不随页面 10s 刷新重复算——连接诊断的实时计数走 /api/tqstats，两不相干。
+_sysdiag_cache = None
+
+def _sysdiag_collect():
+    """遍历项目目录统计代码规模/数据体积 + 接口盘点 + 采集进程运行环境（同步重活，仅执行一次）。"""
+    import platform as _pf
+    import resource
+    import ast
+    root = os.path.dirname(os.path.abspath(__file__))
+    skip = {'.venv', 'venv', '__pycache__', '.git', 'node_modules', '.codebuddy',
+            '.pytest_cache', 'dist', 'build'}
+    py_files = py_lines = py_sloc = 0
+    web_files = web_lines = 0
+    fn_count = cls_count = todo_count = 0
+    top = []          # (行数, 相对路径) —— Python 文件 Top榜
+    data_size = log_size = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip]
+        for fn in filenames:
+            p = os.path.join(dirpath, fn)
+            rel = os.path.relpath(p, root)
+            try:
+                if fn.endswith('.py'):
+                    n = s = 0
+                    with open(p, encoding='utf-8-sig', errors='ignore') as f:   # utf-8-sig：剥 BOM，否则 ast.parse 全挂
+                        src = f.read()
+                    n = src.count('\n') + 1
+                    for line in src.splitlines():
+                        t = line.strip()
+                        if t and not t.startswith('#'):
+                            s += 1
+                        if 'TODO' in line or 'FIXME' in line:
+                            todo_count += 1
+                    py_files += 1; py_lines += n; py_sloc += s
+                    top.append((n, rel))
+                    try:   # AST 结构统计：函数/类（比行数更能反映结构密度）
+                        tree = ast.parse(src)
+                        for node in ast.walk(tree):
+                            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                fn_count += 1
+                            elif isinstance(node, ast.ClassDef):
+                                cls_count += 1
+                    except SyntaxError:
+                        pass
+                elif fn.endswith(('.html', '.js', '.css')):
+                    with open(p, encoding='utf-8', errors='ignore') as f:
+                        n = sum(1 for _ in f)
+                    web_files += 1; web_lines += n
+                elif rel.startswith('data' + os.sep) and fn.endswith(('.json', '.csv')):
+                    data_size += os.path.getsize(p)
+                elif fn == 'server.log':
+                    log_size = os.path.getsize(p)
+            except OSError:
+                pass
+    top.sort(reverse=True)
+    # 外部依赖数（requirements.txt 非注释行）
+    dep_count = 0
+    try:
+        with open(os.path.join(root, 'requirements.txt'), encoding='utf-8') as f:
+            dep_count = sum(1 for line in f
+                            if line.strip() and not line.strip().startswith('#'))
+    except OSError:
+        pass
+    # 接口盘点：运行时内省 app.routes（零解析成本；路由静态，缓存无碍）
+    api_get = api_post = api_ws = 0
+    endpoints = []
+    for r in getattr(app, 'routes', []):
+        p = getattr(r, 'path', '')
+        if not p:
+            continue
+        methods = getattr(r, 'methods', None)
+        if methods:
+            for m in sorted(methods - {'HEAD', 'OPTIONS'}):
+                endpoints.append({'m': m, 'p': p})
+                if m == 'GET': api_get += 1
+                elif m == 'POST': api_post += 1
+        else:
+            endpoints.append({'m': 'WS', 'p': p})
+            api_ws += 1
+    endpoints.sort(key=lambda e: (0 if e['p'].startswith(('/pc', '/m', '/ws')) else 1, e['p']))
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss   # macOS=字节 Linux=KB
+    rss_mb = rss / 1048576 if sys.platform == 'darwin' else rss / 1024
+    return {
+        'code': {'py_files': py_files, 'py_lines': py_lines, 'py_sloc': py_sloc,
+                 'web_files': web_files, 'web_lines': web_lines,
+                 'functions': fn_count, 'classes': cls_count,
+                 'todos': todo_count, 'deps': dep_count},
+        'api': {'get': api_get, 'post': api_post, 'ws': api_ws, 'endpoints': endpoints},
+        'top_files': [{'file': r, 'lines': n} for n, r in top[:6]],
+        'data': {'data_mb': round(data_size / 1048576, 1), 'log_mb': round(log_size / 1048576, 2)},
+        'runtime': {'uptime_h': round((time.time() - _START_TS) / 3600, 1),
+                    'threads': threading.active_count(), 'rss_mb': round(rss_mb, 1),
+                    'python': _pf.python_version(), 'platform': _pf.system()},
+    }
+
+@app.get('/api/sysdiag')
+async def api_sysdiag():
+    """系统诊断数据（2026-10-27）：
+    - code/data/runtime：首次访问算一次永久缓存（服务不重启不重算，用户定稿不浪费性能）
+    - git 提交统计：每次打开页面现拉（本地 git 命令毫秒级，用户定稿"点开再看"）"""
+    global _sysdiag_cache
+    if _sysdiag_cache is None:
+        _sysdiag_cache = await asyncio.to_thread(_sysdiag_collect)
+    d = dict(_sysdiag_cache)
+    d['git'] = await asyncio.to_thread(_sysdiag_git)
+    return d
+
+def _sysdiag_git():
+    """GitHub 提交统计：全部走本地 git 命令（零网络请求，毫秒级），每次现拉。"""
+    import subprocess
+    root = os.path.dirname(os.path.abspath(__file__))
+    def run(*args):
+        try:
+            r = subprocess.run(args, capture_output=True, text=True, timeout=10, cwd=root)
+            return (r.stdout or '').strip()
+        except Exception:
+            return ''
+    total = run('git', 'rev-list', '--count', 'HEAD')
+    today = run('git', 'rev-list', '--count', '--since=midnight', 'HEAD')
+    week = run('git', 'rev-list', '--count', '--since=7.days', 'HEAD')
+    last_raw = run('git', 'log', '-1', '--format=%ci|%s')
+    last_time, last_msg = '', ''
+    if '|' in last_raw:
+        last_time, last_msg = last_raw.split('|', 1)
+        last_time = last_time[:16]
+    st = run('git', 'status', '-sb')
+    ahead = behind = 0
+    import re as _re
+    m = _re.search(r'ahead (\d+)', st)
+    if m: ahead = int(m.group(1))
+    m = _re.search(r'behind (\d+)', st)
+    if m: behind = int(m.group(1))
+    return {'total': int(total) if total.isdigit() else 0,
+            'today': int(today) if today.isdigit() else 0,
+            'week': int(week) if week.isdigit() else 0,
+            'ahead': ahead, 'behind': behind,
+            'last_time': last_time, 'last_msg': last_msg,
+            'remote': 'github.com/Ggy-king/chanGy'}
+
+
 
 def _health_checks():
     """全绿自检（爽感清单 #1，2026-10-17）：每行一个 OK/WARN/FAIL，3 秒定位断在哪条线。
@@ -1410,12 +1554,13 @@ async def page_pc_health():
 
 @app.get('/pc/tqstats')
 async def page_pc_tqstats():
-    """天勤连接诊断页（2026-10-27 卡不卡仪表盘，总览页设置菜单进入）。"""
+    """系统诊断页（2026-10-27 由"天勤连接诊断"升格：连接诊断+项目规模/数据体积/运行环境，列表页设置菜单进入）。"""
     return _page('pc_tqstats.html')
 
 
 @app.get('/pc')
 async def page_pc_overview():
+    """列表页（用户定稿 2026-10-27：不叫总览/仪表盘）。"""
     return _page('pc_overview.html')
 
 
@@ -1426,7 +1571,7 @@ async def page_pc_detail():
 
 @app.get('/pc/positions')
 async def page_pc_positions():
-    """持仓驾驶舱（2026-10-14）：持有许可灯+实时判决，独立页面常开大字显示。"""
+    """持仓页（用户定稿 2026-10-27，旧称驾驶舱）：持有许可灯+实时判决，独立页面常开大字显示。"""
     return _page('pc_positions.html')
 
 
@@ -1498,13 +1643,13 @@ async def page_pc_help():
 
 @app.get('/pc/matrix')
 async def page_pc_matrix():
-    """全级别并行监控矩阵（设计文档 §9，用户主力常驻页面）。"""
+    """监控页：全品种×全级别形态矩阵（设计文档 §9，用户主力常驻页面；用户定稿 2026-10-27 叫监控页）。"""
     return _page('pc_matrix.html')
 
 
 @app.get('/api/pattern_matrix')
 async def api_pattern_matrix():
-    """矩阵页全量状态：cells + 事件流 + 行列定义（行列由 config 驱动，改 config 页面零改动）。
+    """监控页全量状态：cells + 事件流 + 行列定义（行列由 config 驱动，改 config 页面零改动）。
     ready=启动基线+快照推送是否已完成（测试/前端可据此等待流稳定）。"""
     return JSONResponse({
         'cells': list(_pattern_cells.values()),
@@ -1520,7 +1665,7 @@ async def api_pattern_matrix():
 
 @app.post('/api/pattern_days')
 async def api_pattern_days(request: Request):
-    """矩阵页「回看」窗口设置（2/3 个交易日，不含今天、0 点起卡）。
+    """监控页「回看」窗口设置（2/3 个交易日，不含今天、0 点起卡）。
     即时生效：服务端扫描始终保留 3 个交易日底仓，此设置只控制接口返回时筛哪个窗口，
     切换不重扫——页面改完重拉一次矩阵即可（毫秒级）。"""
     global _pattern_days_back
@@ -1541,7 +1686,7 @@ async def api_pattern_days(request: Request):
 
 @app.post('/api/pattern_bi_conf')
 async def api_pattern_bi_conf(request: Request):
-    """同步详情页⚙面板的笔六开关到监控系统（矩阵页进入时前端 POST localStorage cl_bi_conf）。
+    """同步详情页⚙面板的笔六开关到监控系统（监控页进入时前端 POST localStorage cl_bi_conf）。
     配置有变化时：清空基线 → 静默重扫全量（85单元约18秒）→ 重推当前机会快照。"""
     global _pattern_bi_conf
     try:
@@ -1567,7 +1712,7 @@ async def api_pattern_bi_conf(request: Request):
 
 @app.get('/api/pattern_flags')
 async def api_pattern_flags_get():
-    """实验开关当前状态（矩阵页⚙设置面板启动时读取）。conf_zone_kill / a3_diver_mode 为新增可选字段。"""
+    """实验开关当前状态（监控页⚙设置面板启动时读取）。conf_zone_kill / a3_diver_mode 为新增可选字段。"""
     return JSONResponse({'opp_zs_kill': bool(_pattern_mod.OPP_ZS_KILL),
                          'conf_zone_kill': bool(_pattern_mod.CONF_ZONE_KILL),
                          'a3_diver_mode': str(getattr(_pattern_mod, 'A3_DIVER_MODE', 'strict'))})

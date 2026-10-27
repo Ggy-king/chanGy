@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>缠论多品种预警 · 总览</title>
+<title>列表页</title>
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <script src="https://unpkg.com/qrcodejs@1.0.0/qrcode.min.js"></script><!-- 待整体下线：二维码功能已移除，下个版本删此依赖 -->
 <style>
@@ -102,7 +102,7 @@
 </head>
 <body>
 <header>
-  <h1>缠论<span>多品种预警</span> · 总览</h1>
+  <h1>缠论<span>多品种预警</span> · 列表页</h1>
   <div class="conn"><span class="dot" id="dot"></span><span id="connTxt">连接中…</span></div>
   <div class="conn" id="devs"></div>
   <div class="conn mut" id="tradeStatus"></div>
@@ -112,9 +112,10 @@
   <a class="btn" style="border-color:#00d2d3;color:#00d2d3;text-decoration:none;" href="/pc/matrix" target="_blank" title="全品种×全级别形态监控矩阵">▦ 监控</a>
   <a class="btn" style="border-color:#b388ff;color:#b388ff;text-decoration:none;" href="/pc/review" target="_blank" title="日审计/周复盘/月复盘/体系疑问">📖 复盘</a>
   <a class="btn" style="border-color:#f0b90b;color:#f0b90b;text-decoration:none;" href="/pc/backtest" target="_blank" title="策略回测">📈 回测</a>
+  <a class="btn" style="border-color:#26a69a;color:#26a69a;text-decoration:none;" href="/pc/positions" target="_blank" title="持仓页：四模块持仓盯盘">💼 持仓</a>
   <button class="btn alert-list-btn" id="alertListBtn" onclick="toggleAlertList()" title="预警列表">🔔<span class="badge" id="alertBadge">0</span></button>
   <span class="setwrap">
-    <button class="btn" id="settingsBtn" onclick="toggleSettings(event)" title="列表页设置（模拟练习 / 连接诊断）">⚙ 设置</button>
+    <button class="btn" id="settingsBtn" onclick="toggleSettings(event)" title="列表页设置（模拟练习 / 自检 / 连接诊断）">⚙ 设置</button>
     <span class="setmenu" id="setMenu">
       <div class="setsec">模拟练习（临时功能）</div>
       <select id="simSym" style="width:100%;"></select>
@@ -123,10 +124,10 @@
         <button class="btn sell" style="flex:1;" onclick="simulate('sell')">模拟卖出</button>
       </div>
       <div class="setsec" style="margin-top:12px;padding-top:10px;border-top:1px solid #2a2e39;">诊断</div>
-      <a class="btn" style="display:block;text-align:center;box-sizing:border-box;border-color:#00d2d3;color:#00d2d3;text-decoration:none;" href="/pc/tqstats" target="_blank" title="天勤连接卡不卡仪表盘：兜底/重建计数 + 各级别方向缓存年龄">🩺 连接诊断</a>
+      <a class="btn" style="display:block;text-align:center;box-sizing:border-box;border-color:#00d2d3;color:#00d2d3;text-decoration:none;" href="/pc/tqstats" target="_blank" title="系统诊断：项目规模/数据体积/运行环境 + 天勤连接卡不卡仪表盘">🩺 系统诊断</a>
+      <a class="btn" style="display:block;text-align:center;box-sizing:border-box;margin-top:8px;border-color:#26a69a;color:#26a69a;text-decoration:none;" href="/pc/health" target="_blank" title="系统全绿自检">🩺 全绿自检</a>
     </span>
   </span>
-  <button class="btn" style="border-color:#26a69a;color:#26a69a;" onclick="location.href='/pc/health'" title="系统全绿自检">🩺 自检</button>
 </header>
 <main>
   <div class="left">
