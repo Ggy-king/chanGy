@@ -29,6 +29,9 @@ main{flex:1;overflow-y:auto;scrollbar-width:thin;padding:8px;}
   height:100%;min-height:540px;gap:8px;}
 .strip{background:#161b22;border:1px solid #2a2e39;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;min-height:0;}
 .shead{display:flex;align-items:center;gap:8px;padding:6px 12px;background:#1e222d;border-bottom:1px solid #2a2e39;flex:none;flex-wrap:wrap;}
+.grip{cursor:grab;color:#4a5264;font-size:14px;padding:0 2px;user-select:none;letter-spacing:-1px;}
+.grip:active{cursor:grabbing;color:#b388ff;}
+.strip.dragover{outline:2px dashed #b388ff;outline-offset:-3px;}
 .shead .pname{font-size:15px;font-weight:800;}
 .shead .psym{color:#787b86;font-size:11px;}
 .dir{font-size:10.5px;font-weight:700;padding:1px 8px;border-radius:8px;}
@@ -254,6 +257,8 @@ try{WATCHES=JSON.parse(localStorage.getItem('cl_cockpit_watches')||'[]');}catch(
 function saveWatches(){try{localStorage.setItem('cl_cockpit_watches',JSON.stringify(WATCHES));}catch(e){}}
 let _slotList=[],_slotSig='';
 
+const ORDER_KEY='cl_cockpit_order';
+function slotKeyOf(s){return s.pos?('p'+s.pos.id):(s.watch?('w'+s.watch.symbol+'|'+s.watch.period):'');}
 function buildSlots(){
   const slots=[];
   POSITIONS.forEach(p=>slots.push({pos:p}));
@@ -262,6 +267,13 @@ function buildSlots(){
     if(slots.length<NSLOT)slots.push({watch:w});
   });
   while(slots.length<NSLOT)slots.push({});
+  // 2026-10-26 用户定稿：不再自动排序——保存过拖动顺序就照它排，新出现的品种排末尾
+  let order=[];
+  try{order=JSON.parse(localStorage.getItem(ORDER_KEY)||'[]');}catch(e){}
+  if(order.length){
+    const idx=k=>{const x=order.indexOf(k);return x<0?9999:x;};
+    slots.sort((a,b)=>idx(slotKeyOf(a))-idx(slotKeyOf(b)));
+  }
   _slotList=slots;
   return slots;
 }
@@ -304,25 +316,54 @@ function remount(i){
   if(sym)mountChart(i,sym,viewPeriod(i,s.pos?s.pos.period:s.watch.period));
 }
 
-/* ---------- 渲染：结构变了才重建（保图表），否则只刷新小头动态数字 ---------- */
+/* ---------- 渲染：逐槽位差分（2026-10-26 用户定稿：增删/平仓只动那一格，其余图表原地保留） ---------- */
+let _slotKeys=[];
+function destroyChart(i){
+  const c=CHARTS[i];
+  if(c){try{c.timer&&clearInterval(c.timer);}catch(e){}try{c.chart.remove();}catch(e){}delete CHARTS[i];}
+}
 function render(){
   const slots=buildSlots();
-  const sig=JSON.stringify(slots.map(s=>s.pos?s.pos.id:(s.watch?s.watch.symbol+'|'+s.watch.period:'')));
+  const newKeys=slots.map(slotKeyOf);
+  const sig=JSON.stringify(newKeys);
   if(sig===_slotSig){updateDyn();return;}
-  _slotSig=sig;
-  destroyCharts();
-  const wrap=$('wrap');wrap.innerHTML='';
-  slots.forEach((s,i)=>wrap.appendChild(slotEl(s,i)));
+  const wrap=$('wrap');
   slots.forEach((s,i)=>{
+    if(_slotKeys[i]===newKeys[i]&&wrap.children[i])return;   // 该槽位没变：DOM与图表全保留
+    destroyChart(i);
+    const el=slotEl(s,i);
+    if(wrap.children[i])wrap.replaceChild(el,wrap.children[i]);
+    else wrap.appendChild(el);
     const sym=s.pos?s.pos.symbol:(s.watch?s.watch.symbol:null);
     if(sym)mountChart(i,sym,viewPeriod(i,s.pos?s.pos.period:s.watch.period));
   });
+  while(wrap.children.length>slots.length){
+    destroyChart(wrap.children.length-1);
+    wrap.removeChild(wrap.lastChild);
+  }
+  _slotKeys=newKeys;_slotSig=sig;
   updateDyn();
+}
+/* ---------- 拖动换位（2026-10-26 用户定稿：手动拖动排序，替代隐式自动排序） ---------- */
+let _dragIdx=-1;
+function dragStart(ev,i){_dragIdx=i;ev.dataTransfer.effectAllowed='move';try{ev.dataTransfer.setData('text/plain',String(i));}catch(e){}}
+function dragOver(ev){if(_dragIdx<0)return;ev.preventDefault();ev.dataTransfer.dropEffect='move';
+  document.querySelectorAll('.strip.dragover').forEach(x=>x.classList.remove('dragover'));
+  const st=ev.target&&ev.target.closest?ev.target.closest('.strip'):null;
+  if(st)st.classList.add('dragover');}
+function dragEnd(){_dragIdx=-1;document.querySelectorAll('.strip.dragover').forEach(x=>x.classList.remove('dragover'));}
+function dragDrop(ev,i){ev.preventDefault();const src=_dragIdx;dragEnd();
+  if(src<0||src===i||src>=_slotList.length)return;
+  const keys=_slotList.map(slotKeyOf);
+  const[m]=keys.splice(src,1);keys.splice(i,0,m);
+  try{localStorage.setItem(ORDER_KEY,JSON.stringify(keys));}catch(e){}
+  _slotSig='';render();   // 逐槽位差分：只有换位的那两张重建，其余原样
 }
 function slotEl(s,i){
   const div=document.createElement('div');
   div.className='strip';
-  let head='';
+  div.ondragover=dragOver;div.ondrop=function(ev){dragDrop(ev,i);};div.ondragend=dragEnd;
+  let head='<span class="grip" draggable="true" title="拖动换位">⠿</span>';
   if(s.pos){
     const p=s.pos,long=posIsLong(p);
     head='<span class="pname">'+p.name+'</span><span class="psym">'+p.symbol+'</span>'+

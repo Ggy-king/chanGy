@@ -1408,6 +1408,12 @@ async def page_pc_health():
     return _page('pc_health.html')
 
 
+@app.get('/pc/tqstats')
+async def page_pc_tqstats():
+    """天勤连接诊断页（2026-10-27 卡不卡仪表盘，总览页设置菜单进入）。"""
+    return _page('pc_tqstats.html')
+
+
 @app.get('/pc')
 async def page_pc_overview():
     return _page('pc_overview.html')
