@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>天勤连接诊断 · 卡不卡仪表盘</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+  body{background:#0d1117;color:#d1d4dc;font-family:-apple-system,'PingFang SC',sans-serif;margin:0;padding:24px;}
+  h2{margin:0 0 4px;font-size:19px;}
+  .mut{color:#787b86;font-size:12px;}
+  .grid{display:flex;gap:14px;flex-wrap:wrap;margin:18px 0 26px;}
+  .card{background:#161b22;border:1px solid #2a2e39;border-radius:12px;padding:14px 20px;min-width:150px;}
+  .card .n{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums;}
+  .card .t{font-size:11.5px;color:#787b86;margin-top:3px;}
+  .ok{color:#26a69a;}.warn{color:#f0b90b;}.bad{color:#ef5350;}
+  table{border-collapse:collapse;width:100%;max-width:760px;background:#161b22;border-radius:12px;overflow:hidden;}
+  th,td{padding:7px 14px;text-align:left;font-size:13px;border-bottom:1px solid #232733;}
+  th{color:#787b86;font-weight:600;background:#1a1f29;}
+  td.num{font-variant-numeric:tabular-nums;}
+  .up{color:#ef5350;font-weight:700;}.down{color:#26a69a;font-weight:700;}
+  .fresh{color:#26a69a;}.stale{color:#ef5350;}
+  h3{font-size:14px;color:#9aa0b0;margin:22px 0 8px;}
+  .legend{font-size:11.5px;color:#565a66;margin-top:14px;line-height:1.7;}
+</style>
+</head>
+<body>
+<h2>🩺 天勤连接诊断 <span class="mut" id="upd">—</span></h2>
+<div class="mut">10 秒自动刷新 · 悬停指标看说明。黄/红=异常，绿=正常。</div>
+
+<div class="grid">
+  <div class="card"><div class="n" id="n_req">—</div><div class="t">取数请求总数</div></div>
+  <div class="card"><div class="n" id="n_stale">—</div><div class="t">锁忙碌兜底（高=锁被长任务占）</div></div>
+  <div class="card"><div class="n" id="n_err">—</div><div class="t">拉取失败兜底（高=连接差）</div></div>
+  <div class="card"><div class="n" id="n_rec">—</div><div class="t">连接重建次数（free-api 掐线）</div></div>
+  <div class="card"><div class="n" id="n_sub">—</div><div class="t">已订阅品种×级别</div></div>
+  <div class="card"><div class="n" id="n_gap">—</div><div class="t">距上次重建（秒）</div></div>
+</div>
+
+<h3>各级别方向缓存（顺大逆小打标依据 · 超龄视为未知不打标）</h3>
+<table>
+  <thead><tr><th>品种</th><th>级别</th><th>方向</th><th>数据年龄</th><th>状态</th></tr></thead>
+  <tbody id="tbody"><tr><td colspan="5" class="mut">加载中…</td></tr></tbody>
+</table>
+
+<div class="legend">
+  健康形态：锁忙碌兜底偶尔几个=正常（重订阅/扫描期间兜底救命）；重建次数每 ~2 分钟 +1 前后=free-api 正常掐线节奏；
+  方向缓存年龄持续超限 = 对应级别扫描失败，标签会自动停用（宁可缺不误标）。<br>
+  重建次数疯涨 + 卡顿同时出现 = free-api 限流死亡循环，截图发我。
+</div>
+
+<script>
+const TTL={'3':15,'5':25,'15':60,'30m':120,'60':240};   // 与服务端 _TREND_TTL_MIN 一致（分钟）
+const PL={'3':'3分','5':'5分','15':'15分','30m':'30分','60':'60分'};
+const num=id=>{const e=document.getElementById(id);return e;};
+async function refresh(){
+  try{
+    const r=await fetch('/api/tqstats');const d=await r.json();
+    const s=d.stats||{};
+    num('n_req').textContent=s.requests??'—';
+    const st=num('n_stale');st.textContent=s.stale_serves??'—';
+    st.className='n '+((s.stale_serves||0)>20?'warn':'ok');
+    const er=num('n_err');er.textContent=s.err_stale??'—';
+    er.className='n '+((s.err_stale||0)>0?'warn':'ok');
+    const rc=num('n_rec');rc.textContent=s.recreates??'—';
+    rc.className='n '+((s.recreates||0)>60?'warn':'ok');
+    num('n_sub').textContent=d.subscribed??'—';
+    const gp=num('n_gap');const g=d.seconds_since_recreate;
+    gp.textContent=g==null?'—':Math.round(g);
+    gp.className='n '+(g!=null&&g<10?'warn':'ok');
+    const rows=[];
+    Object.entries(d.lv_trend||{}).forEach(([k,v])=>{
+      const [sym,per]=k.split('|');
+      const ttl=(TTL[per]||120)*60;
+      const ok=(v.age_min*60)<=ttl;
+      rows.push('<tr><td>'+sym+'</td><td>'+(PL[per]||per)+'</td>'+
+        '<td class="'+(v.v==='up'?'up':'down')+'">'+(v.v==='up'?'▲ 看涨':'▼ 看跌')+'</td>'+
+        '<td class="num">'+v.age_min+' 分钟前</td>'+
+        '<td class="'+(ok?'fresh':'stale')+'">'+(ok?'● 新鲜':'○ 超龄（扫描失败?）')+'</td></tr>');
+    });
+    document.getElementById('tbody').innerHTML=rows.join('')||'<tr><td colspan="5" class="mut">暂无（等待首轮扫描）</td></tr>';
+    num('upd').textContent='更新 '+new Date().toTimeString().slice(0,8);
+  }catch(e){num('upd').textContent='拉取失败：'+e;}
+}
+refresh();setInterval(refresh,10000);
+</script>
+</body>
+</html>
