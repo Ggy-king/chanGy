@@ -130,6 +130,101 @@ with sync_playwright() as p:
     pc.evaluate('dragEnd()')
     print('ok 5b/5 头部按钮上拖动被拦、头部空白处拖动生效')
 
+    # 5c) 零刷新换位：真实槽位上拖动 → 只改 CSS order，图表零重建、DOM 原地不动
+    pc.evaluate('''() => {
+      localStorage.setItem('cl_cockpit_watches', JSON.stringify([
+        {symbol:'v2701',period:'5'},{symbol:'m2701',period:'15'},{symbol:'ta2701',period:'15'}]));
+      localStorage.removeItem('cl_cockpit_order');
+    }''')
+    pc.reload()
+    pc.wait_for_function('document.querySelectorAll("#wrap > .strip").length === 4', timeout=5000)
+    pc.evaluate('''() => {
+      window._destroyed = 0;
+      const oc = destroyChart;
+      window.destroyChart = function(i){ window._destroyed++; oc(i); };
+      window._before = Array.from(document.querySelectorAll('#wrap > .strip'));
+      window._sigBefore = _slotSig;
+    }''')
+    pc.evaluate('''() => {
+      const kids = document.querySelectorAll('#wrap > .strip');
+      const dt = new DataTransfer();
+      kids[0].querySelector('.shead').dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:dt,cancelable:true}));
+      kids[1].dispatchEvent(new DragEvent('dragover',{bubbles:true,dataTransfer:dt,cancelable:true}));
+      kids[1].dispatchEvent(new DragEvent('drop',{bubbles:true,dataTransfer:dt,cancelable:true}));
+      kids[0].dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:dt}));
+    }''')
+    pc.wait_for_timeout(300)
+    r = pc.evaluate('''() => ({
+      destroyed: window._destroyed,
+      same0: window._before[0] === document.querySelectorAll('#wrap > .strip')[0],
+      same1: window._before[1] === document.querySelectorAll('#wrap > .strip')[1],
+      o0: document.querySelectorAll('#wrap > .strip')[0].style.order,
+      o1: document.querySelectorAll('#wrap > .strip')[1].style.order,
+      saved: localStorage.getItem('cl_cockpit_order'),
+      sigSame: window._sigBefore === _slotSig,
+    })''')
+    assert r['destroyed'] == 0, f'拖动不应重建任何图表, 销毁 {r["destroyed"]} 个'
+    assert r['same0'] and r['same1'], '拖动后 DOM 节点应原地不动'
+    assert r['o0'] == '1' and r['o1'] == '0', f'视觉顺序未换位: {r["o0"]}/{r["o1"]}'
+    assert r['saved'] and 'wm2701|15' in r['saved'], f'顺序未持久化: {r["saved"]}'
+    assert r['sigSame'], '拖动不应触发 render 重算'
+    print('ok 5c/5 零刷新换位：0 次图表重建、DOM 原地不动、视觉顺序+持久化正确')
+
+    # 5d) 跨位拖动=交换语义：第1卡拖到第3卡，中间卡（第2）必须原地不动
+    pc.evaluate('''() => {
+      window._destroyed = 0;
+      const kids = document.querySelectorAll('#wrap > .strip');
+      const dt = new DataTransfer();
+      kids[0].querySelector('.shead').dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:dt,cancelable:true}));
+      kids[2].dispatchEvent(new DragEvent('dragover',{bubbles:true,dataTransfer:dt,cancelable:true}));
+      kids[2].dispatchEvent(new DragEvent('drop',{bubbles:true,dataTransfer:dt,cancelable:true}));
+      kids[0].dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:dt}));
+    }''')
+    pc.wait_for_timeout(200)
+    r2 = pc.evaluate('''() => ({
+      destroyed: window._destroyed,
+      o: [...document.querySelectorAll('#wrap > .strip')].map(x => x.style.order),
+      saved: JSON.parse(localStorage.getItem('cl_cockpit_order') || '[]'),
+    })''')
+    assert r2['destroyed'] == 0, '跨位拖动也不应重建图表'
+    # 5c 后视觉=[m,v,ta,'']；第1卡(v,视觉2)拖到第3卡(ta,视觉3)互换 → [m,ta,v,'']，中间 m 不动
+    assert r2['saved'] == ['wm2701|15', 'wta2701|15', 'wv2701|5', 'e3'], \
+        f'跨位应为交换而非插队: {r2["saved"]}'
+    assert r2['o'][0] == '2' and r2['o'][1] == '0' and r2['o'][2] == '1', \
+        f'视觉序不对: {r2["o"]}'
+    print('ok 5d/5 跨位拖动=纯交换：中间卡不动，空槽不挤位')
+
+    # 5e) 关键回归（用户实踩场景）：存序生效后 DOM 序≠视觉序，拖动仍按视觉位正确交换
+    pc.evaluate('''() => {
+      localStorage.setItem('cl_cockpit_order', JSON.stringify(['wta2701|15','wv2701|5','wm2701|15','e3']));
+    }''')
+    pc.reload()
+    pc.wait_for_function('document.querySelectorAll("#wrap > .strip").length === 4', timeout=5000)
+    vis = pc.evaluate('''() => {
+      const kids=[...document.querySelectorAll('#wrap > .strip')];
+      return kids.map(x=>x.style.order);
+    }''')
+    # DOM=[v,m,ta,e]，存序=[ta,v,m,e] → 视觉序分别 1/2/0/3
+    assert vis == ['1','2','0','3'], f'存序应用后视觉位不对: {vis}'
+    pc.evaluate('''() => {
+      const kids=document.querySelectorAll('#wrap > .strip');
+      const dt=new DataTransfer();
+      kids[1].querySelector('.shead').dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:dt,cancelable:true}));
+      kids[2].dispatchEvent(new DragEvent('dragover',{bubbles:true,dataTransfer:dt,cancelable:true}));
+      kids[2].dispatchEvent(new DragEvent('drop',{bubbles:true,dataTransfer:dt,cancelable:true}));
+      kids[1].dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:dt}));
+    }''')
+    pc.wait_for_timeout(200)
+    r3 = pc.evaluate('''() => ({
+      o: [...document.querySelectorAll('#wrap > .strip')].map(x => x.style.order),
+      saved: JSON.parse(localStorage.getItem('cl_cockpit_order') || '[]'),
+    })''')
+    # 视觉=[ta,v,m]：拖 m(视觉3) 到 ta(视觉1) 互换 → 视觉 [m,v,ta]，中间 v 不动
+    assert r3['saved'] == ['wm2701|15', 'wv2701|5', 'wta2701|15', 'e3'], \
+        f'DOM≠视觉时交换错乱: {r3["saved"]}'
+    assert r3['o'] == ['1', '0', '2', '3'], f'视觉位不对: {r3["o"]}'
+    print('ok 5e/5 存序生效(DOM序≠视觉序)时拖动仍按视觉位正确交换')
+
     if errs2:
         print('驾驶舱 JS 错误:', errs2)
         raise SystemExit(1)

@@ -269,13 +269,10 @@ function buildSlots(){
     if(slots.length<NSLOT)slots.push({watch:w});
   });
   while(slots.length<NSLOT)slots.push({});
-  // 2026-10-26 用户定稿：不再自动排序——保存过拖动顺序就照它排，新出现的品种排末尾
-  let order=[];
-  try{order=JSON.parse(localStorage.getItem(ORDER_KEY)||'[]');}catch(e){}
-  if(order.length){
-    const idx=k=>{const x=order.indexOf(k);return x<0?9999:x;};
-    slots.sort((a,b)=>idx(slotKeyOf(a))-idx(slotKeyOf(b)));
-  }
+  // 2026-10-28 用户定稿：槽位顺序固定（持仓→只看→空槽），拖动顺序只走 CSS order 视觉层
+  // （applyVisualOrder）——buildSlots 若按存序重排 DOM，轮询触发的 render 会让槽位索引漂移，
+  // 与拖动的交换逻辑叠加产生"中间卡跟着动"的假排序。固定顺序保证 _slotKeys/_slotSig 稳定，
+  // 轮询 render 全部走 updateDyn 零重建。
   _slotList=slots;
   return slots;
 }
@@ -344,6 +341,7 @@ function render(){
     wrap.removeChild(wrap.lastChild);
   }
   _slotKeys=newKeys;_slotSig=sig;
+  applyVisualOrder();
   updateDyn();
 }
 /* ---------- 拖动换位（2026-10-26 用户定稿：手动拖动排序，替代隐式自动排序） ---------- */
@@ -359,10 +357,35 @@ function dragOver(ev){if(_dragIdx<0)return;ev.preventDefault();ev.dataTransfer.d
 function dragEnd(){_dragIdx=-1;document.querySelectorAll('.strip.dragover').forEach(x=>x.classList.remove('dragover'));}
 function dragDrop(ev,i){ev.preventDefault();const src=_dragIdx;dragEnd();
   if(src<0||src===i||src>=_slotList.length)return;
-  const keys=_slotList.map(slotKeyOf);
-  const[m]=keys.splice(src,1);keys.splice(i,0,m);
-  try{localStorage.setItem(ORDER_KEY,JSON.stringify(keys));}catch(e){}
-  _slotSig='';render();   // 逐槽位差分：只有换位的那两张重建，其余原样
+  const kids=$('wrap').children;
+  const keyOf=idx=>(_slotKeys[idx]===''?('e'+idx):_slotKeys[idx]);
+  // 交换语义（2026-10-28 用户二审定稿）：拖到哪张卡，就和那张卡互换视觉位，其余卡不动。
+  // 关键：一律以 style.order（当前视觉位）为准操作——保存数组是"视觉位→卡"，DOM 序≠视觉序
+  // （拖过之后就不等），按 DOM 槽位交换会跟视觉对不上，产生"中间卡跟着动"的轮转。
+  const so=kids[src].style.order?parseInt(kids[src].style.order):src;
+  const to=kids[i].style.order?parseInt(kids[i].style.order):i;
+  kids[src].style.order=String(to);
+  kids[i].style.order=String(so);
+  // 重存顺序数组：视觉位 k ← 那张卡的 key（零刷新：DOM/图表/定时器/每槽状态全部原地保留）
+  const saved=new Array(kids.length);
+  for(let idx=0;idx<kids.length;idx++){
+    const o=kids[idx].style.order?parseInt(kids[idx].style.order):idx;
+    saved[o]=keyOf(idx);
+  }
+  for(let k=0;k<saved.length;k++)if(saved[k]==null)saved[k]='e'+k;
+  try{localStorage.setItem(ORDER_KEY,JSON.stringify(saved));}catch(e){}
+}
+/* 结构性渲染（增删/平仓/重开页面）后按存的顺序重排视觉位置（图表照旧只对没变的槽位原地保留） */
+function applyVisualOrder(){
+  let order=[];try{order=JSON.parse(localStorage.getItem(ORDER_KEY)||'[]');}catch(e){}
+  // 旧格式（空槽存 ''）与唯一 key 格式不兼容，直接弃用一次，落回 DOM 序
+  if(!order.length||order.some(k=>k===''||k==null))return;
+  const kids=$('wrap').children;
+  for(let idx=0;idx<kids.length;idx++){
+    const k=_slotKeys[idx]===''?('e'+idx):_slotKeys[idx];
+    const v=order.indexOf(k);
+    if(v>=0)kids[idx].style.order=String(v);
+  }
 }
 function slotEl(s,i){
   const div=document.createElement('div');
