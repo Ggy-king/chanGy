@@ -391,6 +391,7 @@ function slotEl(s,i){
   const div=document.createElement('div');
   div.className='strip';
   div.ondragover=dragOver;div.ondrop=function(ev){dragDrop(ev,i);};div.ondragend=dragEnd;
+  div.oncontextmenu=function(ev){slCtx(ev,i);};
   let head='<span class="grip" draggable="true" title="拖动换位">⠿</span>';
   if(s.pos){
     const p=s.pos,long=posIsLong(p);
@@ -418,7 +419,7 @@ function slotEl(s,i){
     head='<span class="mut">空槽位 · 添加后在这里盯笔</span>';
   }
   const body=s.pos||s.watch
-    ?'<div class="chartbox" id="chart_'+i+'"><div class="emsg">加载行情…</div></div>'
+    ?'<div class="chartbox" id="chart_'+i+'" onclick="slChartClick(event,'+i+')"><div class="emsg">加载行情…</div></div>'
     :'<div class="slotbody"><button class="addbig" onclick="addOpen('+i+')">＋ 添加</button></div>';
   div.innerHTML='<div class="shead" draggable="true" ondragstart="dragStart(event,'+i+')" title="按住头部拖动换位">'+head+'</div>'+body;
   return div;
@@ -427,6 +428,7 @@ function cname(sym){const c=CONTRACTS.find(x=>x.symbol===sym);return c?c.name:sy
 /* 小头动态数字：价格/盈亏/判决徽标（不动图表） */
 function updateDyn(){
   _slotList.forEach((s,i)=>{
+    slRefreshLine(i);   // 实时价变化 → 止损线上"金额/手数/点数"跟着刷新
     const px=$('px_'+i);if(!px)return;
     if(s.pos){
       const p=s.pos,v=verdictOf(p),q=v?v.px:null;
@@ -541,10 +543,11 @@ function mountChart(i,sym,period){
     borderUpColor:'#ef5350',borderDownColor:'#26a69a',wickColor:'#787b86'});   // 中国习惯：红涨绿跌
   const bi=chart.addLineSeries({color:'#f0b90b',lineWidth:1,
     priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-  CHARTS[i]={sym,period,chart,candle,bi,lastBi:'',timer:null};
+  CHARTS[i]={sym,period,chart,candle,bi,lastBi:'',timer:null,slLine:null};
   psApply(CHARTS[i]);
   refreshChart(i);
   ctimer(i);
+  slLoad(i,sym);   // 取回本品种通用止损线（与详情页同源，一条线跨级别/跨页面通用）
 }
 function ctimer(i){CHARTS[i].timer=setInterval(()=>{if(!document.hidden)refreshChart(i);},40000+i*3500);}
 async function refreshChart(i){
@@ -809,6 +812,162 @@ function connect(){
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){loadPositions();loadQuotes();
     Object.keys(CHARTS).forEach(i=>refreshChart(i));}});
 })();
+
+/* ---------- 模块右键菜单：一键止损线（2026-10-29 照详情页交互整套移植） ----------
+   右键模块 → 一键止损线（按现价）→ 点击图面布线 → 拖线微调 → 线上实时反算 金额/手数/点数。
+   与详情页共用 /api/sl_line（按品种一条通用，存 data/sl_lines.json，两页互通）；
+   乘数/最小跳动取 /api/fees；资金/止损比与详情页计算器共用 localStorage（cl_calc_*）。
+   性能：布线/拖完各一次 POST，画线纯客户端，零轮询——4 个全设和 40 个没区别 */
+let _slMenuSlot=-1,_slLines={},_slSettingSlot=-1,_slDragSlot=-1,_slDragOffset=0;
+const slCalc={capital:0,riskPct:0.02};
+try{const sc=localStorage.getItem('cl_calc_capital');if(sc&&parseFloat(sc)>0)slCalc.capital=parseFloat(sc);}catch(e){}
+try{const sr=localStorage.getItem('cl_calc_risk_pct');if(sr&&parseFloat(sr)>0)slCalc.riskPct=parseFloat(sr);}catch(e){}
+const FEES={};
+(async function(){try{
+  const j=await (await fetch('/api/fees')).json();
+  const d=j&&j.fees?j.fees:j;
+  for(const k in d)if(d[k]&&typeof d[k]==='object')FEES[k]=d[k];
+}catch(e){}})();
+function slMult(sym){const f=FEES[sym];const m=f&&f.multiplier!=null?Number(f.multiplier):NaN;return (isFinite(m)&&m>0)?m:10;}
+function snapSl(sym,price){const f=FEES[sym];const t=f&&f.min_tick!=null?Number(f.min_tick):1;
+  if(!isFinite(t)||t<=0)return price;return Math.round(price/t)*t;}
+function slTitleText(sym,stop){
+  const entry=(QUOTES[sym]||{}).price;
+  const e=(entry!=null&&isFinite(entry))?entry:stop;
+  const pts=Math.abs(e-stop);
+  const perLot=pts*slMult(sym);
+  const maxLoss=(slCalc.capital||0)*slCalc.riskPct;
+  let lots=(slCalc.capital>0&&perLot>0)?Math.floor(maxLoss/perLot):1;if(lots<1)lots=1;
+  const loss=lots*perLot;
+  const over=slCalc.capital>0&&perLot>0&&(loss/slCalc.capital*100)>slCalc.riskPct*100+0.001;
+  return (over?'⚠ ':'')+loss.toFixed(0)+'元/'+lots+'手/'+pts.toFixed(1)+'点';
+}
+function _slSym(i){const s=_slotList[i];return s?(s.pos?s.pos.symbol:(s.watch?s.watch.symbol:null)):null;}
+function slCtx(ev,i){
+  if(_slSettingSlot>=0){ev.preventDefault();ev.stopPropagation();slCancelSet(_slSettingSlot);return;}
+  const sym=_slSym(i);if(!sym)return;
+  ev.preventDefault();ev.stopPropagation();
+  _slMenuSlot=i;
+  $('slMenuSym').textContent=cname(sym)+'（'+sym+'）· 止损线';
+  $('slMenuDel').style.display=_slLines[sym]!=null?'block':'none';
+  const m=$('slMenu');m.style.display='block';
+  m.style.left=Math.min(ev.clientX,window.innerWidth-226)+'px';
+  m.style.top=Math.min(ev.clientY,window.innerHeight-170)+'px';
+}
+function slHideMenu(){$('slMenu').style.display='none';_slMenuSlot=-1;}
+document.addEventListener('click',e=>{const m=$('slMenu');if(m&&m.style.display==='block'&&!m.contains(e.target))slHideMenu();});
+function slStartSet(){
+  const i=_slMenuSlot;slHideMenu();
+  if(i<0)return;const c=CHARTS[i];if(!c||!c.chart)return;
+  _slSettingSlot=i;
+  c.chart.applyOptions({crosshair:{mode:2}});
+  const box=document.getElementById('chart_'+i);if(box)box.style.cursor='crosshair';
+  const tag=$('vtag_'+i);
+  if(tag){tag.dataset.slhold=tag.innerHTML;tag.innerHTML='<span style="color:#f0b90b">点击图面布线（现价=入场价）· 右键取消</span>';}
+}
+function slCancelSet(i){
+  if(i==null||i<0)return;
+  _slSettingSlot=-1;
+  const c=CHARTS[i];if(c&&c.chart){try{c.chart.applyOptions({crosshair:{mode:0}});}catch(e){}}
+  const box=document.getElementById('chart_'+i);if(box)box.style.cursor='';
+  const tag=$('vtag_'+i);if(tag&&tag.dataset.slhold){tag.innerHTML=tag.dataset.slhold;delete tag.dataset.slhold;}
+}
+function slChartClick(ev,i){
+  if(_slSettingSlot!==i)return;
+  const c=CHARTS[i];if(!c||!c.candle)return;
+  const box=document.getElementById('chart_'+i);if(!box)return;
+  const rect=box.getBoundingClientRect();
+  const y=ev.clientY-rect.top;
+  let p=null;try{p=c.candle.coordinateToPrice(y);}catch(err){}
+  if(p==null||isNaN(p))return;
+  slCancelSet(i);
+  slSavePrice(c.sym,snapSl(c.sym,p));
+}
+function slSavePrice(sym,price){
+  _slLines[sym]=price;
+  fetch('/api/sl_line',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sym:sym,price:price})}).catch(()=>{});
+  slApplySym(sym,price);
+}
+function slApply(i,sym,price){
+  const c=CHARTS[i];if(!c||!c.candle)return;
+  const sp=snapSl(sym,price);
+  if(c.slLine){try{c.slLine.applyOptions({price:sp,title:slTitleText(sym,sp)});}catch(e){}}
+  else{try{c.slLine=c.candle.createPriceLine({price:sp,color:'#ef5350',lineWidth:2,lineStyle:2,axisLabelVisible:true,title:slTitleText(sym,sp),draggable:true});}catch(e){}}
+}
+function slApplySym(sym,price){
+  for(const k in CHARTS)if(CHARTS[k].sym===sym)slApply(+k,sym,price);
+}
+function slMenuDel(){
+  const sym=_slSym(_slMenuSlot);if(!sym)return;
+  delete _slLines[sym];
+  fetch('/api/sl_line?sym='+encodeURIComponent(sym),{method:'DELETE'}).catch(()=>{});
+  for(const k in CHARTS){const c=CHARTS[k];
+    if(c.sym===sym&&c.slLine){try{c.candle.removePriceLine(c.slLine);}catch(e){}c.slLine=null;}}
+  slHideMenu();
+}
+async function slLoad(i,sym){
+  try{
+    const j=await (await fetch('/api/sl_line?sym='+encodeURIComponent(sym))).json();
+    if(j.price!=null){_slLines[sym]=j.price;slApply(i,sym,j.price);}
+  }catch(e){}
+}
+function slRefreshLine(i){
+  const c=CHARTS[i];if(!c||!c.slLine)return;
+  try{c.slLine.applyOptions({title:slTitleText(c.sym,c.slLine.options().price)});}catch(e){}
+}
+/* 拖线（详情页同款：距线 15px 内按下 → 移动 → 松手吸附落盘） */
+document.addEventListener('mousedown',function(e){
+  if(_slSettingSlot>=0)return;
+  for(const k in CHARTS){
+    const c=CHARTS[k];if(!c||!c.slLine)continue;
+    const box=document.getElementById('chart_'+k);if(!box)continue;
+    const rect=box.getBoundingClientRect();
+    if(e.clientX<rect.left||e.clientX>rect.right||e.clientY<rect.top||e.clientY>rect.bottom)continue;
+    const y=e.clientY-rect.top;
+    let ly=null;try{ly=c.candle.priceToCoordinate(c.slLine.options().price);}catch(err){continue;}
+    if(ly==null||isNaN(ly))continue;
+    if(Math.abs(ly-y)<=15){
+      _slDragSlot=+k;
+      let cur=null;try{cur=c.candle.coordinateToPrice(y);}catch(err){}
+      _slDragOffset=(cur!=null&&!isNaN(cur))?(c.slLine.options().price-cur):0;
+      box.style.cursor='grabbing';
+      e.preventDefault();e.stopPropagation();
+      break;
+    }
+  }
+},true);
+document.addEventListener('mousemove',function(e){
+  if(_slDragSlot<0)return;
+  const c=CHARTS[_slDragSlot];if(!c||!c.slLine)return;
+  const box=document.getElementById('chart_'+_slDragSlot);if(!box)return;
+  const rect=box.getBoundingClientRect();
+  const y=e.clientY-rect.top;
+  let p=null;try{p=c.candle.coordinateToPrice(y);}catch(err){}
+  if(p==null||isNaN(p))return;
+  const np=snapSl(c.sym,p+_slDragOffset);
+  try{c.slLine.applyOptions({price:np,title:slTitleText(c.sym,np)});}catch(err){}
+},true);
+document.addEventListener('mouseup',function(){
+  if(_slDragSlot<0)return;
+  const slot=_slDragSlot,c=CHARTS[slot];_slDragSlot=-1;
+  if(!c||!c.slLine)return;
+  const box=document.getElementById('chart_'+slot);if(box)box.style.cursor='';
+  let raw=null;try{raw=c.slLine.options().price;}catch(err){}
+  if(raw!=null){
+    const sp=snapSl(c.sym,raw);
+    try{c.slLine.applyOptions({price:sp,title:slTitleText(c.sym,sp)});}catch(e){}
+    slSavePrice(c.sym,sp);
+  }
+});
 </script>
+<!-- 模块右键菜单：止损价（与详情页共用 /api/sl_line，按品种一条通用）。函数在主脚本块内定义，避免执行时序竞态 -->
+<div id="slMenu" style="display:none;position:fixed;z-index:10001;background:#1e222d;border:1px solid #2a2e39;border-radius:10px;padding:10px;min-width:200px;box-shadow:0 12px 40px rgba(0,0,0,.55);">
+  <div class="mut" id="slMenuSym" style="margin-bottom:8px;font-size:12px;"></div>
+  <div id="slMenuMain">
+    <button class="btn" style="display:block;width:100%;box-sizing:border-box;text-align:center;" onclick="slStartSet()">🛡 一键止损线（按现价）</button>
+    <button class="btn" id="slMenuDel" style="display:none;width:100%;box-sizing:border-box;margin-top:8px;text-align:center;border-color:#ef5350;color:#ef5350;" onclick="slMenuDel()">✕ 删除止损线</button>
+    <button class="btn" style="display:block;width:100%;box-sizing:border-box;margin-top:8px;text-align:center;" onclick="slHideMenu()">取消</button>
+  </div>
+</div>
 </body>
 </html>
