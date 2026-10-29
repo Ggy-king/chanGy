@@ -12,24 +12,24 @@ PERIOD_SEC = "3"      # 次级别
 PERIOD_MAIN = "15"    # 本级别
 PERIOD_BIG = "60"     # 更大级别
 
-# 盯盘合约清单（来自文华自选）
+# 盯盘合约清单（2026-10-29 定稿：板块分组+资金效率综合排序，序号=列表页顺序）
+# 前 10 位为热键区（未来详情页 1-9、0 切品种）；11+ 为降位/备用；螺纹钢已剔除（费率摩擦 2.2% 全场最差）
 CONTRACTS = [
-    {"symbol": "jd2612", "name": "鸡蛋",   "exchange": "DCE"},
-    {"symbol": "UR2701", "name": "尿素",   "exchange": "CZCE"},
-    {"symbol": "MA2701", "name": "甲醇",   "exchange": "CZCE"},
-    {"symbol": "jm2701", "name": "焦煤",   "exchange": "DCE"},
-    {"symbol": "CF2701", "name": "棉花",   "exchange": "CZCE"},
-    {"symbol": "SA2701", "name": "纯碱",   "exchange": "CZCE"},
-    {"symbol": "SR2701", "name": "白糖",   "exchange": "CZCE"},
-    {"symbol": "v2701",  "name": "PVC",    "exchange": "DCE"},
-    {"symbol": "CJ2701", "name": "红枣",   "exchange": "CZCE"},
-    {"symbol": "SP2701", "name": "纸浆",   "exchange": "SHFE"},
-    {"symbol": "RU2701", "name": "橡胶",   "exchange": "SHFE"},
-    {"symbol": "lh2701", "name": "生猪",   "exchange": "DCE"},
-    {"symbol": "AP2701", "name": "苹果",   "exchange": "CZCE"},
-    {"symbol": "pg2612", "name": "液化气", "exchange": "DCE"},
-    {"symbol": "RB2701", "name": "螺纹钢", "exchange": "SHFE"},
-    {"symbol": "NI2612", "name": "沪镍",   "exchange": "SHFE"},
+    {"symbol": "MA2701", "name": "甲醇",   "exchange": "CZCE"},   # 1 化工（全维度最优）
+    {"symbol": "v2701",  "name": "PVC",    "exchange": "DCE"},    # 2 化工（低保证金低摩擦）
+    {"symbol": "SA2701", "name": "纯碱",   "exchange": "CZCE"},   # 3 化工（最低保证金）
+    {"symbol": "jm2701", "name": "焦煤",   "exchange": "DCE"},    # 4 煤焦（波动额大）
+    {"symbol": "RU2701", "name": "橡胶",   "exchange": "SHFE"},   # 5 橡胶（摩擦最低+振幅最大）
+    {"symbol": "SR2701", "name": "白糖",   "exchange": "CZCE"},   # 6 软商品（稳健）
+    {"symbol": "SP2701", "name": "纸浆",   "exchange": "SHFE"},   # 7 轻工（干净备用）
+    {"symbol": "jd2612", "name": "鸡蛋",   "exchange": "DCE"},    # 8 农副（流畅但成本略伤）
+    {"symbol": "CJ2701", "name": "红枣",   "exchange": "CZCE"},   # 9 果品（ER高但盘口薄）
+    {"symbol": "AP2701", "name": "苹果",   "exchange": "CZCE"},   # 0 果品·热键0（埋伏型）
+    {"symbol": "CF2701", "name": "棉花",   "exchange": "CZCE"},   # 11 降位（15分ER最低）
+    {"symbol": "UR2701", "name": "尿素",   "exchange": "CZCE"},   # 12 降位（摩擦高+无夜盘）
+    {"symbol": "pg2612", "name": "液化气", "exchange": "DCE"},    # 13 降位（跳空之王）
+    {"symbol": "lh2701", "name": "生猪",   "exchange": "DCE"},    # 14 降位（成本高+黑天鹅史）
+    {"symbol": "NI2612", "name": "沪镍",   "exchange": "SHFE"},   # 15 降位（保证金大+妖镍史）
     # {"symbol": "PK2611", "name": "花生",   "exchange": "CZCE"},
 ]
 
@@ -41,7 +41,7 @@ CONTRACT_MAP = {c["symbol"]: c for c in CONTRACTS}
 # key=品种字母前缀（合约代码去掉数字，换月自动跟随，如 jd2612/jd2701 都命中 'jd'）。
 # 未来资金到位新增品种时在这里补赛道（贵金属/油脂油料/新能源等空槽已预留）。
 SECTOR_MAP = {
-    # —— 当前 16 品种 ——
+# —— 当前 15 品种（螺纹钢 2026-10-29 剔除，保留赛道映射以兼容历史记录）——
     'jd': '畜产', 'lh': '畜产',
     'cf': '软商品', 'sr': '软商品',
     'ap': '果品', 'cj': '果品',
@@ -63,7 +63,7 @@ def sector_of(symbol):
     return SECTOR_MAP.get(pre)
 
 # ===== 背驰-V反 形态预警系统（docs/背驰反转形态预警系统设计.md）=====
-# 监视级别（17品种×5级别=85序列）；扫描节奏按级别分钟数对齐挂钟时间（见 server.pattern_loop）
+# 监视级别（15品种×5级别=75序列）；扫描节奏按级别分钟数对齐挂钟时间（见 server.pattern_loop）
 PATTERN_PERIODS = ['3', '5', '15', '30m', '60']
 # 形态C 幅度过滤：6→7 幅度 > 2 × 5→6 幅度 才报三买候选（控制报警频率）
 PATTERN_RATIO = 2.0
