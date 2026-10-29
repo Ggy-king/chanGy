@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-"""总览页按钮/自检入设置/品种名拖动排序 + 驾驶舱头部拖动 E2E（file:// 直载，stub fetch 零网络依赖）"""
+"""总览页按钮/自检入设置/固定顺序（不拖动） + 驾驶舱头部拖动 E2E（file:// 直载，stub fetch 零网络依赖）
+2026-10-29 定稿：列表页顺序固定跟服务端 config.CONTRACTS，拖动排序与 cl_symbol_order 覆盖已移除。
+"""
 import os, json
 os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH', os.path.expanduser('~/Library/Caches/ms-playwright'))
 from playwright.sync_api import sync_playwright
@@ -49,38 +51,30 @@ with sync_playwright() as p:
     assert pg.locator('#setMenu a[href="/pc/tqstats"]').count() == 1, '设置菜单连接诊断丢失'
     print('ok 1/5 头部：持仓按钮在、自检已入设置菜单')
 
-    # 2) 行渲染（回退后定稿）：整行可拖 + 行点击进详情
+    # 2) 行渲染（2026-10-29 定稿）：不可拖 + 行点击进详情
     pg.wait_for_function('document.querySelectorAll("#tb tr[data-sym]").length === 3', timeout=5000)
-    assert pg.evaluate('document.querySelector("#tb tr[data-sym]").draggable') is True, '整行应可拖（回退后原样）'
-    cur = pg.locator('#tb tr[data-sym]').first.locator('td').first.evaluate('e => getComputedStyle(e).cursor')
-    assert cur == 'grab', f'序号格 cursor 应为 grab: {cur}'
+    assert pg.evaluate('document.querySelector("#tb tr[data-sym]").draggable') is not True, '列表页不应可拖（顺序已定稿）'
     assert pg.evaluate('document.querySelector("#tb tr[data-sym]").onclick !== null'), '行点击进详情丢失'
-    print('ok 2/5 整行可拖（回退原样）、行点击保留')
+    print('ok 2/5 列表页不可拖、行点击保留')
 
-    # 3) 拖动排序：第1行拖到第3行 → 顺序 [LH,CY,JD] + localStorage 持久化
-    pg.evaluate('''() => {
-      const rows=[...document.querySelectorAll('#tb tr[data-sym]')];
-      const dt=new DataTransfer();
-      rows[0].dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:dt,cancelable:true}));
-      rows[2].dispatchEvent(new DragEvent('dragover',{bubbles:true,dataTransfer:dt,cancelable:true}));
-      rows[2].dispatchEvent(new DragEvent('drop',{bubbles:true,dataTransfer:dt,cancelable:true}));
-      rows[0].dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:dt}));
-    }''')
-    pg.wait_for_timeout(200)
-    order = pg.evaluate('JSON.parse(localStorage.getItem("cl_symbol_order")||"[]")')
-    assert order == ['LH2701', 'CY2701', 'JD2701'], f'排序未持久化: {order}'
+    # 3) 固定顺序：严格跟服务端返回序（stub 顺序），老 cl_symbol_order 存在也不生效
+    # 模拟老用户残留的拖动排序
+    pg.evaluate('''() => { localStorage.setItem("cl_symbol_order",
+      JSON.stringify(["LH2701","CY2701","JD2701"])); }''')
+    pg.reload()
+    pg.wait_for_function('document.querySelectorAll("#tb tr[data-sym]").length === 3', timeout=5000)
     dom = pg.evaluate('[...document.querySelectorAll("#tb tr[data-sym]")].map(r=>r.dataset.sym)')
-    assert dom == order, f'DOM 顺序与存储不一致: {dom}'
+    assert dom == ['JD2701', 'LH2701', 'CY2701'], f'顺序应跟服务端而非 cl_symbol_order: {dom}'
     seqs = pg.evaluate('[...document.querySelectorAll("#tb tr[data-sym] td:first-child")].map(t=>t.textContent)')
-    assert seqs == ['01', '02', '03'], f'序号未重排: {seqs}'
-    print('ok 3/5 拖动排序生效且持久化，序号重排正确')
+    assert seqs == ['01', '02', '03'], f'序号未按服务端序渲染: {seqs}'
+    print('ok 3/5 固定顺序生效：老 cl_symbol_order 残留被忽略，严格跟服务端')
 
     # 刷新后顺序保持
     pg.reload()
     pg.wait_for_function('document.querySelectorAll("#tb tr[data-sym]").length === 3', timeout=5000)
     dom2 = pg.evaluate('[...document.querySelectorAll("#tb tr[data-sym]")].map(r=>r.dataset.sym)')
-    assert dom2 == ['LH2701', 'CY2701', 'JD2701'], f'刷新后顺序丢失: {dom2}'
-    print('ok 4/5 刷新后自定义顺序保持')
+    assert dom2 == ['JD2701', 'LH2701', 'CY2701'], f'刷新后顺序丢失: {dom2}'
+    print('ok 4/5 刷新后固定顺序保持')
     if errs:
         print('总览页 JS 错误:', errs)
         raise SystemExit(1)
@@ -286,23 +280,19 @@ window.fetch = async (url) => {
         raise SystemExit(1)
     mx.close()
 
-    # ---------- 总览页回退验证：恢复整行拖动 ----------
+    # ---------- 总览页二次确认：无任何残留拖动行为 ----------
     ov = b.new_page()
     errs4 = []
     ov.on('pageerror', lambda e: errs4.append(f'overview pageerror: {e}'))
     ov.add_init_script(STUB)
     ov.goto(OVERVIEW)
     ov.wait_for_function('document.querySelectorAll("#tb tr[data-sym]").length === 3', timeout=5000)
-    tr = ov.locator('#tb tr[data-sym]').first
-    assert ov.evaluate('document.querySelector("#tb tr[data-sym]").draggable') is True, '回退失败：整行应可拖'
-    assert tr.locator('td[draggable="true"]').count() == 0, '回退失败：品种名单元格不应带 draggable'
-    print('ok 总览页已回退：整行拖动原样')
+    assert ov.evaluate('document.querySelector("#tb tr[data-sym]").draggable') is not True, '不应有残留 draggable'
+    assert ov.evaluate('typeof initDragSort === "undefined"'), 'initDragSort 应已移除'
+    print('ok 总览页拖动已彻底移除（固定顺序定稿）')
     if errs4:
         print('回退后总览页 JS 错误:', errs4)
         raise SystemExit(1)
     b.close()
 
-print('ok - 全部通过：驾驶舱头部拖动 / 监控页品种列拖动 / 总览页回退')
-
-
-print('ok - 总览页按钮/自检入设置/品种名拖动排序 + 驾驶舱头部拖动 全部通过')
+print('ok - 全部通过：总览页固定顺序 / 驾驶舱头部拖动 / 监控页品种列拖动')

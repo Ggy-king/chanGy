@@ -580,19 +580,7 @@ async function loadContracts(){
     const r=await fetch('/api/contracts');
     const s=await r.json();
     contractList=s.contracts||[];
-    // 按用户自定义排序（拖动排序结果存localStorage）
-    try{
-      const order=JSON.parse(localStorage.getItem('cl_symbol_order')||'[]');
-      if(order&&order.length){
-        contractList.sort((a,b)=>{
-          const ia=order.indexOf(a.symbol), ib=order.indexOf(b.symbol);
-          if(ia===-1&&ib===-1) return 0;
-          if(ia===-1) return 1;
-          if(ib===-1) return -1;
-          return ia-ib;
-        });
-      }
-    }catch(e){}
+    // 顺序固定跟服务端 config.CONTRACTS（2026-10-29 定稿，与列表页同序）
     contractIdx=contractList.findIndex(c=>c.symbol===SYM);
   }catch(e){}
 }
