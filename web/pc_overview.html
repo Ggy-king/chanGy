@@ -38,12 +38,16 @@
   table{width:100%;border-collapse:collapse;font-size:13.5px;}
   thead th{color:#787b86;font-weight:600;text-align:right;padding:8px 12px;border-bottom:1px solid #2a2e39;font-size:12px;position:sticky;top:0;background:#1e222d;}
   thead th:first-child,tbody td:first-child{text-align:left;}
-  tbody td{padding:8px 12px;text-align:right;border-bottom:1px solid rgba(42,46,57,.5);white-space:nowrap;}
+  tbody td{padding:4px 12px;text-align:right;border-bottom:1px solid rgba(42,46,57,.5);white-space:nowrap;}
   tbody tr{cursor:pointer;transition:background .15s;}
   tbody tr:hover{background:#2a2e39;}
   tbody tr.flash{animation:fl 1.2s ease 2;}
   @keyframes fl{0%,100%{background:#1e222d;}50%{background:rgba(240,185,11,.28);}}
-  .nm{font-weight:800;font-size:15px;color:#f0b90b;} .cd{font-size:11px;color:#787b86;}
+  .nm{font-weight:800;font-size:15px;color:#f0b90b;} .cd{font-size:11px;color:#787b86;margin-left:8px;}
+  /* 品种列左对齐：名字固定宽，代码排成整齐一列（2026-10-29 用户定稿） */
+  .symtd{text-align:left;}
+  .symtd .nm{display:inline-block;width:52px;text-align:left;}
+  thead th:nth-child(2){text-align:left;}
   .tag{font-size:11px;padding:2px 9px;border-radius:10px;}
   .tag.buy{background:rgba(239,83,80,.18);color:#ef5350;}
   .tag.sell{background:rgba(38,166,154,.18);color:#26a69a;}
@@ -291,7 +295,7 @@ function renderOverview(ov){
     const seq=String(i+1).padStart(2,'0');
     html+=`<tr data-sym="${it.symbol}" id="row-${it.symbol}" draggable="true">
       <td class="mut" style="font-size:12px;cursor:grab;">${seq}</td>
-      <td><div class="nm">${it.name}</div><div class="cd">${it.symbol}</div></td>
+      <td class="symtd"><span class="nm" title="品种名称">${it.name}</span><span class="cd" title="合约代码">${it.symbol}</span></td>
       <td><b>${it.last_price??'–'}</b></td>
       <td class="${hasChg?col:'mut'}">${chg}</td>
       <td>${sigTag}</td>
