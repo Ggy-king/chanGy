@@ -72,6 +72,8 @@ _PRODUCT_MAP = {
     'fu':('SHFE','fu'), 'FU':('SHFE','fu'), 'bu':('SHFE','bu'), 'BU':('SHFE','bu'),
     'pb':('SHFE','pb'), 'PB':('SHFE','pb'), 'sn':('SHFE','sn'), 'SN':('SHFE','sn'),
     'ss':('SHFE','ss'), 'SS':('SHFE','ss'), 'wr':('SHFE','wr'), 'WR':('SHFE','wr'),
+    # 广期所 GFEX（小写，2026-10-30 新增：碳酸锂/工业硅）
+    'lc':('GFEX','lc'), 'LC':('GFEX','lc'), 'si':('GFEX','si'), 'SI':('GFEX','si'),
     # 大商所 DCE（小写）
     'm':('DCE','m'), 'M':('DCE','m'), 'y':('DCE','y'), 'Y':('DCE','y'),
     'jm':('DCE','jm'), 'JM':('DCE','jm'), 'jd':('DCE','jd'), 'JD':('DCE','jd'),

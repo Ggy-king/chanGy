@@ -208,7 +208,7 @@ main{flex:1;overflow-y:auto;scrollbar-width:thin;padding:8px;}
   </div>
 </div>
 
-<script src="/popup_cards.js"></script>
+<script src="/popup_cards.js"></script><script src="/hotkeys.js"></script>
 <script src="/posbi_cards.js"></script>
 <script>
 const $=id=>document.getElementById(id);
@@ -871,6 +871,13 @@ function slCancelSet(i){
   const c=CHARTS[i];if(c&&c.chart){try{c.chart.applyOptions({crosshair:{mode:0}});}catch(e){}}
   const box=document.getElementById('chart_'+i);if(box)box.style.cursor='';
   const tag=$('vtag_'+i);if(tag&&tag.dataset.slhold){tag.innerHTML=tag.dataset.slhold;delete tag.dataset.slhold;}
+}
+// 键盘入口（hotkeys A 键）：先点选模块再按 A，布防该槽位
+function slStartSetKeyed(i){
+  if(typeof i!=='number'||i<0||!CHARTS[i]||!CHARTS[i].chart)return false;
+  _slMenuSlot=i;
+  slStartSet();
+  return true;
 }
 function slChartClick(ev,i){
   if(_slSettingSlot!==i)return;
