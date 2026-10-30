@@ -569,7 +569,7 @@ def _pattern_load_snapshot():
             _event_day_stats = {k: v for k, v in data['day_stats'].items() if isinstance(v, int) and v > 0}
             if _event_day_stats:
                 _event_stat_day = sorted(_event_day_stats)[-1]
-        _ok_syms = {c['symbol'] for c in config.CONTRACTS}
+        _ok_syms = {c['symbol'] for c in config.monitor_contracts()}
         for ev in data.get('events', []):
             sym = str(ev.get('symbol') or '')
             if sym and sym not in _ok_syms:
@@ -628,7 +628,7 @@ async def _pattern_scan_once(push, periods=None):
         _prio_syms = {k[0] for k in engine.tq.TqData().take_priority()}
     except Exception:
         _prio_syms = set()
-    _cl = config.CONTRACTS
+    _cl = config.monitor_contracts()
     if _prio_syms:
         _cl = sorted(_cl, key=lambda c: 0 if engine.tq.to_tq_symbol(c['symbol']) in _prio_syms else 1)
     for c in _cl:
@@ -1218,7 +1218,7 @@ async def keepwarm_loop():
                     _prio_syms = {k[0] for k in engine.tq.TqData().take_priority()}
                 except Exception:
                     _prio_syms = set()
-                _cl = config.CONTRACTS
+                _cl = config.monitor_contracts()
                 if _prio_syms:
                     _cl = sorted(_cl, key=lambda c: 0 if engine.tq.to_tq_symbol(c['symbol']) in _prio_syms else 1)
                 for c in _cl:
@@ -1605,6 +1605,12 @@ async def asset_posbi_cards_js():
     return _page('posbi_cards.js')
 
 
+@app.get('/hotkeys.js')
+async def asset_hotkeys_js():
+    """全局键盘热键组件：1-9/0 切品种、Shift+数字=11-20、退格返回（2026-10-30 定稿）"""
+    return _page('hotkeys.js')
+
+
 @app.get('/favicon.svg')
 async def asset_favicon_svg():
     return _page('favicon.svg')
@@ -1655,7 +1661,7 @@ async def api_pattern_matrix():
         'cells': list(_pattern_cells.values()),
         'events': [e for e in _pattern_events if not _outside_show_window(e)],
         'periods': list(reversed(config.PATTERN_PERIODS)),   # 倒序：日线在最上（加上后）
-        'contracts': config.CONTRACTS,
+        'contracts': config.monitor_contracts(),
         'ready': _snapshot_done,
         'days_back': _pattern_days_back,
         'mon_enabled': _MON['enabled'],
