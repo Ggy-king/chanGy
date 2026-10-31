@@ -85,7 +85,23 @@ K线图自动叠加**笔**（分型确认后逐段连接，端点带价格标注
 
 ---
 
-## 目录结构 & 文件说明
+## 🏆 这套形态学的实盘背景
+
+引擎里那套「分型 → 笔 → 中枢 → 买卖点」的形态学体系，不是从书上抄完就写进代码的——作者本人带着它打过全国性的实盘战场：
+
+<div align="center">
+
+![第十八届全国期货实盘大赛优秀奖](docs/screenshots/award.jpg)
+
+**第十八届全国期货（期权）实盘交易大赛 · 轻量组优秀奖 · 累计净值 2.84**（期货日报主办，2024）
+
+</div>
+
+chanGy 是这段实盘经历之后，把整套交易方法论工程化的产物：把盘面上靠经验和盘感做的事，交给可复现的算法链和提醒系统。项目不预测市场、不承诺收益，它解决的是**盯盘的覆盖率、纪律的执行强度、复盘的颗粒度**这三个问题。
+
+---
+
+## 📦 目录结构 & 文件说明
 
 ```
 chanGy
@@ -253,6 +269,74 @@ A类信号为趋势反转结构：下跌走势中出现底分型确认后构成�
 - **三级自动审计**（certain / suspect / info）：信号流 × 交易流水做数据 diff，机器先筛异常，人只做主观确认
 - **体系疑问清单**：逐条追加结论 / 解决 / 否决，长期沉淀
 - **AI 周复盘**：`agent/` 将一周信号流与交易流水聚合后交由 LLM 分析，提示词显式约束口径（只陈述数据支持的事实），支持 ZHIPU_API_KEY 等接入
+
+## 🔧 核心 API 参考
+
+缠论引擎是一条**五级纯函数流水线**，每一级都可单独调用、单独测试、单独替换口径：
+
+### 1. K线包含合并 —— `merge_klines(df)`
+
+输入原始K线 DataFrame（time / open / close / low / high / volume），递归处理向上/向下包含关系，输出标准K线序列。整条识别链的地基——合并错一根，后面全错。
+
+### 2. 顶底分型 —— `find_fenxing(merged_df)`
+
+在合并K线上识别顶分型与底分型，输出分型序列（含索引与价位），供笔构建消费。
+
+### 3. 笔构建 —— `build_bi(...)`
+
+```python
+build_bi(top_fx, bottom_fx, merged,
+         bi_allow_sub_peak=True,   # 次高点：True 允许成笔（chan.py 原版默认）；False 走 update_peak 回退延伸
+         bi_algo='normal',         # 笔算法：normal 按笔定义推算 / fx 按分型原则
+         is_strict=True,           # 笔型：严格笔（顶底间至少一根独立K线）/ 宽松
+         bi_fx_check='strict',     # 分型校验：strict / totally / loss / half 四档
+         bi_end_is_peak=True,      # 端点极值：笔尾是否必须为整笔极值
+         gap_as_kl=False)          # 缺口算K
+```
+
+六个开关与前端「缠论笔设置」面板一一对应（默认 = chan.py 原版）。内部 `_fx_valid`（四档分型校验）、`_satisfy_span`（笔跨度约束）、`_end_is_peak`、`_can_make_bi` 均为独立函数，想换笔口径直接改对应实现，面板参数无需变动。
+
+### 4. 中枢构建 —— `build_zs(bi_list, zs_extend=True, zs_merge=False, zs_first_bi=False)`
+
+从最终笔列表构建中枢。**笔形一变，中枢自动跟着变**（每次现算，无缓存状态）。返回结构：
+
+```python
+{'begin_bi': 起始笔下标, 'end_bi': 结束笔下标,
+ 'low': ZD, 'high': ZG,            # 中枢区间
+ 'bi_in': 进入笔下标, 'bi_out': 离开笔下标,   # -1 = 尚未离开
+ 'merged_count': 合并了几个中枢}
+```
+
+`zs_trend(bi_list, zs_list=None)` 在此之上输出中枢趋势判定，驱动「顺大逆小」影子打标父链（3→15 / 5→30 / 15→60 / 30→60）。
+
+### 5. 形态评估 —— `evaluate(bi_list, merged, reported_keys=None, raw=None)`
+
+形态识别总入口，语义要点（全部来自模块 docstring）：
+
+- 评估输入 = **完成笔 + 进行中笔**——图上画出来的就要算，突破 / 成笔瞬间即触发；
+- `reported_keys`：已报信号指纹集合，调用方按 `(symbol, period)` 持有并持久传入，函数对首次触发的事件原地写入集合并放入返回值 `fired`——**去重天然由指纹完成**（`fingerprint(pattern, struct)` 生成）；
+- `raw`：原始K线 DataFrame（可选）。`bars` 档背驰口径按原始K线数「完全在外侧」计算，不传时退化为合并口径；
+- 返回 `{'long': {'state', 'struct', 'fired'}, 'short': {...}}`，**纯函数幂等**；
+- 内部四路评估器：`_eval_a_long` / `_eval_a_short`（A类趋势反转，含三档背驰口径）与 `_eval_c_long` / `_eval_c_short`（B类三买三卖候选），各自独立，新增形态即新增评估器。
+
+### 行情与数据层（`tqsdk_data.py`）
+
+- `TqData` 单例：多账户登录、K线订阅、断线重连；
+- `get_kline(symbol, period_sec, data_length=2000, force=False)` —— 带缓存的K线读取，`force=True` 强制刷新；
+- `bump_priority(tq_sym, period_sec)` / `take_priority()` —— **点击插队**：用户点开的图表进入优先刷新队列；
+- `fetch_kline(..., user=False)` —— `user=True` 标记「人在等」，实例重建限频从 45s 降至 5s；
+- `fees.load(force=False)` / `fees.get(symbol)` —— akshare 手续费与每手保证金，带过期缓存。
+
+### 服务层 HTTP 接口
+
+| 接口 | 说明 |
+|---|---|
+| `GET /api/live?sym=&period=` | 看盘快照：K线 + 笔 + 中枢 + 信号（支持 `bi_conf` 六开关透传） |
+| `GET /api/overview` | 监控矩阵全量状态 + 事件流 |
+| `GET /api/detail?sym=` | 品种统计与手续费详情 |
+| `GET/POST /api/positions/*` | 持仓增删改 / 平仓（含阻尼校验） / 违规标记 |
+| `GET /api/backtest` | 回测执行 |
+| `WS /ws` | 信号 / 预警 / 价格实时推送 |
 
 ## 自定义开发
 
