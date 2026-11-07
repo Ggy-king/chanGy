@@ -2,7 +2,7 @@
 
 # chanGy
 
-**缠论期货看盘与预警系统 · 单人 + AI 协作开发的全链路实践**
+**缠论期货看盘与预警系统 · 单人 + AI 协作开发的全链路实践(仅开源部分代码)**
 
 `Python 3.12` `FastAPI` `WebSocket` `天勤 TqSdk` `akshare` `lightweight-charts` `Playwright` `Android 离线壳`
 
