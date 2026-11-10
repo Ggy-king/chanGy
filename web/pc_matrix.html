@@ -73,6 +73,10 @@
   .evt.A.short{background:linear-gradient(135deg,rgba(38,166,154,.20),rgba(38,166,154,.04));border-left-color:#26a69a;}
   .evt.B.long{background:linear-gradient(135deg,rgba(240,185,11,.16),rgba(240,185,11,.03));border-left-color:#f0b90b;}
   .evt.B.short{background:linear-gradient(135deg,rgba(179,136,255,.16),rgba(179,136,255,.03));border-left-color:#b388ff;}
+  /* 金卡（区间套 2026-11-04 定稿）：A/B/多空统一金色 */
+  .evt.Q .kind{background:rgba(240,185,11,.32);color:#f0b90b;}
+  .evt.Q{background:linear-gradient(135deg,rgba(240,185,11,.22),rgba(240,185,11,.04));border-left-color:#f0b90b;}
+  .evt.Q.dead{opacity:.45;filter:saturate(.4);}
   .evt .r2{font-size:13.5px;font-weight:800;}
   .evt .r3{font-size:17px;font-weight:800;}
   .evt .r4{font-size:11px;color:#787b86;}
@@ -530,7 +534,7 @@ function upsertEvent(m){
   if(i>=0){
     m.first_time=(EVTS[i].first_time||EVTS[i].time);   // 保留首次时间
     // 成笔状态不锁存：跟随服务端每轮按"图上最新笔"重算的结果（延伸/被吃实时反映）
-    if(EVTS[i].time===m.time&&EVTS[i].price===m.price&&!!EVTS[i].bi_formed===!!m.bi_formed){EVTS[i]=m;return false;}  // 无变化
+    if(EVTS[i].time===m.time&&EVTS[i].price===m.price&&!!EVTS[i].bi_formed===!!m.bi_formed&&EVTS[i].ptag===m.ptag&&EVTS[i].brief===m.brief){EVTS[i]=m;return false;}  // 无变化（2026-11-04 卡顿修复：新增 ptag/brief 参与，防展示字段更新被跳过）
     EVTS[i]=m;
   }else{
     m.first_time=m.first_time||m.time;
@@ -543,15 +547,20 @@ function upsertEvent(m){
 function cardEl(m){
   const div=document.createElement('div');
   const long=(m.side||'long')==='long';
-  const cls=m.kind==='A'?('A '+m.side):('B '+m.side);
+  const isQ=m.kind==='Q';
+  const qDead=isQ&&(m.pattern||'').includes('作废');
+  const cls=isQ?(qDead?'Q dead':'Q '+m.side):(m.kind==='A'?('A '+m.side):('B '+m.side));
   const kind=m.snapshot
     ?(m.state==='watch_a'?'A类·观察':m.state==='cand_a'?'A类·候选':m.state==='conf_a'?'A类·确认':m.state==='trig_b'?'B类·触发':'B类·候选')
+    :isQ?((m.pattern||'').includes('确认')?'金卡·确认':(m.pattern||'').includes('作废')?'金卡·作废':'金卡·候选')
     :((m.pattern||'').startsWith('VREV_CONF')?'A类·确认'
       :(m.pattern||'').startsWith('VREV')?'A类·候选'
       :(m.pattern||'').includes('TRIG')?'B类·触发':'B类·候选');
-  const sub=m.kind==='A'
-    ?(m.snapshot?'观察中，破位即报警':('3→4跨 <b>'+(m.bi_span??'?')+'</b> 笔'))
-    :('幅度 <b>'+(m.ratio??'?')+'</b>×');
+  const sub=isQ
+    ?('锚 <b>'+(m.anchor_p??'?')+'</b> · 15分'+((m.premise||'').includes('VREV')?'A类确认':'B类触发')+'后锚定 3分')
+    :(m.kind==='A'
+      ?(m.snapshot?'观察中，破位即报警':('3→4跨 <b>'+(m.bi_span??'?')+'</b> 笔'))
+      :('幅度 <b>'+(m.ratio??'?')+'</b>×'));
   // 主时间=触发时刻（端点K线完结）；延续更新的卡片：时间前加"延续"小字；
   // 成笔状态（2026-10-13 用户定稿，替代原"首次时间"字段）：未成笔=灰（提前报的预判），已成笔=金粗（图上画出回调笔）
   const cont=!!(m.first_time&&m.first_time!==trigT(m));
@@ -573,6 +582,17 @@ function cardEl(m){
 }
 
 const trigT=m=>m.trigger_time||m.time||'';
+
+/* —— 事件流渲染合帧（2026-11-04 卡顿修复）：服务重启时 ptag 回填一口气广播 284 条
+   pattern_alert_update，旧逻辑逐条全量重绘（每次 innerHTML 重建全部卡片 DOM）→ 主线程
+   卡爆，页面"一点一点算过来"。改为：①卡片无变化（upsertEvent 返回 false）不重绘；
+   ②rAF 合帧，同一帧内多条消息只画一次——284 条洪峰从 284 次重绘降到 1-2 次。 ——*/
+let _rsPend=false;
+function scheduleStream(){
+  if(_rsPend)return;
+  _rsPend=true;
+  requestAnimationFrame(()=>{_rsPend=false;renderStream();});
+}
 
 function renderStream(){
   const firstT=m=>m.first_time||m.time||'';
@@ -660,10 +680,10 @@ function connect(){
       renderStream();
     }else if(m.type==='pattern_alert'){
       /* 弹卡/响铃/闪标题/通知/持仓弹卡由 popup_cards.js 自有 WS 处理（2026-10-22 收编） */
-      upsertEvent(m);renderStream();
+      if(upsertEvent(m)!==false)scheduleStream();   // 无变化不重绘（ptag 回填洪峰的大头）
       try{window.posRefreshIfAny&&window.posRefreshIfAny();}catch(e){}
     }else if(m.type==='pattern_alert_update'){
-      upsertEvent(m);renderStream();
+      if(upsertEvent(m)!==false)scheduleStream();
       try{window.posRefreshIfAny&&window.posRefreshIfAny();}catch(e){}
     }else if(m.type==='pattern_state'){
       applyCell(m.cell);
@@ -859,7 +879,14 @@ function posStatHtml(p){
     `<div class="pbig ${bigCls}">${big}</div>`+rows+'</div>';
 }
 /* 持仓弹卡（离场/升级）已收编进 popup_cards.js（2026-10-22，组件自带持仓列表 30s 刷新） */
-function posRefreshIfAny(){ if(POSITIONS.length) renderPos(); }   // 顶层 WS 处理器经 window 调用（IIFE 作用域桥接）
+function posRefreshIfAny(){   // 顶层 WS 处理器经 window 调用（IIFE 作用域桥接）
+  /* 合帧（2026-11-04 卡顿修复）：ptag 回填 284 条消息逐条触发旧版 renderPos 全量重建
+     持仓面板 DOM → 白干 284 次。rAF 合帧后一帧最多画一次。 */
+  if(!POSITIONS.length)return;
+  if(window.__posPend)return;
+  window.__posPend=true;
+  requestAnimationFrame(()=>{window.__posPend=false;renderPos();});
+}
 function renderPos(){
   const st=$('posCards');
   const pn=$('posPanel');

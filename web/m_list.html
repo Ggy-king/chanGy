@@ -352,9 +352,15 @@
 <script>
 /* ================= Gitee 直连（唯一权威数据源） ================= */
 /* 令牌由用户首次输入存 localStorage（不写死在页面里，曾随页面进过 git 历史 2026-10-25）。
-   与 APK 内置页各自独立存储（浏览器源不同），各输一次。 */
+   2026-11-04：APK 内离线壳(file://)与本页(http://)是两个浏览器源、localStorage 互不可见，
+   曾导致"每次打开 APP 都要输密钥"。有 Android 桥时令牌存原生 SharedPreferences 共用。 */
+function ghTokenLoad(){
+  try{ if(window.Android&&Android.getGhToken){ const t=Android.getGhToken(); if(t) return t; } }catch(e){}
+  try{ return (JSON.parse(localStorage.getItem('gh_conf')||'{}').token)||''; }catch(e){ return ''; }
+}
 const GH_DEFAULT={owner:'ggy-king',repo:'chan-gy-data',branch:'master',token:''};
 let GH=Object.assign({},GH_DEFAULT,JSON.parse(localStorage.getItem('gh_conf')||'{}'));
+GH.token=ghTokenLoad();
 let _ghSetupShown=false;
 function ghSetupOpen(){
   document.getElementById('ghTokIn').value=GH.token||'';
@@ -366,6 +372,7 @@ function ghSetupSave(){
   if(!v) return;
   GH.token=v;
   try{ localStorage.setItem('gh_conf',JSON.stringify(GH)); }catch(e){}
+  try{ if(window.Android&&Android.setGhToken) Android.setGhToken(v); }catch(e){}   // 原生层共享：离线壳/在线页都读这一个
   ghSetupClose();
   if(typeof posLoad==='function') posLoad();
 }

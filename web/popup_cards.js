@@ -208,7 +208,9 @@ const PopupCards = (function () {
       });
     } catch (e) {}
   }
-  const isConf = m => (m.pattern || '').indexOf('CONF') >= 0 || (m.pattern || '').indexOf('TRIG') >= 0;
+  const isConf = m => m.kind === 'Q'
+    ? (m.pattern || '').indexOf('确认') >= 0 && (m.pattern || '').indexOf('作废') < 0
+    : (m.pattern || '').indexOf('CONF') >= 0 || (m.pattern || '').indexOf('TRIG') >= 0;
   function beepFor(m) { beepTone(isConf(m) ? snd.conf : snd.cand, isConf(m)); }
 
   /* —— 标题闪烁 + 系统通知 —— */
@@ -270,11 +272,14 @@ const PopupCards = (function () {
   /* —— 组装通用形态卡（原监控页 showPatternPopup）—— */
   function showPatternPopup(m, isUpdate) {
     const long = (m.side || 'long') === 'long';
-    const st = (m.pattern || '').indexOf('CONF') >= 0 ? '确认' : (m.pattern || '').indexOf('TRIG') >= 0 ? '触发' : '候选';
-    const kd = (m.kind === 'A' ? 'A类' : 'B类') + (long ? '买点' : '卖点');
+    const isQ = m.kind === 'Q';
+    const st = isQ
+      ? ((m.pattern || '').indexOf('确认') >= 0 ? '确认' : (m.pattern || '').indexOf('作废') >= 0 ? '作废' : '候选')
+      : (m.pattern || '').indexOf('CONF') >= 0 ? '确认' : (m.pattern || '').indexOf('TRIG') >= 0 ? '触发' : '候选';
+    const kd = isQ ? '金卡·区间套' : (m.kind === 'A' ? 'A类' : 'B类') + (long ? '买点' : '卖点');
     PopupCards.push({
       fp: m.fingerprint,
-      tone: (m.kind === 'B') ? (long ? 'gold' : 'purple') : (long ? 'up' : 'down'),
+      tone: isQ ? 'gold' : (m.kind === 'B') ? (long ? 'gold' : 'purple') : (long ? 'up' : 'down'),
       title: (m.name || m.symbol || '') + ' ' + (P_LAB[m.period] || m.period || ''),
       info: '<b class="pp-main">' + kd + ' · ' + st + '</b>' +
         (m.bi_formed ? '<span class="pp-pill pp-g">✅已成笔</span>' : '') +

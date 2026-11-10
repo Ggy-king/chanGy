@@ -715,4 +715,9 @@ def pattern_snapshot(symbol, period, reported_keys=None, bi_conf=None):
             'bi_tail': [{'d': b['direction'],
                          'st': str(b.get('start_datetime') or ''),
                          'en': str(b.get('end_datetime') or ''),
-                         'sp': float(b.get('start_price'))} for b in eff]}
+                         'sp': float(b.get('start_price')),
+                         # ep 端点价（2026-11-04 区间套）：金卡前提笔识别要用（回调笔终点=事件价）
+                         'ep': float(b.get('end_price'))} for b in eff],
+            # 区间套金卡（2026-11-04）：3 分快照带出原始件，server 端 chanlun.qsq.eval_card 重放用
+            # （只增字段；仅内存传递不落盘）。15 分快照上这些字段也存在但 server 只在 3 分用。
+            'bis': bi_list, 'merged': merged, 'raw': df}

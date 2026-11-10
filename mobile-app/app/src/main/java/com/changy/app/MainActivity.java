@@ -1,6 +1,7 @@
 package com.changy.app;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -90,6 +91,12 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         setContentView(root);
+        // 系统通知权限（Android 13+ 运行时请求；原生 AlertService 刷抖音弹通知的前提）
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission("android.permission.POST_NOTIFICATIONS") !=
+                        android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 7);
+        }
         // 秒开（用户定稿 2026-10-10）：启动永远直接进本地离线壳持仓页（file:// 零等待，
         // localStorage 先渲染 + Gitee 后台取数，拿不到就空态/重试）。
         // 连电脑是后台自己的事：解析链在后台慢慢找，找到后 succeed() 自动切在线页。
@@ -144,6 +151,12 @@ public class MainActivity extends Activity {
     private void succeed(String base) {
         baseUrl = base;
         prefs.edit().putString("base_url", base).apply();
+        // 原生预警通知服务（2026-11-04）：连上电脑即拉起前台服务轮询触发预警。
+        // 页面内 WS 在 App 切后台会被系统冻结断线（"已连接"变"未连接"），
+        // 通知弹窗改由原生层兜底——刷抖音/回微信也能收到预警通知。
+        try {
+            startForegroundService(new Intent(this, AlertService.class));
+        } catch (Exception ignore) {}
         runOnUiThread(() -> {
             // 已在正确地址的正常页面 → 不打扰；在离线壳或旧地址 → 自动切在线页
             String cur = String.valueOf(web.getUrl());
@@ -219,6 +232,21 @@ public class MainActivity extends Activity {
         @android.webkit.JavascriptInterface
         public void toast(final String s) {
             runOnUiThread(() -> Toast.makeText(MainActivity.this, s, Toast.LENGTH_SHORT).show());
+        }
+
+        // ============ Gitee 令牌跨源共享（2026-11-04 修"每次打开都要输密钥"）============
+        // 离线壳(file://)与在线页(http://)是两个浏览器源，localStorage 各自独立——
+        // 用户在在线页输的令牌离线壳永远看不到，而启动必经离线壳 → 每次都弹输入框。
+        // 令牌改存 SharedPreferences（原生层），两个页面读写都走桥；纯浏览器打开回退 localStorage。
+
+        @android.webkit.JavascriptInterface
+        public String getGhToken() {
+            return prefs.getString("gh_token", "");
+        }
+
+        @android.webkit.JavascriptInterface
+        public void setGhToken(final String t) {
+            prefs.edit().putString("gh_token", t == null ? "" : t).apply();
         }
     }
 

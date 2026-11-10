@@ -77,3 +77,7 @@ data/history.json.bak
 
 # APK 产物含设备配置，永不入库（2026-10-25）
 *.apk
+
+# 区间套历史验证：派生行情缓存（8.9MB，validate_qjt.py 可用 config 重建）+ 个人验证明细（2026-11-04）
+data/qjt_cache/
+data/qjt_validation_report.json
