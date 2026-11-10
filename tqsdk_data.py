@@ -14,14 +14,14 @@ def _patched_log(self, level, msg, args, exc_info=None, extra=None, stack_info=F
     return _original_log(self, level, msg, args, exc_info=exc_info, extra=extra, stack_info=stack_info)
 logging.Logger._log = _patched_log
 
-for mod in ['pyarrow','pyarrow.lib','pyarrow.compute','numexpr','numexpr.interpreter',
-            'bottleneck','bottleneck.move','scipy','scipy.stats','scipy.sparse',
-            'scipy._lib','scipy.special','scipy.linalg','scipy.interpolate',
-            'scipy.optimize','scipy.integrate','scipy.fft','scipy.signal',
-            'scipy.ndimage','scipy.spatial','scipy.cluster','scipy.io',
-            'scipy.misc','scipy.constants','tqsdk_ctpse','tqsdk_sm']:
+# ========== 可选加速/科学计算依赖 ==========
+# scipy / pyarrow / bottleneck / numexpr 为真实依赖（2026-11-10 起随 requirements 安装）。
+# 早期曾以空壳占位骗过 tqsdk 导入——那会让统计功能拿到 AttributeError 埋雷，已废弃。
+# 仅保留两个无法 pip 安装的功能性占位：tqsdk 的 CTP 二进制接口在非 CTP 环境不存在，
+# 用最小实现顶住 tqsdk 导入（get_system_info / SMContext 等）。
+for mod in ['tqsdk_ctpse', 'tqsdk_sm']:
     if mod not in sys.modules:
-        m = types.ModuleType(mod); m.__version__ = '0.0.0'; sys.modules[mod] = m
+        _m = types.ModuleType(mod); _m.__version__ = '0.0.0'; sys.modules[mod] = _m
 sys.modules['tqsdk_ctpse'].get_system_info = lambda: {}
 class TqCTPSEUnsupportedPlatform(Exception): pass
 sys.modules['tqsdk_ctpse'].TqCTPSEUnsupportedPlatform = TqCTPSEUnsupportedPlatform
