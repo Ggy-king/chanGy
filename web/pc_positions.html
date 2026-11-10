@@ -548,6 +548,7 @@ function mountChart(i,sym,period){
   refreshChart(i);
   ctimer(i);
   slLoad(i,sym);   // 取回本品种通用止损线（与详情页同源，一条线跨级别/跨页面通用）
+  alertLoadSym(i,sym);   // 取回本品种未触发的预警线（与详情页共用 /api/alerts，两页互通）
 }
 function ctimer(i){CHARTS[i].timer=setInterval(()=>{if(!document.hidden)refreshChart(i);},40000+i*3500);}
 async function refreshChart(i){
@@ -845,14 +846,16 @@ function slTitleText(sym,stop){
 function _slSym(i){const s=_slotList[i];return s?(s.pos?s.pos.symbol:(s.watch?s.watch.symbol:null)):null;}
 function slCtx(ev,i){
   if(_slSettingSlot>=0){ev.preventDefault();ev.stopPropagation();slCancelSet(_slSettingSlot);return;}
+  if(_alertSettingSlot>=0){ev.preventDefault();ev.stopPropagation();alertCancelSet(_alertSettingSlot);return;}
   const sym=_slSym(i);if(!sym)return;
   ev.preventDefault();ev.stopPropagation();
   _slMenuSlot=i;
-  $('slMenuSym').textContent=cname(sym)+'（'+sym+'）· 止损线';
+  $('slMenuSym').textContent=cname(sym)+'（'+sym+'）· 止损 / 预警';
   $('slMenuDel').style.display=_slLines[sym]!=null?'block':'none';
+  alertRenderMenuList(sym);
   const m=$('slMenu');m.style.display='block';
   m.style.left=Math.min(ev.clientX,window.innerWidth-226)+'px';
-  m.style.top=Math.min(ev.clientY,window.innerHeight-170)+'px';
+  m.style.top=Math.min(ev.clientY,window.innerHeight-300)+'px';
 }
 function slHideMenu(){$('slMenu').style.display='none';_slMenuSlot=-1;}
 document.addEventListener('click',e=>{const m=$('slMenu');if(m&&m.style.display==='block'&&!m.contains(e.target))slHideMenu();});
@@ -880,6 +883,16 @@ function slStartSetKeyed(i){
   return true;
 }
 function slChartClick(ev,i){
+  if(_alertSettingSlot===i){   // 预警布线模式：点图落线，自动判断上/下穿
+    const ca=CHARTS[i];if(!ca||!ca.candle)return;
+    const boxa=document.getElementById('chart_'+i);if(!boxa)return;
+    const ra=boxa.getBoundingClientRect();
+    let pa=null;try{pa=ca.candle.coordinateToPrice(ev.clientY-ra.top);}catch(err){}
+    if(pa==null||isNaN(pa))return;
+    alertCancelSet(i);
+    alertPlace(i,ca.sym,snapSl(ca.sym,pa));
+    return;
+  }
   if(_slSettingSlot!==i)return;
   const c=CHARTS[i];if(!c||!c.candle)return;
   const box=document.getElementById('chart_'+i);if(!box)return;
@@ -924,7 +937,7 @@ function slRefreshLine(i){
 }
 /* 拖线（详情页同款：距线 15px 内按下 → 移动 → 松手吸附落盘） */
 document.addEventListener('mousedown',function(e){
-  if(_slSettingSlot>=0)return;
+  if(_slSettingSlot>=0||_alertSettingSlot>=0||_alertDragSlot>=0)return;
   for(const k in CHARTS){
     const c=CHARTS[k];if(!c||!c.slLine)continue;
     const box=document.getElementById('chart_'+k);if(!box)continue;
@@ -966,12 +979,149 @@ document.addEventListener('mouseup',function(){
     slSavePrice(c.sym,sp);
   }
 });
+/* 预警线拖动（与止损线同款交互；松手按现价重算上/下穿并 PATCH） */
+document.addEventListener('mousedown',function(e){
+  if(_slSettingSlot>=0||_slDragSlot>=0||_alertSettingSlot>=0||_alertDragSlot>=0)return;
+  for(const k in CHARTS){
+    const c=CHARTS[k];if(!c||!c.candle)continue;
+    const arr=_alertLines[k]||[];if(!arr.length)continue;
+    const box=document.getElementById('chart_'+k);if(!box)continue;
+    const rect=box.getBoundingClientRect();
+    if(e.clientX<rect.left||e.clientX>rect.right||e.clientY<rect.top||e.clientY>rect.bottom)continue;
+    const y=e.clientY-rect.top;
+    for(let idx=0;idx<arr.length;idx++){
+      let ly=null;try{ly=c.candle.priceToCoordinate(arr[idx].line.options().price);}catch(err){continue;}
+      if(ly==null||isNaN(ly))continue;
+      if(Math.abs(ly-y)<=15){
+        _alertDragSlot=+k;_alertDragIdx=idx;
+        let cur=null;try{cur=c.candle.coordinateToPrice(y);}catch(err){}
+        _alertDragOffset=(cur!=null&&!isNaN(cur))?(arr[idx].line.options().price-cur):0;
+        box.style.cursor='grabbing';
+        e.preventDefault();e.stopPropagation();
+        return;
+      }
+    }
+  }
+},true);
+document.addEventListener('mousemove',function(e){
+  if(_alertDragSlot<0||_alertDragIdx<0)return;
+  const c=CHARTS[_alertDragSlot];if(!c||!c.candle)return;
+  const a=(_alertLines[_alertDragSlot]||[])[_alertDragIdx];if(!a)return;
+  const box=document.getElementById('chart_'+_alertDragSlot);if(!box)return;
+  const rect=box.getBoundingClientRect();
+  const y=e.clientY-rect.top;
+  let p=null;try{p=c.candle.coordinateToPrice(y);}catch(err){return;}
+  if(p==null||isNaN(p))return;
+  const np=snapSl(c.sym,p+_alertDragOffset);
+  try{a.line.applyOptions({price:np,title:(a.dir==='up'?'上穿 ':'下穿 ')+np});}catch(err){}
+},true);
+document.addEventListener('mouseup',function(){
+  if(_alertDragSlot<0||_alertDragIdx<0)return;
+  const slot=_alertDragSlot,idx=_alertDragIdx;_alertDragSlot=-1;_alertDragIdx=-1;
+  const c=CHARTS[slot];const a=(_alertLines[slot]||[])[idx];if(!a||!c)return;
+  const box=document.getElementById('chart_'+slot);if(box)box.style.cursor='';
+  let raw=null;try{raw=a.line.options().price;}catch(err){return;}
+  if(raw==null)return;
+  const sp=snapSl(c.sym,raw);
+  const dir=alertCurDir(c.sym,sp);
+  try{a.line.applyOptions({price:sp,title:(dir==='up'?'上穿 ':'下穿 ')+sp});}catch(e){}
+  a.dir=dir;
+  fetch('/api/alerts/'+a.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({price:sp,direction:dir})}).catch(()=>{});
+},true);
+/* ---------- 模块右键菜单：价格预警（2026-11-02 照详情页功能移植） ----------
+   右键模块 → 添加价格预警 → 点击图面布线（按现价自动判断上/下穿）→ 拖线微调 → 菜单里逐条删除。
+   与详情页共用 /api/alerts（增删改查同源，两页互通）；线样式与详情页一致（白色虚线，上/下穿+价格标题）。
+   性能与止损线同款：布线/拖完/删除各一次请求，画线纯客户端，零轮询 */
+let _alertSettingSlot=-1,_alertDragSlot=-1,_alertDragIdx=-1,_alertDragOffset=0;
+const _alertLines={};   // 槽位号 → [{id,line,dir}]，随槽位图表重建而重建
+const ALERT_LINE_COLOR='#ffffff',ALERT_LINE_WIDTH=1,ALERT_LINE_STYLE=2;
+function alertCurDir(sym,price){
+  const cur=(QUOTES[sym]||{}).price;
+  if(cur==null||!isFinite(cur))return 'up';
+  return price>cur?'up':'down';
+}
+function alertLineOpts(sym,price,dir){
+  const sp=snapSl(sym,price);
+  return {price:sp,color:ALERT_LINE_COLOR,lineWidth:ALERT_LINE_WIDTH,lineStyle:ALERT_LINE_STYLE,
+    axisLabelVisible:true,title:(dir==='up'?'上穿 ':'下穿 ')+sp,draggable:true};
+}
+function alertCancelSet(i){
+  if(i==null||i<0)return;
+  _alertSettingSlot=-1;
+  const c=CHARTS[i];if(c&&c.chart){try{c.chart.applyOptions({crosshair:{mode:0}});}catch(e){}}
+  const box=document.getElementById('chart_'+i);if(box)box.style.cursor='';
+  const tag=$('vtag_'+i);if(tag&&tag.dataset.slhold){tag.innerHTML=tag.dataset.slhold;delete tag.dataset.slhold;}
+}
+function alertStartSet(){
+  const i=_slMenuSlot;slHideMenu();
+  if(i<0)return;const c=CHARTS[i];if(!c||!c.chart)return;
+  _alertSettingSlot=i;
+  c.chart.applyOptions({crosshair:{mode:2}});
+  const box=document.getElementById('chart_'+i);if(box)box.style.cursor='crosshair';
+  const tag=$('vtag_'+i);
+  if(tag){tag.dataset.slhold=tag.innerHTML;tag.innerHTML='<span style="color:#fff">点击图面布预警线（自动判断上/下穿）· 右键取消</span>';}
+}
+function alertAddLocal(slot,sym,id,price,dir){
+  const c=CHARTS[slot];if(!c||!c.candle||c.sym!==sym)return;
+  const line=c.candle.createPriceLine(alertLineOpts(sym,price,dir));
+  (_alertLines[slot]||(_alertLines[slot]=[])).push({id:id,line:line,dir:dir});
+}
+function alertPlace(slot,sym,price){
+  const dir=alertCurDir(sym,price);
+  fetch('/api/alerts?symbol='+encodeURIComponent(sym)+'&name='+encodeURIComponent(cname(sym))+'&price='+price+'&direction='+dir,{method:'POST'})
+    .then(r=>r.json()).then(j=>{
+      if(j.ok&&j.alert)alertAddLocal(slot,sym,j.alert.id,price,j.alert.direction||dir);
+    }).catch(()=>{});
+}
+function alertLoadSym(i,sym){
+  fetch('/api/alerts').then(r=>r.json()).then(j=>{
+    const arr=[];
+    for(const a of (j.alerts||[])){
+      if(a.symbol!==sym||a.triggered)continue;
+      const c=CHARTS[i];if(!c||!c.candle)break;
+      const dir=a.direction||alertCurDir(sym,a.price);
+      arr.push({id:a.id,line:c.candle.createPriceLine(alertLineOpts(sym,a.price,dir)),dir:dir});
+    }
+    _alertLines[i]=arr;   // 槽位图表重建后整体重画，天然去重
+  }).catch(()=>{});
+}
+function alertMenuItems(sym){
+  const seen={},out=[];
+  for(const k in CHARTS){
+    if(CHARTS[k].sym!==sym)continue;
+    for(const a of (_alertLines[k]||[]))if(!seen[a.id]){seen[a.id]=1;out.push(a);}
+  }
+  return out;
+}
+function alertRenderMenuList(sym){
+  const box=$('alertMenuList');if(!box)return;
+  const items=alertMenuItems(sym);
+  box.innerHTML=items.length?items.map(a=>{
+    let px='';try{px=a.line.options().price;}catch(e){}
+    return '<button class="btn" style="display:flex;width:100%;box-sizing:border-box;align-items:center;justify-content:space-between;margin-top:6px;" onclick="alertMenuDel('+a.id+')"><span>'+(a.dir==='up'?'上穿 ':'下穿 ')+px+'</span><span style="color:#ef5350;">✕</span></button>';
+  }).join(''):'<div class="mut" style="margin-top:6px;font-size:11px;">暂无预警线</div>';
+}
+function alertMenuDel(id){
+  const sym=_slSym(_slMenuSlot);if(!sym)return;
+  fetch('/api/alerts/'+id,{method:'DELETE'}).catch(()=>{});
+  for(const k in CHARTS){
+    const c=CHARTS[k];if(c.sym!==sym)continue;
+    const arr=_alertLines[k]||[];
+    for(let idx=arr.length-1;idx>=0;idx--){
+      if(arr[idx].id===id){try{c.candle.removePriceLine(arr[idx].line);}catch(e){}arr.splice(idx,1);}
+    }
+  }
+  alertRenderMenuList(sym);
+}
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&_alertSettingSlot>=0)alertCancelSet(_alertSettingSlot);});
 </script>
-<!-- 模块右键菜单：止损价（与详情页共用 /api/sl_line，按品种一条通用）。函数在主脚本块内定义，避免执行时序竞态 -->
+<!-- 模块右键菜单：止损价（/api/sl_line，按品种一条通用）+ 价格预警（/api/alerts，与详情页共用，可多条）。函数在主脚本块内定义，避免执行时序竞态 -->
 <div id="slMenu" style="display:none;position:fixed;z-index:10001;background:#1e222d;border:1px solid #2a2e39;border-radius:10px;padding:10px;min-width:200px;box-shadow:0 12px 40px rgba(0,0,0,.55);">
   <div class="mut" id="slMenuSym" style="margin-bottom:8px;font-size:12px;"></div>
   <div id="slMenuMain">
     <button class="btn" style="display:block;width:100%;box-sizing:border-box;text-align:center;" onclick="slStartSet()">🛡 一键止损线（按现价）</button>
+    <button class="btn" style="display:block;width:100%;box-sizing:border-box;margin-top:8px;text-align:center;" onclick="alertStartSet()">⚡ 添加价格预警（点图布线）</button>
+    <div id="alertMenuList"></div>
     <button class="btn" id="slMenuDel" style="display:none;width:100%;box-sizing:border-box;margin-top:8px;text-align:center;border-color:#ef5350;color:#ef5350;" onclick="slMenuDel()">✕ 删除止损线</button>
     <button class="btn" style="display:block;width:100%;box-sizing:border-box;margin-top:8px;text-align:center;" onclick="slHideMenu()">取消</button>
   </div>
