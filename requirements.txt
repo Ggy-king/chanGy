@@ -10,3 +10,7 @@ requests==2.34.2
 pandas==2.2.2
 numpy
 tqsdk
+scipy
+pyarrow
+bottleneck
+numexpr

@@ -14,11 +14,14 @@ sys.path.insert(0, _HERE)
 
 import akshare as ak
 import pandas as pd
+import numpy as np
+from scipy import stats as sps
 from chanlun import merge_klines, find_fenxing, build_bi
 
 # ============ 回测参数 ============
 MULTIPLIER = 10          # 甲醇合约乘数: 10吨/手, 每1个点(1元/吨) = 10元/手
 COST_PER_SIDE = 0.0      # 单边手续费(元/手), 0=暂不计; 实测可填 3~12
+BASE_CAPITAL = 100_000   # 回测初始资金假设(元/手)——Sharpe/年化/回撤均按此百分比口径, 可自行修改
 
 # ============ 1. 拉数据 ============
 print("拉取数据...")
@@ -103,6 +106,37 @@ for t in trades:
     cum += t['pnl']
     equity.append({'time': t['eq_time'], 'value': round(cum, 0)})
 
+# ============ 风险统计（scipy 真实统计口径） ============
+# 资金曲线按日聚合 -> 日收益率序列（BASE_CAPITAL 百分比口径） -> 年化/Sharpe/回撤/检验
+risk = {}
+if n >= 2 and equity:
+    eq_df = pd.DataFrame(equity)
+    eq_df['day'] = pd.to_datetime(eq_df['time'], unit='s').dt.date
+    daily_cap = eq_df.groupby('day')['value'].last() + BASE_CAPITAL   # 每日收盘总资金
+    daily_ret = daily_cap.pct_change().dropna()                        # 日收益率（首日无前值不计）
+
+    if len(daily_ret) >= 2 and daily_ret.std(ddof=1) > 0:
+        n_days = len(daily_cap)
+        ann_ret = (daily_cap.iloc[-1] / BASE_CAPITAL) ** (252 / n_days) - 1     # 几何年化
+        ann_vol = float(daily_ret.std(ddof=1)) * np.sqrt(252)
+        sharpe = float(daily_ret.mean()) / float(daily_ret.std(ddof=1)) * np.sqrt(252)
+        peak = daily_cap.cummax()
+        max_dd = float(((daily_cap - peak) / peak).min())                        # 最大回撤(负值)
+        calmar = (ann_ret / abs(max_dd)) if max_dd < 0 else float('inf')
+        t_stat, p_val = sps.ttest_1samp([t['pnl'] for t in trades], 0.0)         # 单笔盈亏均值是否显著≠0
+        risk = {
+            'ann_ret': round(ann_ret * 100, 1),      # %
+            'ann_vol': round(ann_vol * 100, 1),      # %
+            'sharpe': round(sharpe, 2),
+            'max_dd': round(max_dd * 100, 1),        # %
+            'calmar': round(calmar, 2) if calmar != float('inf') else '—',
+            'skew': round(float(sps.skew(daily_ret)), 2),
+            'kurt': round(float(sps.kurtosis(daily_ret)), 2),
+            't_stat': round(float(t_stat), 2),
+            'p_val': round(float(p_val), 4),
+            'days': int(n_days),
+        }
+
 summary = {
     'n': n, 'win_rate': round(win_rate * 100, 1),
     'payoff': round(payoff, 2) if payoff != float('inf') else '全胜',
@@ -114,8 +148,22 @@ summary = {
     'delay_cost': round(theo_net_pts - net_pts, 1),
     'avg_hold_bars': round(avg_hold, 1),
     'skipped': skipped_open,
+    'risk': risk,
 }
 max_loss_txt = f"最大单笔亏 {summary['max_loss']} 点" if losses else "无亏损单"
+
+# 风险统计展示（无数据时显示占位而不是报错）
+if risk:
+    ann_ret_v = f"{risk['ann_ret']}%"
+    ann_ret_c = 'pos' if risk['ann_ret'] >= 0 else 'neg'
+    sharpe_v, max_dd_v = risk['sharpe'], f"{risk['max_dd']}%"
+    risk_note = (f"年化 {risk['ann_ret']}%（年化波动 {risk['ann_vol']}%）· Sharpe {risk['sharpe']} · "
+                 f"最大回撤 {risk['max_dd']}% · Calmar {risk['calmar']} · 收益偏度 {risk['skew']} / 峰度 {risk['kurt']} · "
+                 f"单笔盈亏 t 检验 t={risk['t_stat']}, p={risk['p_val']}（近 {risk['days']} 个交易日口径，"
+                 f"初始资金假设 {BASE_CAPITAL} 元/手）")
+else:
+    ann_ret_v, ann_ret_c, sharpe_v, max_dd_v = '—', 'neu', '—', '—'
+    risk_note = "风险统计未启用：需 ≥2 笔交易且跨 ≥2 个交易日"
 print(f"交易次数: {n}  胜率: {summary['win_rate']}%  盈亏比: {summary['payoff']}  "
       f"净利: {summary['net_pts']}点 / {summary['net_pnl']:.0f}元/手  (理论极值 {summary['theo_net_pts']}点)")
 if skipped_open:
@@ -205,6 +253,9 @@ html = f'''<!DOCTYPE html>
     <div class="chip"><span class="k">盈利因子</span><span class="v neu">{summary['profit_factor']}</span></div>
     <div class="chip"><span class="k">净利(点)</span><span class="v {'pos' if net_pts>=0 else 'neg'}">{summary['net_pts']}</span></div>
     <div class="chip"><span class="k">净利(元/手)</span><span class="v {'pos' if net_pnl>=0 else 'neg'}">{int(summary['net_pnl'])}</span></div>
+    <div class="chip"><span class="k">年化收益</span><span class="v {ann_ret_c}">{ann_ret_v}</span></div>
+    <div class="chip"><span class="k">Sharpe</span><span class="v neu">{sharpe_v}</span></div>
+    <div class="chip"><span class="k">最大回撤</span><span class="v neg">{max_dd_v}</span></div>
     <button id="btn">交易明细 / 资金曲线</button>
   </div>
 </div>
@@ -229,7 +280,8 @@ html = f'''<!DOCTYPE html>
     每点 {MULTIPLIER} 元/手；当前未计手续费/滑点（COST_PER_SIDE={COST_PER_SIDE}）。
     平均持仓 {summary['avg_hold_bars']} 根15分K；最大单笔盈 {summary['max_win']} 点，{max_loss_txt}。<br>
     <b style="color:#ef5350">口径提示：</b>当前仅统计“已走完上涨笔”的理想底买顶卖，
-    未含“底分型后失败、应止损”的单子，故胜率偏高；加入止损、且每个底分型信号都进场后才是真实绩效。
+    未含“底分型后失败、应止损”的单子，故胜率偏高；加入止损、且每个底分型信号都进场后才是真实绩效。<br>
+    <b style="color:#f0b90b">风险统计（scipy）：</b>{risk_note}。
   </div>
 </div>
 
