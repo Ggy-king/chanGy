@@ -11,7 +11,7 @@
 - 后台每 15 分钟刷新全部品种，任一品种出现新分型买卖点即推送给所有在线设备
 运行：py server.py   （或双击 启动预警服务.bat）
 """
-import sys, os, time, asyncio, datetime as dt, socket, json, base64, threading
+import sys, os, time, asyncio, datetime as dt, socket, json, base64, threading, re
 import requests
 from collections import deque
 from contextlib import asynccontextmanager
@@ -113,6 +113,7 @@ sys.stderr = _TeeLog(sys.stderr)
 from chanlun.pattern import fingerprint as pattern_fingerprint
 from chanlun.zs import zs_trend as _zs_trend
 import chanlun.pattern as _pattern_mod
+import chanlun.qsq as _qsq
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
 PORT = 8000
@@ -227,7 +228,9 @@ async def periodic():
 
 
 async def alert_loop():
-    await asyncio.sleep(30)
+    # 5 秒一轮（2026-11-04 甲醇 3402 下穿不响事故：30 秒点采样错过"瞬时打穿又收回"，
+    # K线 low 已到 3401 而两轮采样点都在线上方。新浪批量一次请求 ~100ms，5s 无压力）
+    await asyncio.sleep(5)
     while True:
         try:
             # 价格预警不归监控总开关管（用户定稿 2026-10-12）：看盘配套，永远跑
@@ -252,10 +255,129 @@ async def alert_loop():
                        'name': a['name'], 'price': a['price'], 'direction': a['direction'],
                        'triggered_price': a['triggered_price'], 'triggered_at': a['triggered_at'],
                        'ts': time.time()}
+                # remember 进 history：手机端 WS 断线（切后台被冻结）期间触发的预警，
+                # 重连后从 init.history 补弹（2026-11-04，与 pattern_alert 同权）
+                manager.remember(msg)
                 await manager.broadcast(msg)
         except Exception as e:
             print('[alert_loop] error:', e)
-        await asyncio.sleep(30)
+        await asyncio.sleep(5)
+
+
+# ==================== 留言自然语言设预警线（2026-11-04 手机端诉求：留言直说"甲醇4648"即设线，
+# 不用说上穿下穿——按现价自动判；"取消甲醇"删线。解析失败/成功都回执 chat） ====================
+
+_ALERT_PRICE_RE = re.compile(r'(\d{3,6}(?:\.\d+)?)(?!\s*(?:分钟|分|秒|小时|个点|点|%|手))')
+_CANCEL_RE = re.compile(r'取消|撤销|删除|删掉|撤掉')
+_DIR_UP_RE = re.compile(r'上穿|涨穿|涨到|突破|涨破|上破')
+_DIR_DOWN_RE = re.compile(r'下穿|跌穿|跌到|跌破|下破')
+
+
+def _parse_alert_text(text):
+    """留言 → (symbol, name, price) 或 None（2026-11-04 单测 12 用例定稿）。
+    品种锚点：中文名任意位置（"甲醇15分钟级别4648"）/ 合约代码（"MA3402"字母前缀+价格、
+    "MA2701"完整合约号则价格取其后）；价格=锚点后第一个 ≥3 位数字，排除"15分钟/34个点/2%"类。"""
+    if not text:
+        return None
+    low = text.lower()
+    best = None          # (pos, contract, price)：取出现最早的一个锚点
+    for c in config.CONTRACTS:
+        got = None
+        i = low.find(c['name'].lower())
+        if i >= 0:
+            pm = _ALERT_PRICE_RE.search(text, i + len(c['name']))
+            if pm:
+                got = (i, float(pm.group(1)))
+        pfx = re.match(r'[A-Za-z]+', c['symbol']).group(0)
+        num = re.search(r'\d+', c['symbol']).group(0)
+        for m in re.finditer(re.escape(pfx) + r'\s?(\d{3,6})', text, re.IGNORECASE):
+            n = m.group(1)
+            if n == num:                          # 完整合约号"MA2701"：真正的价格在其后
+                if got is None:
+                    pm = _ALERT_PRICE_RE.search(text, m.end())
+                    if pm:
+                        got = (m.start(), float(pm.group(1)))
+            elif got is None:                     # "MA3402"/"ma 3402"：数字即价格
+                got = (m.start(), float(n))
+        if got and (best is None or got[0] < best[0]):
+            best = (got[0], c, got[1])
+    if not best or not (100 <= best[2] <= 1000000):
+        return None
+    return best[1]['symbol'], best[1]['name'], best[2]
+
+
+def _parse_alert_symbol(text):
+    """留言 → (symbol, name)：只要品种不要价格（"取消甲醇"删线路径用）。"""
+    if not text:
+        return None
+    low = text.lower()
+    for c in config.CONTRACTS:
+        if c['name'].lower() in low:
+            return c['symbol'], c['name']
+    for c in config.CONTRACTS:
+        pfx = re.escape(re.match(r'[A-Za-z]+', c['symbol']).group(0))
+        if re.search(pfx + r'\s?\d{3,4}', low):
+            return c['symbol'], c['name']
+    return None
+
+
+async def _alert_reply(text):
+    """电脑端口吻回执（进 history，手机断线重连也看得到）。"""
+    msg = {'type': 'chat', 'text': text, 'from': 'pc', 'ts': time.time()}
+    manager.remember(msg)
+    await manager.broadcast(msg)
+
+
+async def _chat_alert_hook(data):
+    try:
+        text = str(data.get('text') or '').strip()
+        if not text:
+            return
+        hit = _parse_alert_text(text)
+        if _CANCEL_RE.search(text):
+            sym = _parse_alert_symbol(text)              # 取消只要品种，不用价格
+            if not sym:
+                return
+            sym, name = sym
+            n = 0
+            for a in alert_manager.get_alerts():
+                if a['symbol'] == sym and not a['triggered']:
+                    alert_manager.remove_alert(a['id'])
+                    n += 1
+            await _alert_reply(f"🗑 已取消 {name} 的 {n} 条未触发预警线")
+            return
+        if not hit:
+            if re.search(r'预警|提醒|报警|设线|警戒线', text):
+                await _alert_reply("⚠️ 没认出预警线。请说「品种名+价格」，如「甲醇3402」；方向可用实时价自动判，也可明说「甲醇上穿3402」")
+            return
+        sym, name, price = hit
+        direction = None
+        if _DIR_UP_RE.search(text):
+            direction = 'up'
+        elif _DIR_DOWN_RE.search(text):
+            direction = 'down'
+        loop = asyncio.get_event_loop()
+        if direction is None:                            # 方向没明说 → 现价自动判（用户定稿 2026-11-04）
+            raw = await loop.run_in_executor(None, engine.get_quotes, [sym])
+            q = ((raw or {}).get('quotes') or {}).get(sym) or {}
+            cur = q.get('price')
+            if not cur:
+                await _alert_reply(f"⚠️ {name} 现价获取失败（可能不在交易时段），预警线未设。可明说方向再试：「{name}上穿{price:g}」")
+                return
+            direction = 'up' if price > cur else ('down' if price < cur else None)
+            if direction is None:
+                await _alert_reply(f"⚠️ {name} {price:g} 与现价相同，分不出上穿下穿，请明说「{name}上穿{price:g}」")
+                return
+        for a in alert_manager.get_active_alerts():      # 同价同向去重
+            if a['symbol'] == sym and abs(a['price'] - price) < 1e-9 and a['direction'] == direction:
+                await _alert_reply(f"ℹ️ {name} {price:g} 的{'上穿' if direction == 'up' else '下穿'}线已存在，不重复设")
+                return
+        alert_manager.add_alert(sym, name, price, direction)
+        await _alert_reply(f"✅ 已设 {name} {price:g} 预警线：{'上穿' if direction == 'up' else '下穿'}时报警"
+                           f"{'（按现价自动判）' if not (_DIR_UP_RE.search(text) or _DIR_DOWN_RE.search(text)) else ''}。"
+                           f"说「取消{name}」可删")
+    except Exception as e:
+        print('[chat_alert] 解析异常:', e)
 
 
 # ==================== 背驰-V反 形态预警系统（docs/背驰反转形态预警系统设计.md §5/§9） ====================
@@ -265,6 +387,7 @@ _PATTERN_LABEL = {'30': '30秒', '1': '1分', '3': '3分', '5': '5分', '15': '1
 _CELL_RANK = {'conf_a': 5, 'trig_b': 4, 'cand_a': 3, 'cand_b': 2, 'watch_a': 1, 'gone_b': 0, 'idle': 0}
 _pattern_cells = {}      # (symbol, period) -> cell dict（监控页全量状态）
 _pattern_reported = {}   # (symbol, period) -> set(结构指纹)，进程内去重
+_qsq_cards = {}          # 区间套金卡（2026-11-04）：(symbol, side) -> card dict，只存 live/fired
 # —— 顺大逆小影子打标（2026-10-23 对齐定稿）——
 # _lv_trend: (symbol, period) -> 'up'/'down'，各周期扫描时由 engine.zs_trend 算好缓存。
 # 映射单一父级别链：3→15、5→30m、15→60、30m→60；元组首位=打标用主参考，其余只进审计快照。
@@ -547,6 +670,8 @@ def _pattern_save_snapshot():
             'reported': {f'{s}|{p}': sorted(rep) for (s, p), rep in _pattern_reported.items()},
             'reported_dates': {f'{s}|{p}': dict(getattr(rep, '_dates', {}))
                                for (s, p), rep in _pattern_reported.items()},
+            # 区间套金卡活卡（2026-11-04，只增字段）：跨重启恢复等待中的锚定卡
+            'qsq': {f'{s}|{d}': c for (s, d), c in _qsq_cards.items()},
         }
         tmp = _PATTERN_SNAPSHOT_FILE + '.tmp'
         with open(tmp, 'w', encoding='utf-8') as f:
@@ -585,6 +710,10 @@ def _pattern_load_snapshot():
             rep = _DatedSet(fps)
             rep._dates = dict((data.get('reported_dates') or {}).get(k, {}))
             _pattern_reported[(s, p)] = rep
+        for k, c in (data.get('qsq') or {}).items():   # 区间套金卡活卡恢复（只恢复 live）
+            s, _, d = k.rpartition('|')
+            if s and s in _ok_syms and isinstance(c, dict) and c.get('state') == 'live':
+                _qsq_cards[(s, d)] = c
         if _pattern_events:
             print(f'[pattern] 已恢复事件快照：{len(_pattern_events)} 条事件'
                   f'（{data.get("saved_at")} 保存），去重指纹已同步恢复')
@@ -648,6 +777,12 @@ async def _pattern_scan_once(push, periods=None):
                     _lv_trend[(sym, period)] = {'v': snap['zs_trend'], 'ts': time.time()}
                 await _apply_pattern(sym, name, period, snap['result'], push,
                                      snap.get('bi_tail'))
+                # 区间套金卡（2026-11-04）：3分快照就绪后对本品种活卡做锚定重放
+                if period == '3':
+                    try:
+                        await _qsq_scan_sym(sym, name, snap, push)
+                    except Exception as e:
+                        print('[qsq] scan', sym, 'error:', e)
             except Exception as e:
                 print(f'[pattern] apply {sym} {period} error:', e)
     _fade_pattern_cells()
@@ -862,6 +997,11 @@ async def _apply_pattern(sym, name, period, result, push, bi_tail=None):
             # 顺大逆小影子打标（2026-10-23）：ptag=逆才给字；parent_* 只进审计/快照，v2 统计用
             msg['ptag'] = _parent_tag(sym, period, msg['side'])
             msg.update(_parent_dirs(sym, period))
+            # 区间套金卡（2026-11-04 定稿）：15分 A类确认/B类触发 = 3分锚定前提。
+            # 前提笔 = 本事件回调笔（bi_tail 里端点价=事件价的反向笔），其起点=锚点。
+            if period == '15' and bi_tail and (
+                    'VREV_CONF' in ev['pattern'] or 'TRIG' in ev['pattern']):
+                _qsq_on_premise(sym, name, ev, bi_tail)
             if push:
                 await _upsert_event_card(msg)
             else:
@@ -906,6 +1046,117 @@ async def _apply_pattern(sym, name, period, result, push, bi_tail=None):
         return                                    # 无变化不广播
     _pattern_cells[key] = cell
     await manager.broadcast({'type': 'pattern_state', 'cell': cell, 'ts': time.time()})
+
+
+# ==================== 区间套金卡（2026-11-04 用户定稿） ====================
+# 15分 A类确认/B类触发 → 3分从回调笔起点锚定重算（起始笔过滤），等 3分同向 A类确认。
+# 纯逻辑在 chanlun/qsq.py（历史验证 validate_qjt.py v3：374 锚点报卡 28 张，MFE/MAE≈2.3:1）。
+
+def _qsq_on_premise(sym, name, ev, bi_tail):
+    """15分确认/触发事件 → 创建/替换该 (sym, side) 的金卡前提。
+    前提笔 = bi_tail 中端点价=事件价的反向笔（确认=回调笔），其起点=3分锚点。"""
+    pat = ev['pattern']
+    side = 'long' if ('LONG' in pat or 'BUY' in pat) else 'short'
+    opp_dir = 'down' if side == 'long' else 'up'
+    ep = float(ev['price'])
+    cb = next((b for b in reversed(bi_tail or [])
+               if b.get('d') == opp_dir and b.get('ep') is not None
+               and abs(float(b['ep']) - ep) < 1e-6), None)
+    if cb is None:
+        return
+    kind_anchor = 'conf' if 'VREV_CONF' in pat else 'trig_b'
+    key = (sym, side)
+    fp = f'{sym}|15|{ev["fingerprint"]}'
+    old = _qsq_cards.get(key)
+    if old and old.get('premise_fp') == fp:
+        return                          # 同一前提（延续重评）不重复建卡
+    _qsq_cards[key] = {
+        'sym': sym, 'name': name, 'side': side, 'kind_anchor': kind_anchor,
+        'premise_fp': fp, 'premise_pattern': pat,
+        'premise_price': ep, 'premise_time': str(ev.get('time') or ''),
+        'anchor_t': str(cb.get('st') or ''), 'anchor_p': float(cb.get('sp')),
+        'kill_p': float(ev['p3']) if kind_anchor == 'conf' else float(ev['p1']),
+        'state': 'live', 'cand_pushed': False, 'created_ts': time.time(),
+    }
+    try:
+        _pattern_save_snapshot()
+    except Exception:
+        pass
+    print(f'[qsq] 金卡前提 {sym} {side} {kind_anchor} 锚={_qsq_cards[key]["anchor_p"]:g} '
+          f'@{_qsq_cards[key]["anchor_t"][:16]}')
+
+
+def _qsq_msg(card, pattern, price, time_str, brief, fingerprint):
+    """金卡事件消息（kind='Q' 金色，前端 popup_cards/pc_matrix 已支持）。"""
+    try:
+        _trig = str(dt.datetime.fromisoformat(str(time_str)) + dt.timedelta(seconds=180))
+    except Exception:
+        _trig = str(time_str)
+    return {'type': 'pattern_alert', 'pattern': pattern, 'kind': 'Q',
+            'side': card['side'], 'symbol': card['sym'], 'name': card['name'],
+            'period': '3', 'price': price, 'time': time_str, 'trigger_time': _trig,
+            'time_str': _fmt_time_str(time_str),
+            'anchor_p': card['anchor_p'], 'anchor_t': card['anchor_t'],
+            'premise': card.get('premise_pattern'),
+            'brief': brief, 'text': f"{card['name']} {brief}",
+            'fingerprint': fingerprint, 'ts': time.time(),
+            'first_time': time_str, 'bi_formed': False}
+
+
+async def _qsq_push(msg, push):
+    """金卡推送：live 走 _upsert_event_card（弹卡+响铃管线复用）；基线期静默入快照。"""
+    if push:
+        await _upsert_event_card(msg)
+        return
+    dup = next((m for m in _pattern_events
+                if m.get('fingerprint') == msg['fingerprint']), None)
+    if dup is not None:
+        if dup.get('time') != msg.get('time') or dup.get('price') != msg.get('price'):
+            msg['first_time'] = dup.get('first_time') or dup.get('time')
+            msg['type'] = 'pattern_alert_update'
+            for _i, _m in enumerate(_pattern_events):
+                if _m is dup:
+                    _pattern_events[_i] = msg
+                    break
+            manager.remember_replace(msg)
+    else:
+        _snapshot_msgs.append(msg)
+
+
+async def _qsq_scan_sym(sym, name, snap, push):
+    """3分扫描轮：对该品种所有活卡做锚定重放，推候选/确认，落死卡。"""
+    cards = [(k, c) for k, c in _qsq_cards.items() if k[0] == sym and c.get('state') == 'live']
+    if not cards:
+        return
+    bis3, merged3, raw3 = snap.get('bis'), snap.get('merged'), snap.get('raw')
+    if bis3 is None or merged3 is None or raw3 is None:
+        return
+    for key, card in cards:
+        r = _qsq.eval_card(card, raw3, merged3, bis3)
+        outcome = r.get('outcome')
+        if outcome == 'confirm':
+            card['cand_pushed'] = True     # 确认同轮到位时不再单推候选
+            card['state'] = 'fired'
+            await _qsq_push(_qsq_msg(
+                card, '金卡确认', r.get('fire_price'), r.get('fire_time'),
+                f"区间套确认 · 3分A类确认（第{r.get('fire_bi_n')}笔）· 锚 {card['anchor_p']:g}（15分"
+                f"{'A类确认' if card['kind_anchor'] == 'conf' else 'B类触发'}后）",
+                f"{sym}|q3|conf|{card['premise_fp']}"), push)
+            _qsq_cards.pop(key, None)
+        elif outcome in ('dead_break', 'dead_kill', 'expired'):
+            if card.get('cand_pushed'):
+                await _qsq_push(_qsq_msg(
+                    card, '金卡作废', card.get('premise_price'),
+                    r.get('fire_time') or card.get('premise_time'),
+                    f"金卡作废 · {r.get('reason') or ''}",
+                    f"{sym}|q3|cand|{card['premise_fp']}"), push)
+            _qsq_cards.pop(key, None)
+        elif r.get('cand_bi_n') and not card.get('cand_pushed'):
+            card['cand_pushed'] = True
+            await _qsq_push(_qsq_msg(
+                card, '金卡候选', card.get('premise_price'), r.get('cand_time'),
+                f"区间套候选 · 3分走出中枢（第{r['cand_bi_n']}笔）· 等 3分A类确认",
+                f"{sym}|q3|cand|{card['premise_fp']}"), push)
 
 
 def _fade_pattern_cells():
@@ -3328,6 +3579,8 @@ async def ws_endpoint(ws: WebSocket):
                 msg['ts'] = time.time()
                 manager.remember(msg)
                 await manager.broadcast(msg, exclude=ws)
+                if t == 'chat':
+                    asyncio.create_task(_chat_alert_hook(msg))   # 留言直说"甲醇3402"即设线
             elif t == 'refresh_request':
                 asyncio.create_task(do_refresh(broadcast=True))
             elif t == 'get_overview':

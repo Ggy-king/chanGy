@@ -3,6 +3,10 @@
 
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- 原生预警通知（2026-11-04）：App 切后台 WS 被冻结，通知由前台服务兜底弹出 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
 
     <application
         android:networkSecurityConfig="@xml/network_security_config"
@@ -21,6 +25,11 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".AlertService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"/>
     </application>
 
 </manifest>
