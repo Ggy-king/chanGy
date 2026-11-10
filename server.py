@@ -3228,6 +3228,7 @@ def _agent_weekly_pack(week: str = ''):
             'compliance': {k: rep[k] for k in ('compliance', 'total', 'violation', 'certain',
                                                'misjudge', 'suspect', 'info', 'vio_syms', 'vio_hours')} if rep else None,
             'trade_flow': agent_tools.redact_trades(raw_trades),
+            'audit_items': agent_tools.redact_audit_items(d['items']),
             'answers': answers or None,
             'actions': saved.get('actions') or None,
             'last_week_coach': prev_agent,
@@ -3255,7 +3256,9 @@ async def api_agent_weekly(request: Request):
     with _REVIEW_LOCK:
         rev = _reviews_load()
         rec = rev.setdefault('weekly', {}).setdefault(d['week'], {})
-        rec['agent'] = {'text': res['text'], 'model': res['model'], 'created': res['created']}
+        rec['agent'] = {'text': res['text'], 'model': res['model'], 'created': res['created'],
+                        'citations': res.get('citations') or [], 'tools_used': res.get('tools_used') or [],
+                        'rounds': res.get('rounds') or 0}
         _reviews_save(rev)
     print(f"[agent] 周分析完成 {d['week']}（{res['model']}，{len(res['text'])} 字）")
     return JSONResponse({'ok': True, 'week': d['week'], 'agent': rec['agent']})

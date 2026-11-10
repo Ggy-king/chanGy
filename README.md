@@ -124,10 +124,10 @@ chanGy
 │   ├── zs.py                 # 中枢：三笔重叠成枢、扩展/合并/首笔定位口径、漂移检测
 │   └── pattern.py            # 买卖点：A类趋势反转（三档背驰口径）、B类三买三卖、影子打标
 ├── agent/                    # AI 复盘
-│   ├── weekly_analyst.py     # 周复盘分析师：聚合信号流与交易流水产出结构化分析
-│   ├── llm.py                # LLM 接入层：调用、重试、成本控制
-│   ├── tools.py              # Agent 工具链：数据查询与统计能力以工具形式暴露
-│   └── prompts.py            # 提示词资产：分析口径约束显式化
+│   ├── weekly_analyst.py     # 周复盘分析师：function calling 编排（研究员→教练两阶段）、证据链提取
+│   ├── llm.py                # LLM 接入层：多轮工具循环、429/5xx 指数退避、深度思考 token 预算兜底
+│   ├── tools.py              # Agent 工具链：数据查询/分组统计/t 检验以 function schema 暴露，证据编号 + 脱敏收口
+│   └── prompts.py            # 提示词资产：研究员/教练两阶段口径约束，论断强制携带证据编号
 ├── web/                      # PC 端页面群（原生 JS + lightweight-charts，零框架）
 │   ├── pc_overview.html      # 列表页
 │   ├── pc_matrix.html        # 形态监控矩阵
@@ -143,7 +143,7 @@ chanGy
 │   ├── popup_cards.js        # 预警弹卡组件（跨浏览器去重/历史补弹）
 │   ├── posbi_cards.js        # 持仓确认笔强制提醒组件
 │   └── struct_zone.js        # 中枢结构浮层组件
-├── tests/                    # Playwright E2E（7 套件，17+ 场景）
+├── tests/                    # Playwright E2E + 单元测试（agent 工具链注册表/统计/证据编号断言）
 ├── mobile-app/               # Android WebView 离线壳（源码入库，构建产物不入库）
 ├── docs/                     # 设计文档与界面截图
 └── data/                     # 运行时状态（全部自动重建，不入库；仅含品种配置与示例模板）
@@ -270,7 +270,7 @@ A类信号为趋势反转结构：下跌走势中出现底分型确认后构成�
 
 - **三级自动审计**（certain / suspect / info）：信号流 × 交易流水做数据 diff，机器先筛异常，人只做主观确认
 - **体系疑问清单**：逐条追加结论 / 解决 / 否决，长期沉淀
-- **AI 周复盘**：`agent/` 将一周信号流与交易流水聚合后交由 LLM 分析，提示词显式约束口径（只陈述数据支持的事实），支持 ZHIPU_API_KEY 等接入
+- **AI 周复盘**：`agent/` 以 function calling 工具循环驱动 LLM 自主检索数据（交易流水 / 分组统计含 t 检验显著性 / 三级审计 / 体系疑问清单），先做研究员再当教练产出建议；每条论断携带 `[T01]` / `[A01]` 式证据编号，分析结果连同引用的工具调用轨迹一并落库，可回链核验。支持 ZHIPU_API_KEY 等接入
 
 ## 🔧 核心 API 参考
 
