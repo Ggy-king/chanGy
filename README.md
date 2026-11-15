@@ -2,7 +2,7 @@
 
 # chanGy
 
-**缠论期货看盘与预警系统 · 形态学引擎 / 实时行情系统工程 / 交易纪律与复盘闭环(仅开源部分代码)**
+**缠论期货看盘与预警系统 · agent全链路开发(仅开源部分代码)**
 
 `Python 3.12` `FastAPI` `WebSocket` `天勤 TqSdk` `akshare` `lightweight-charts` `Playwright` `Android 离线壳`
 
