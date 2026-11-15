@@ -15,8 +15,50 @@
   Q01..  体系疑问清单（open 状态）
   D01..  交易日（周一~周五）
   U1     用户输入（三问回答 / 行动项 / 上周教练报告，统一一条）
+  K01..  知识库检索（缠论原文，出处=课号）
 """
 import json
+
+
+def kb_search(query: str, top_k: int = 3):
+    """知识库检索（RAG）：缠论原文，带课号出处。rag/ 层不可用时静默降级返回 None。"""
+    try:
+        from rag.retrieve import search
+        return search(query, top_k=top_k)
+    except Exception:
+        return None
+
+
+KB_SCHEMA = {'type': 'function', 'function': {
+    'name': 'kb_search',
+    'description': '查询缠论知识库（双层：缠论108课原文 + 本系统私有口径——体系疑问结论/周复盘行动/术语表，'
+                   '每条带证据编号[Kxx]与出处）。涉及缠论概念定义或"本系统怎么判定/怎么做"时调用；'
+                   '引用原文标注课号，引用私有条目标注类别与日期；无相关内容时如实说明。',
+    'parameters': {'type': 'object', 'properties': {
+        'query': {'type': 'string', 'description': '检索问题，如「三类买卖点的定义」「盘整背驰与趋势背驰的区别」「体系里XX怎么判定」'},
+        'top_k': {'type': 'integer', 'description': '返回条数上限，默认 3，最大 5'}},
+        'required': ['query']}}}
+
+
+def _kb_lookup(args):
+    """kb_search 工具执行器：检索 → 带证据编号[Kxx]的模型可读结果。"""
+    query = (args.get('query') or '').strip()
+    if not query:
+        return {'error': 'query 不能为空'}
+    top_k = min(int(args.get('top_k') or 3), 5)
+    hits = kb_search(query, top_k=top_k)
+    if hits is None:
+        return {'error': '知识库不可用（索引未构建，先跑 python -m rag.ingest embed）'}
+    rows = [{'eid': f"K{i + 1:02d}", 'source': h['source'], 'title': h['title'],
+             'score': h['score'], 'snippet': h['snippet'][:400]}
+            for i, h in enumerate(hits)]
+    return {'matched': len(rows), 'rows': rows, 'text': '\n'.join(
+        f"[{r['eid']}]（{r['source']}）{r['snippet'][:200]}" for r in rows) or '（知识库无相关内容）'}
+
+
+def kb_qa_registry():
+    """留言知识问答的最小注册表：只有 kb_search（模型可多轮换词检索）。"""
+    return [KB_SCHEMA], {'kb_search': _kb_lookup}
 
 
 # ============ 脱敏（server 直接调用，口径收口） ============
@@ -156,9 +198,13 @@ def build_registry(pack):
                 if len(coach) > 1200 else (coach or None),
                 'eid': 'U1'}
 
+    def kb_lookup(args):
+        return _kb_lookup(args)
+
     executors = {'get_week_overview': overview, 'query_trades': query_trades,
                  'calc_stats': calc_stats, 'query_audit': query_audit,
-                 'query_questions': query_questions, 'get_user_notes': get_user_notes}
+                 'query_questions': query_questions, 'get_user_notes': get_user_notes,
+                 'kb_search': kb_lookup}
 
     schemas = [
         {'type': 'function', 'function': {
@@ -199,5 +245,6 @@ def build_registry(pack):
             'name': 'get_user_notes',
             'description': '读取他本人写的字：本周三问回答、行动项、上周教练报告。',
             'parameters': {'type': 'object', 'properties': {}, 'required': []}}},
+        KB_SCHEMA,
     ]
     return schemas, executors

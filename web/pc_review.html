@@ -325,7 +325,7 @@ async function renderWeekly(){
       <div class="mut" style="margin-top:6px;">${ag.model} · 生成于 ${ag.created} · 重跑会覆盖</div>`
       :'<div class="mut" style="margin-bottom:8px;">还没有分析记录。先把上面的审计项裁决完、问答写完——喂得越全，它说得越准。</div>'}
     <div style="margin-top:8px;"><button class="btn" id="agentBtn" onclick="runAgent()">${ag?'🔄 重新分析':'✨ 生成本周 AI 分析'}</button>
-      <span class="mut" style="margin-left:8px;">约 30-120 秒（深度思考模型较慢）· 首次使用需在 secret.py 配置 ZHIPU_API_KEY</span></div>
+      <span class="mut" style="margin-left:8px;">约 30-120 秒（深度思考模型较慢）· 首次使用需在 secret.py 配置 LLM_API_URL / LLM_MODEL / LLM_API_KEY</span></div>
   </div>`;
   v.innerHTML=`${repHtml}${agentHtml}
   <div class="sec">
