@@ -328,6 +328,41 @@ async def _alert_reply(text):
     await manager.broadcast(msg)
 
 
+_KB_QA_RE = re.compile(
+    r'买卖点|买点|卖点|背驰|背弛|中枢|级别|区间套|分型|线段|走势|趋势|盘整|金卡|'
+    r'一类|二类|三类|一买|二买|三买|一卖|二卖|三卖|'
+    r'什么是|是什么|啥意思|什么意思|怎么判|如何判|怎么用|什么叫|区别|定义|解释')
+
+
+def _kb_qa_work(text, llm, tools):
+    """知识库问答（同步执行）：kb_search 多轮检索 → 带课号出处的回答。"""
+    schemas, executors = tools.kb_qa_registry()
+    system = ('你是缠论知识助理。回答前先调 kb_search 检索知识库（可换词多检索几次）。'
+              '知识库双层：缠论 108 课原文（出处=第几课）+ 本系统私有口径（体系疑问结论/周复盘行动/术语表，'
+              '出处=类别与日期）。只依据检索到的片段作答并标注出处；'
+              '检索不到相关内容时如实说"知识库没有相关内容"，不许凭印象编造。'
+              '回答控制在 300 字以内，直接给结论，不要客套。')
+    res = llm.chat_tools(system, [{'role': 'user', 'content': text}],
+                         schemas, lambda n, a: executors[n](a))
+    return res['text']
+
+
+async def _chat_kb_qa(text):
+    """留言知识问答入口：不是设线指令、且含缠论概念词 → 检索+带出处回答（设计文档 §9 验证入口）。"""
+    if not (agent_llm and agent_tools):
+        return
+    llm, tools = agent_llm, agent_tools     # 局部别名：Pylance 不做跨语句收窄
+    try:
+        if not llm.get_key():
+            return
+        await _alert_reply('📚 查知识库中…')
+        ans = await asyncio.get_event_loop().run_in_executor(
+            None, _kb_qa_work, text, llm, tools)
+        await _alert_reply('📚 ' + ans[:900])
+    except Exception as e:
+        await _alert_reply(f'📚 知识库问答失败：{e}')
+
+
 async def _chat_alert_hook(data):
     try:
         text = str(data.get('text') or '').strip()
@@ -349,6 +384,8 @@ async def _chat_alert_hook(data):
         if not hit:
             if re.search(r'预警|提醒|报警|设线|警戒线', text):
                 await _alert_reply("⚠️ 没认出预警线。请说「品种名+价格」，如「甲醇3402」；方向可用实时价自动判，也可明说「甲醇上穿3402」")
+            elif _KB_QA_RE.search(text):
+                await _chat_kb_qa(text)          # 留言知识问答（RAG 验证入口，2026-11-15）
             return
         sym, name, price = hit
         direction = None
@@ -3245,8 +3282,8 @@ async def api_agent_weekly(request: Request):
     if not d['trades'] and not d['items']:
         return JSONResponse({'error': '本周无交易与审计数据，无可分析'}, status_code=400)
     if not agent_llm.get_key():
-        return JSONResponse({'error': '未配置智谱 API key：bigmodel.cn 免费领取后，'
-                                      '在 secret.py 加一行  ZHIPU_API_KEY = "你的key"（改完需重启）'}, status_code=400)
+        return JSONResponse({'error': 'LLM 未配置：在 secret.py 配置 LLM_API_URL / LLM_MODEL / LLM_API_KEY'
+                                      '（任何 OpenAI 兼容服务均可：智谱 / DeepSeek / OpenAI / 本地 Ollama）'}, status_code=400)
     pack = _agent_weekly_pack(d['week'])
     wa = agent_weekly                       # 局部别名：闭包/lambda 内 Pylance 不做跨变量收窄
     try:

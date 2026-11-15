@@ -1,57 +1,71 @@
-"""模型接入层（Agent 唯一的联网出口）。当前：智谱 GLM-4.7-Flash（免费旗舰，国内直连）。
-换供应商（DeepSeek / 本地 Ollama）只改这个文件，上层模块不动。"""
+"""模型接入层（Agent 唯一的联网出口）——供应商中立，OpenAI 兼容协议。
+
+设计：URL / 模型名 / key 全部走 secret.py 配置，代码里不绑定任何供应商；
+换供应商（DeepSeek / OpenAI / 本地 Ollama 等）只改 secret.py 三行，上层模块不动。
+
+secret.py 配置项：
+    LLM_API_URL   chat/completions 完整地址
+    LLM_MODEL     模型名
+    LLM_API_KEY   API key
+
+兼容旧配置（其他机器 secret.py 还是旧字段名时仍可用，新机器请用上面三个）：
+    ZHIPU_API_KEY / ZHIPU_MODEL
+"""
 import json
 import time
 import requests
 
-API_URL = 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
-MODEL = 'glm-4.7-flash'   # 2026-10 查证：智谱免费旗舰（30B 级）；4.5-Flash 已公告下线迁移至此
-TIMEOUT = 150   # glm-4.7 深度思考模型跑大数据包很慢（实测 >60s），放宽到 150s
+TIMEOUT = 150   # 深度思考模型跑大数据包很慢（实测 >60s），放宽到 150s
+
+
+def _cfg():
+    """读取配置：新字段优先，旧字段名兜底（多机同步过渡期）。"""
+    try:
+        import secret
+    except Exception:
+        return None
+    c = {
+        'url': getattr(secret, 'LLM_API_URL', '') or None,
+        'model': getattr(secret, 'LLM_MODEL', '') or None,
+        'key': getattr(secret, 'LLM_API_KEY', '') or None,
+        # 旧字段名兜底：key 在则推断为默认 OpenAI 兼容端点（多机过渡期，公开仓库版会移除）
+        'old_key': getattr(secret, 'ZHIPU_API_KEY', '') or None,
+        'old_model': getattr(secret, 'ZHIPU_MODEL', '') or None,
+    }
+    if not c['key'] and c['old_key']:
+        c['key'] = c['old_key']
+        c['url'] = c['url'] or 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
+        c['model'] = c['model'] or 'glm-4.7-flash'
+    if not c['model']:
+        c['model'] = c['old_model']
+    return c if (c['url'] and c['key'] and c['model']) else None
 
 
 def get_key():
-    """从 secret.py 读 ZHIPU_API_KEY，未配置返回 None。"""
-    try:
-        import secret
-        return getattr(secret, 'ZHIPU_API_KEY', '') or None
-    except Exception:
-        return None
+    """未配置返回 None。"""
+    c = _cfg()
+    return c['key'] if c else None
 
 
-def get_model():
-    """模型可被 secret.ZHIPU_MODEL 覆盖（想试别的免费模型不用改代码）。"""
-    try:
-        import secret
-        return getattr(secret, 'ZHIPU_MODEL', '') or MODEL
-    except Exception:
-        return MODEL
+def _missing_msg():
+    return ('LLM 未配置：在 secret.py 加三行（任何 OpenAI 兼容服务均可：'
+            '智谱 bigmodel.cn / DeepSeek / OpenAI / 本地 Ollama 等）：\n'
+            '  LLM_API_URL = "chat/completions 完整地址"\n'
+            '  LLM_MODEL = "模型名"\n'
+            '  LLM_API_KEY = "你的key"\n（改完需重启服务）')
 
 
 def _post(body):
-    """统一请求出口：无 key / 非 200 抛 RuntimeError（消息可直接展示给用户）。"""
-    key = get_key()
-    if not key:
-        raise RuntimeError('未配置 ZHIPU_API_KEY：到智谱开放平台 bigmodel.cn 免费领取，'
-                           '然后在 secret.py 加一行  ZHIPU_API_KEY = "你的key"')
-    r = requests.post(API_URL, headers={'Authorization': 'Bearer ' + key},
-                      json=body, timeout=TIMEOUT)
-    if r.status_code != 200:
-        raise RuntimeError(f'模型接口返回 {r.status_code}: {r.text[:200]}')
-    return r.json()
-
-
-def _post(body):
-    """统一请求出口：无 key 抛错；429/5xx 指数退避重试 2 次（免费模型高峰限流常态）；
+    """统一请求出口：无配置抛错；429/5xx 指数退避重试 3 次（免费模型高峰限流常态）；
     其余非 200 直接抛 RuntimeError（消息可直接展示给用户）。"""
-    key = get_key()
-    if not key:
-        raise RuntimeError('未配置 ZHIPU_API_KEY：到智谱开放平台 bigmodel.cn 免费领取，'
-                           '然后在 secret.py 加一行  ZHIPU_API_KEY = "你的key"')
+    c = _cfg()
+    if not c:
+        raise RuntimeError(_missing_msg())
     last = None
     for wait in (0, 8, 20, 45):
         if wait:
             time.sleep(wait)
-        r = requests.post(API_URL, headers={'Authorization': 'Bearer ' + key},
+        r = requests.post(c['url'], headers={'Authorization': 'Bearer ' + c['key']},
                           json=body, timeout=TIMEOUT)
         if r.status_code == 200:
             return r.json()
@@ -62,20 +76,19 @@ def _post(body):
 
 
 def chat(system, user):
-    """单轮对话，返回回复文本。无 key / 接口失败抛 RuntimeError（消息可直接展示给用户）。
+    """单轮对话，返回回复文本。无配置 / 接口失败抛 RuntimeError（消息可直接展示给用户）。
 
-    glm-4.7 系列默认开深度思考（实测一句话回复也烧 ~941 个思考 token），
+    深度思考模型默认开思考（实测一句话回复也烧近千个思考 token），
     思考+正文共享 max_tokens 预算——2048 会被思考烧光导致 content 返回空串
     （2026-10-21 周复盘空白事故）。故：预算提到 8192；正文仍为空时
     （finish_reason=length）关掉深度思考再试一次兜底。"""
-    key = get_key()
-    if not key:
-        raise RuntimeError('未配置 ZHIPU_API_KEY：到智谱开放平台 bigmodel.cn 免费领取，'
-                           '然后在 secret.py 加一行  ZHIPU_API_KEY = "你的key"')
-    body = {'model': get_model(), 'temperature': 0.5, 'max_tokens': 8192,
+    c = _cfg()
+    if not c:
+        raise RuntimeError(_missing_msg())
+    body = {'model': c['model'], 'temperature': 0.5, 'max_tokens': 8192,
             'messages': [{'role': 'system', 'content': system},
                          {'role': 'user', 'content': user}]}
-    r = requests.post(API_URL, headers={'Authorization': 'Bearer ' + key},
+    r = requests.post(c['url'], headers={'Authorization': 'Bearer ' + c['key']},
                       json=body, timeout=TIMEOUT)
     if r.status_code != 200:
         raise RuntimeError(f'模型接口返回 {r.status_code}: {r.text[:200]}')
@@ -87,7 +100,7 @@ def chat(system, user):
     if content:
         return content
     if ch.get('finish_reason') == 'length':   # 思考烧光预算 → 关深度思考兜底重试
-        r2 = requests.post(API_URL, headers={'Authorization': 'Bearer ' + key},
+        r2 = requests.post(c['url'], headers={'Authorization': 'Bearer ' + c['key']},
                            json=dict(body, thinking={'type': 'disabled'}), timeout=TIMEOUT)
         if r2.status_code == 200:
             try:
@@ -98,7 +111,7 @@ def chat(system, user):
             except Exception:
                 pass
         raise RuntimeError('模型思考耗尽了生成长度，关闭深度思考后仍未产出正文'
-                           '（可把 secret.py 的 ZHIPU_MODEL 换成别的模型试试）')
+                           '（可在 secret.py 换 LLM_MODEL 试试）')
     raise RuntimeError('模型没有返回正文: ' + r.text[:200])
 
 
@@ -121,7 +134,7 @@ def chat_tools(system, messages, tools, tool_fn):
     rounds = tool_calls_n = 0
     for _ in range(MAX_TOOL_ROUNDS):
         rounds += 1
-        body = {'model': get_model(), 'temperature': 0.4, 'max_tokens': 8192, 'messages': msgs}
+        body = {'model': _cfg()['model'], 'temperature': 0.4, 'max_tokens': 8192, 'messages': msgs}
         if tools:
             body['tools'] = tools
         data = _post(body)
@@ -152,7 +165,8 @@ def chat_tools(system, messages, tools, tool_fn):
             return {'text': content, 'rounds': rounds, 'tool_calls': tool_calls_n}
         if ch.get('finish_reason') == 'length':   # 思考烧光预算 → 关深度思考兜底重试
             data2 = _post(dict(body, thinking={'type': 'disabled'}))
-            content2 = ((data2['choices'][0].get('message') or {}).get('content') or '').strip()
+            content2 = ((data2['choices'][0].get('message') or {})
+                        .get('content') or '').strip()
             if content2:
                 return {'text': content2, 'rounds': rounds, 'tool_calls': tool_calls_n}
         raise RuntimeError('模型没有返回正文: ' + json.dumps(data)[:200])
