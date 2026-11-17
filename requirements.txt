@@ -17,3 +17,5 @@ numexpr
 # RAG 知识库（本地向量化 + 向量库；首次运行自动下载 BGE 模型，国内网络建议 HF_ENDPOINT=https://hf-mirror.com）
 sentence-transformers
 chromadb
+# MCP 标准化门面（钉 1.x 稳定线：v2 改了 API，FastMCP→MCPServer）
+mcp<2
