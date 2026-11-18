@@ -4,10 +4,10 @@
 原则：跨进程暴露面只开读，不开写；数据一律走 agent/tools 脱敏收口，不得绕过。
 
 运行：
-    python -m mcp.server          # stdio 传输，阻塞等待 client
+    python -m mcp_server.server    # stdio 传输，阻塞等待 client
 
 接入（Claude Desktop 为例，claude_desktop_config.json）：
-    "chanGy": {"command": "/path/to/.venv/bin/python", "args": ["-m", "mcp.server"],
+    "chanGy": {"command": "/path/to/.venv/bin/python", "args": ["-m", "mcp_server.server"],
                "cwd": "/path/to/chanGy"}
 """
 from mcp.server.fastmcp import FastMCP

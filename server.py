@@ -331,31 +331,55 @@ async def _alert_reply(text):
 _KB_QA_RE = re.compile(
     r'买卖点|买点|卖点|背驰|背弛|中枢|级别|区间套|分型|线段|走势|趋势|盘整|金卡|'
     r'一类|二类|三类|一买|二买|三买|一卖|二卖|三卖|'
-    r'什么是|是什么|啥意思|什么意思|怎么判|如何判|怎么用|什么叫|区别|定义|解释')
+    r'什么是|是什么|啥意思|什么意思|怎么判|如何判|怎么用|什么叫|区别|定义|解释|'
+    r'新闻|资讯|公告|报道|消息面|搜索|搜一下|查一下|查下|帮我查|https?://')
+
+
+_FETCH_REG_CACHE = None   # fetch 外部工具注册表缓存：成功后复用；失败不缓存（下次留言重试，自愈）
+
+
+def _fetch_registry_safe():
+    """fetch 外部工具（MCP client 桥，v0.3）：成功缓存复用；失败返回 None 降级为纯知识库。
+    在留言线程池里惰性初始化；并发竞态最多多拉一次清单，无害。"""
+    global _FETCH_REG_CACHE
+    if _FETCH_REG_CACHE is None:
+        try:
+            from mcp_server import client as mcp_client
+            _FETCH_REG_CACHE = mcp_client.fetch_registry()
+        except Exception as e:
+            print(f'[kb_qa] fetch 工具不可用，本次仅知识库: {e}')
+            return None
+    return _FETCH_REG_CACHE
 
 
 def _kb_qa_work(text, llm, tools):
-    """知识库问答（同步执行）：kb_search 多轮检索 → 带课号出处的回答。"""
+    """留言问答（同步执行）：kb_search 检索知识库 + fetch 抓公开网页（可用时）→ 带出处回答。"""
     schemas, executors = tools.kb_qa_registry()
-    system = ('你是缠论知识助理。回答前先调 kb_search 检索知识库（可换词多检索几次）。'
-              '知识库双层：缠论 108 课原文（出处=第几课）+ 本系统私有口径（体系疑问结论/周复盘行动/术语表，'
-              '出处=类别与日期）。只依据检索到的片段作答并标注出处；'
-              '检索不到相关内容时如实说"知识库没有相关内容"，不许凭印象编造。'
-              '回答控制在 300 字以内，直接给结论，不要客套。')
+    ext = _fetch_registry_safe()
+    if ext:
+        from mcp_server import client as mcp_client
+        schemas, executors = mcp_client.merge_registry(schemas, executors, *ext)
+    system = ('你是缠论知识+资讯助理，有两类工具：'
+              'kb_search 检索本地知识库（双层：缠论 108 课原文，出处=第几课；本系统私有口径——'
+              '体系疑问结论/周复盘行动/术语表，出处=类别与日期）；'
+              'fetch 抓取公开网页（需要具体 URL，你没有搜索引擎——没有合适网址时如实说'
+              '"请给我一个具体网址或信息来源"，绝不要编造 URL）。'
+              '回答只依据工具返回的片段并标注出处（课号 / 类别与日期 / URL）；'
+              '查不到就如实说，不许凭印象编造。回答控制在 300 字以内，直接给结论，不要客套。')
     res = llm.chat_tools(system, [{'role': 'user', 'content': text}],
                          schemas, lambda n, a: executors[n](a))
     return res['text']
 
 
 async def _chat_kb_qa(text):
-    """留言知识问答入口：不是设线指令、且含缠论概念词 → 检索+带出处回答（设计文档 §9 验证入口）。"""
+    """留言问答入口：不是设线指令、且命中问答触发词（缠论概念/资讯查询）→ 检索+带出处回答。"""
     if not (agent_llm and agent_tools):
         return
     llm, tools = agent_llm, agent_tools     # 局部别名：Pylance 不做跨语句收窄
     try:
         if not llm.get_key():
             return
-        await _alert_reply('📚 查知识库中…')
+        await _alert_reply('📚 查询中…')
         ans = await asyncio.get_event_loop().run_in_executor(
             None, _kb_qa_work, text, llm, tools)
         await _alert_reply('📚 ' + ans[:900])
