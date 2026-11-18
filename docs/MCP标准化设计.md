@@ -49,16 +49,19 @@ MCP 解决的是"工具以什么标准对外暴露"：
 ## 4. 架构：server 模式（对外）+ client 模式（对内）
 
 ```
-mcp/
+mcp_server/
   __init__.py
-  server.py        # fastmcp：7 个只读工具标准化暴露（stdio 传输）
+  server.py        # FastMCP：7 个只读工具标准化暴露（stdio 传输）
   client.py        # MCP client 封装：主控台意图路由可调用的外部工具（一期仅 fetch，可选）
 ```
 
-- **server 模式**：`python -m mcp.server` 跑 stdio 传输——Claude Desktop / Cursor 的
+- **server 模式**：`python -m mcp_server.server` 跑 stdio 传输——Claude Desktop / Cursor 的
   `claude_desktop_config.json` 加一条配置即接入。工具集 = 上表 7 个，**全部只读**。
-- **client 模式**（可选二期）：主控台意图路由通过 MCP client 调用外部工具（如 fetch），
-  与本地函数工具统一注册。一期不阻塞 server 交付。
+- **client 模式（已实现，v0.3）**：`mcp_server/client.py`——我们当 client 连外部 MCP server，
+  把外部工具动态翻译成本地注册表格式 (schemas, executors)，与函数工具合并进同一张菜单。
+  一期只接官方 fetch（`uvx mcp-server-fetch`，免费无 key）：盘后资讯/网页抓取。
+  模型只看到一张扁平菜单，不感知工具是本地函数还是跨进程协议。
+  边界：不挂进周复盘 Agent（7 封顶不变）；供留言窗口/主控台合并使用。
 - **底层复用**：MCP 工具函数直接调用 `agent/tools` 的现有实现（`_kb_lookup`、
   `build_registry` 的执行器），不复制业务逻辑。
 
@@ -73,7 +76,7 @@ mcp/
 
 ## 6. 验证方式
 
-1. 本地起 `python -m mcp.server`，Claude Desktop 配置 JSON 接入，实测三轮对话：
+1. 本地起 `python -m mcp_server.server`，Claude Desktop 配置 JSON 接入，实测三轮对话：
    查知识库（带课号出处）/ 查本周统计（带脱敏口径）/ 查体系疑问
 2. 公开库 README 增加「MCP 接入」章节（配置示例），作为开源项目亮点
 3. `tests/` 增加 MCP 工具注册断言（与 function calling 注册表同源校验——
@@ -98,10 +101,13 @@ mcp/
    client 背后是外部模型在决策，"人工确认"环节不在系统控制内。读错只误导对话，
    写错直接变成真金白银的状态变更——读写风险不对称，只读边界在本地 MCP 依然成立。
 3. **client 模式（fetch）一期不做**——先交付 server，主控台对资讯查询的实际使用频率
-   决定它值不值后续工作量。
+   决定它值不值后续工作量。（v0.3 兑现：fetch 桥已落地，触发条件=主控台资讯需求明确）
 4. **交付物进公开库**——MCP server + README「MCP 接入」章节。
 
 ## 变更记录
 
 - v0.1 —— 初稿对齐（暴露范围 / Tool-Skill 概念边界 / 工具数量纪律）
 - v0.2 —— 四项关键决定锁定（stdio / 只读 / 无 client / 进公开库），进入施工
+- v0.3 —— client 模式落地：`mcp_server/client.py` fetch 桥（动态清单防漂移 / 每调用独立会话 /
+  6000 字截断 / 重名即拒 / 无 uvx 明确报错），tests 3 项真实网络实测。
+  留言窗口触发词接入待拍板（产品行为变更，单独决策）
