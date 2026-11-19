@@ -19,3 +19,6 @@ sentence-transformers
 chromadb
 # MCP 标准化门面（钉 1.x 稳定线：v2 改了 API，FastMCP→MCPServer）
 mcp<2
+# Agent 编排引擎（四大模块之四，StateGraph 图编排；SqliteSaver checkpoint 落盘 data/agent_state/）
+langgraph
+langgraph-checkpoint-sqlite

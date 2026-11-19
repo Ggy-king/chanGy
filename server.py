@@ -3197,9 +3197,17 @@ def _weekly_report(items, disp, done=None):
 
 
 def _weekly_data(week: str = ''):
-    """周复盘聚合（页面接口与 Agent 共用的唯一数据源）。仅周一~周五；不算胜率盈亏。"""
+    """周复盘聚合（页面接口与 Agent 共用的唯一数据源）。仅周一~周五；不算胜率盈亏。
+    week 兼容两种格式：ISO 周（'2026-W47'，Agent/MCP 用）与具体日期（'2026-11-16'，
+    前端周导航锚点用——2026-11-18 修旧 bug：此前只认 ISO 周，日期格式静默回退今天，
+    导致"上周/下周"按钮永远显示当前周）。日期锚点自动吸附到所在周周一。"""
     try:
-        anchor = dt.date.fromisoformat(week + '-1') if week and len(week) == 7 else dt.date.today()
+        if week and len(week) == 7:            # ISO 周：'2026-W47'
+            anchor = dt.date.fromisoformat(week + '-1')
+        elif week:                             # 具体日期：'2026-11-16'
+            anchor = dt.date.fromisoformat(week)
+        else:
+            anchor = dt.date.today()
     except Exception:
         anchor = dt.date.today()
     monday = anchor - dt.timedelta(days=anchor.weekday())

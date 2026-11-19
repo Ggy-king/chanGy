@@ -23,7 +23,7 @@ CONTRACTS = [
     {"symbol": "RU2701", "name": "橡胶",   "exchange": "SHFE"},          # 5 橡胶（摩擦最低+振幅最大）
     {"symbol": "SR2701", "name": "白糖",   "exchange": "CZCE"},          # 6 软商品（稳健）
     {"symbol": "SP2701", "name": "纸浆",   "exchange": "SHFE"},          # 7 轻工（干净备用）
-    {"symbol": "jd2612", "name": "鸡蛋",   "exchange": "DCE"},           # 8 农副（流畅但成本略伤）
+    {"symbol": "jd2701", "name": "鸡蛋",   "exchange": "DCE"},           # 8 农副（流畅但成本略伤）
     {"symbol": "CJ2701", "name": "红枣",   "exchange": "CZCE"},          # 9 果品（ER高，盘子7.7亿已达标）
     {"symbol": "AP2701", "name": "苹果",   "exchange": "CZCE"},          # 0 果品·热键0（埋伏型）
     {"symbol": "CF2701", "name": "棉花",   "exchange": "CZCE"},          # 11 能做（老主力，ER低但稳）
