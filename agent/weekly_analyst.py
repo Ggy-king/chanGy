@@ -1,44 +1,33 @@
-"""周复盘分析师（Agent v2，工具调用架构）。
-与 v1 的区别：不再是「整包数据塞进单个 prompt 的一次性调用」，而是真正的
-研究型 Agent——模型通过 function calling 自主查询本地数据（tools.build_registry
-提供的六个工具），多轮「规划 → 查询 → 追问 → 对比」，证据拿够后输出最终深谈。
+"""周复盘分析师（Agent v3，LangGraph 图编排）。
+v2：function calling 手写循环（llm.chat_tools，现仍服务留言问答）。
+v3（2026-11-18）：换 agent/graph.py StateGraph——research ⇄ execute_tools 条件边流转、
+coach 独立节点（研究证据硬闸门）、checkpoint 落盘断点续跑。
+设计文档：docs/LangGraph编排升级设计.md（v0.2 定稿）。
 
 只读，不写任何交易/审计数据；存档由 server 落到 reviews.json 的 weekly[week].agent
-（新增 citations / tools_used / rounds 字段，支撑前端证据链回查）。"""
+（新增 thread_id 字段=checkpoint 断点钥匙，供中断续跑）。"""
 import re
 import time
 
-from . import llm, prompts, tools
+from . import graph, llm
 
 _EVIDENCE_RE = re.compile(r'\b[TAQD]\d{1,2}\b|\bU1\b')   # 证据编号：T/A/Q/D 两位序号 + U1
 
 
-def run(pack):
-    """分析一个周数据包，返回 {text, citations, tools_used, rounds, model, created}。
-    模型接口失败 / 轮次超限抛 RuntimeError（消息可直接展示给用户）。"""
-    schemas, executors = tools.build_registry(pack)
-    used = []
-
-    def dispatch(name, args):
-        fn = executors.get(name)
-        if fn is None:
-            return {'error': f'未知工具 {name}，可用：{", ".join(executors)}'}
-        used.append(name)
-        return fn(args or {})
-
-    user = ('本周复盘数据包已就绪（研究人员请注意：数据不直接给你，全部通过工具查询）。'
-            '按系统指令完成两个阶段：先用工具把数据挖透，再输出最终深谈。')
-    res = llm.chat_tools(prompts.WEEKLY_SYSTEM, [{'role': 'user', 'content': user}],
-                         schemas, dispatch)
-
+def run(pack, thread_id=None):
+    """分析一个周数据包，返回 {text, citations, tools_used, rounds, model, created, thread_id}。
+    模型接口失败 / 轮次超限抛 RuntimeError（消息可直接展示给用户）。
+    thread_id 传入已有值=从 checkpoint 断点续跑。"""
+    res = graph.run(pack, thread_id)
     text = res['text']
     citations = sorted(set(_EVIDENCE_RE.findall(text)))
     return {'text': text,
             'citations': citations,
-            'tools_used': used,
+            'tools_used': res['tools_used'],
             'rounds': res['rounds'],
             'model': llm.get_model(),
-            'created': time.strftime('%Y-%m-%d %H:%M')}
+            'created': time.strftime('%Y-%m-%d %H:%M'),
+            'thread_id': res['thread_id']}
 
 
 def _summary(res):

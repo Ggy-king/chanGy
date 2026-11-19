@@ -8,8 +8,9 @@ secret.py 配置项：
     LLM_MODEL     模型名
     LLM_API_KEY   API key
 
-兼容旧配置（其他机器 secret.py 还是旧字段名时仍可用，新机器请用上面三个）：
-    ZHIPU_API_KEY / ZHIPU_MODEL
+（2026-11-18 移除 ZHIPU_API_KEY/ZHIPU_MODEL 旧字段名兜底：多机已全部换新格式，
+兜底分支硬编码了智谱端点，违反"代码不绑定供应商"的设计——旧配置机器会得到
+明确的"LLM 未配置：加三行"报错，照着配即可。）
 """
 import json
 import time
@@ -19,7 +20,7 @@ TIMEOUT = 150   # 深度思考模型跑大数据包很慢（实测 >60s），放
 
 
 def _cfg():
-    """读取配置：新字段优先，旧字段名兜底（多机同步过渡期）。"""
+    """读取配置：只认 secret.py 三个 LLM_* 字段（代码不绑定任何供应商）。"""
     try:
         import secret
     except Exception:
@@ -28,16 +29,7 @@ def _cfg():
         'url': getattr(secret, 'LLM_API_URL', '') or None,
         'model': getattr(secret, 'LLM_MODEL', '') or None,
         'key': getattr(secret, 'LLM_API_KEY', '') or None,
-        # 旧字段名兜底：key 在则推断为默认 OpenAI 兼容端点（多机过渡期，公开仓库版会移除）
-        'old_key': getattr(secret, 'ZHIPU_API_KEY', '') or None,
-        'old_model': getattr(secret, 'ZHIPU_MODEL', '') or None,
     }
-    if not c['key'] and c['old_key']:
-        c['key'] = c['old_key']
-        c['url'] = c['url'] or 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
-        c['model'] = c['model'] or 'glm-4.7-flash'
-    if not c['model']:
-        c['model'] = c['old_model']
     return c if (c['url'] and c['key'] and c['model']) else None
 
 
@@ -45,6 +37,12 @@ def get_key():
     """未配置返回 None。"""
     c = _cfg()
     return c['key'] if c else None
+
+
+def get_model():
+    """当前模型名（未配置返回 None）。"""
+    c = _cfg()
+    return c['model'] if c else None
 
 
 def _missing_msg():
@@ -56,8 +54,9 @@ def _missing_msg():
 
 
 def _post(body):
-    """统一请求出口：无配置抛错；429/5xx 指数退避重试 3 次（免费模型高峰限流常态）；
-    其余非 200 直接抛 RuntimeError（消息可直接展示给用户）。"""
+    """统一请求出口：无配置抛错；429/5xx 与连接层异常（断网/代理死/超时）指数退避重试 3 次
+    （免费模型高峰限流常态 + 网络抖动均按"会挂"设计）；其余非 200 直接抛 RuntimeError
+    （消息可直接展示给用户）。"""
     c = _cfg()
     if not c:
         raise RuntimeError(_missing_msg())
@@ -65,8 +64,13 @@ def _post(body):
     for wait in (0, 8, 20, 45):
         if wait:
             time.sleep(wait)
-        r = requests.post(c['url'], headers={'Authorization': 'Bearer ' + c['key']},
-                          json=body, timeout=TIMEOUT)
+        try:
+            r = requests.post(c['url'], headers={'Authorization': 'Bearer ' + c['key']},
+                              json=body, timeout=TIMEOUT)
+        except (requests.exceptions.ProxyError, requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout) as e:
+            last = f'连接异常（网络/代理）：{type(e).__name__}: {e}'
+            continue
         if r.status_code == 200:
             return r.json()
         last = f'模型接口返回 {r.status_code}: {r.text[:200]}'
@@ -115,6 +119,43 @@ def chat(system, user):
     raise RuntimeError('模型没有返回正文: ' + r.text[:200])
 
 
+def chat_step(system, messages, tools=None):
+    """单步 LLM 调用（LangGraph research/coach 节点的唯一接入层出口，v0.2 设计决定 5）。
+    与 chat_tools 循环体同一套逻辑：_post 重试退避 + 思考预算兜底。
+    返回 {'content': str, 'tool_calls': [...], 'assistant_msg': dict}——
+    节点拿 assistant_msg 直接追加进 State.messages，不感知模型细节。
+    无正文且无 tool_calls 抛 RuntimeError（消息可直接展示给用户）。"""
+    body = {'model': _cfg()['model'], 'temperature': 0.4, 'max_tokens': 8192,
+            'messages': [{'role': 'system', 'content': system}] + list(messages)}
+    if tools:
+        body['tools'] = tools
+    data = _post(body)
+    try:
+        ch = data['choices'][0]
+        msg = ch.get('message') or {}
+    except Exception:
+        raise RuntimeError('模型返回格式异常: ' + json.dumps(data)[:200])
+    calls = msg.get('tool_calls') or []
+    content = (msg.get('content') or '').strip()
+    if calls:
+        return {'content': content, 'tool_calls': calls,
+                'assistant_msg': {'role': 'assistant', 'content': content or None, 'tool_calls': calls}}
+    if content:
+        return {'content': content, 'tool_calls': [],
+                'assistant_msg': {'role': 'assistant', 'content': content}}
+    if ch.get('finish_reason') == 'length':   # 思考烧光预算 → 关深度思考兜底重试
+        data2 = _post(dict(body, thinking={'type': 'disabled'}))
+        try:
+            msg2 = data2['choices'][0].get('message') or {}
+        except Exception:
+            raise RuntimeError('模型返回格式异常: ' + json.dumps(data2)[:200])
+        content2 = (msg2.get('content') or '').strip()
+        if content2:
+            return {'content': content2, 'tool_calls': [],
+                    'assistant_msg': {'role': 'assistant', 'content': content2}}
+    raise RuntimeError('模型没有返回正文: ' + json.dumps(data)[:200])
+
+
 # ============ 工具调用循环（function calling） ============
 
 MAX_TOOL_ROUNDS = 12      # 单次分析的模型请求轮次上限：足够完成「总览→切片→对比→合成」，封顶控成本
@@ -129,7 +170,17 @@ def chat_tools(system, messages, tools, tool_fn):
       若正文为空且 finish_reason=length，对该轮关闭深度思考重试一次（chat 同款兜底）。
     - 工具执行异常不终止循环：以 {'error': ...} 回给模型让它自行调整查询参数——
       坏结果也是信息，这是 Agent 与固定管道的本质区别。
-    返回 {'text', 'rounds', 'tool_calls'}。"""
+    返回 {'text', 'rounds', 'tool_calls'}。
+
+    【LangGraph 概念对照（2026-11-18 加，学习锚点）】本函数=自研迷你编排框架，
+    周复盘 Agent 已换 agent/graph.py（LangGraph StateGraph），本循环继续服务
+    留言问答（server._kb_qa_work，单阶段简单循环够用）。概念映射：
+      for 循环遍历轮次            → 图的节点流转（research ⇄ execute_tools）
+      if calls: continue          → 条件边（route 函数按 State 决定下一节点）
+      msgs 局部变量               → State（TypedDict，checkpoint 可落盘）
+      MAX_TOOL_ROUNDS=12          → 轮次超限路由 fallback + recursion_limit
+      工具报错回灌 {'error':...}  → execute_tools 节点的容错返回
+      循环结束后取 text 返回      → coach 节点（独立教练阶段，硬闸门放行）"""
     msgs = [{'role': 'system', 'content': system}] + list(messages)
     rounds = tool_calls_n = 0
     for _ in range(MAX_TOOL_ROUNDS):

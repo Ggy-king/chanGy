@@ -87,3 +87,4 @@ data/rag_index/
 
 # ===== 私有阅览室用户语料：系统运行时自动生成，属用户数据不入库（模板已随仓库分发）=====
 data/rag_corpus/private/glossary.md
+data/agent_state/
